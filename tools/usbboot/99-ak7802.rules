@@ -1,0 +1,5 @@
+# udev rule for Anyka AK7802 in USB boot mode (bootrom, VID 0x0471 PID 0x0666)
+# Install:
+#   sudo cp 99-ak7802.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0471", ATTRS{idProduct}=="0666", MODE="0666", TAG+="uaccess"

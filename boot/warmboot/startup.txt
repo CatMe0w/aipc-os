@@ -1,0 +1,6 @@
+set ramsize 0x4000000
+set ramaddr 0x30000000
+set mtype 1234
+set kernel zImage
+set cmdline "console=tty0 lpj=5000000 rdinit=/init loglevel=8 ignore_loglevel panic=-1"
+boot

@@ -1,0 +1,22 @@
+[project]
+name = "ak7802-usbboot"
+version = "0.1.0"
+description = "USB boot/download tool for Anyka AK7802 SoC"
+readme = "README.md"
+authors = [
+    { name = "CatMe0w", email = "CatMe0w@live.cn" }
+]
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "pyusb>=1.2.1",
+    "libusb-package>=1.0.26",
+    "click>=8.1",
+    "tqdm>=4.66",
+]
+
+[project.scripts]
+ak7802-usbboot = "ak7802_usbboot.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.3,<0.12.0"]
+build-backend = "uv_build"

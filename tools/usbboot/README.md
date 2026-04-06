@@ -1,0 +1,53 @@
+# ak7802-usbboot
+
+USB boot/download tool for Anyka AK7802 SoC, reverse-engineered from the bootrom.
+
+The bootrom calls this mode "Usbboot". It supports three operations: loading a
+program into internal or external memory over USB, writing arbitrary memory and
+register values, and transferring execution to a specified address.
+
+**Note:** USB boot does not initialize external RAM. If DDR (`0x30000000`) is the
+target, initialize the memory controller first with `poke` commands before using
+`write`.
+
+## Install
+
+Requires Python 3.11 - 3.13.
+
+```
+uv tool install .
+```
+
+On Linux, install the udev rule for non-root access:
+
+```
+sudo cp 99-ak7802.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+## Usage
+
+Enter USB boot mode by pulling DGPIO[2] (USB_BOOT pin) high on the AK7802 before power-on.
+
+All commands wait for the device automatically if it is not yet connected.
+
+```
+ak7802-usbboot devices
+ak7802-usbboot write  firmware.bin --addr 0x30000000
+ak7802-usbboot read   --addr 0x30000000 --len 0x1000 dump.bin
+ak7802-usbboot exec   --addr 0x30000000
+ak7802-usbboot poke   --addr 0x08000054 --value 0x03000000
+```
+
+Addresses and values accept both decimal and `0x`-prefixed hexadecimal.
+
+Internal memory (L2 buffer at `0x48000200`) requires no initialization.
+
+## Protocol
+
+The device enumerates as `0471:0666` (USB 1.1 full-speed). The host communicates
+via EP3 OUT (bulk, 64B) for commands/data and EP2 IN (bulk, 64B) for uploads.
+
+Commands are 64-byte frames with a fixed sync pattern, header/tail magic, and a
+one-byte opcode. See [protocol.py](src/ak7802_usbboot/protocol.py) for the full
+frame layout and opcode table.
