@@ -3,3 +3,6 @@
 .venv/
 __pycache__/
 .python-version
+*.o
+*.elf
+*.bin

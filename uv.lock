@@ -2,10 +2,35 @@ version = 1
 revision = 3
 requires-python = ">=3.11, <3.14"
 
+[manifest]
+members = [
+    "ak7802-nand-dump",
+    "ak7802-usbboot",
+]
+
+[[package]]
+name = "ak7802-nand-dump"
+version = "0.1.0"
+source = { editable = "tools/nand-dump" }
+dependencies = [
+    { name = "ak7802-usbboot" },
+    { name = "click" },
+    { name = "libusb-package" },
+    { name = "pyusb" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ak7802-usbboot", editable = "tools/usbboot" },
+    { name = "click", specifier = ">=8.1" },
+    { name = "libusb-package", specifier = ">=1.0.26" },
+    { name = "pyusb", specifier = ">=1.2.1" },
+]
+
 [[package]]
 name = "ak7802-usbboot"
 version = "0.1.0"
-source = { editable = "." }
+source = { editable = "tools/usbboot" }
 dependencies = [
     { name = "click" },
     { name = "libusb-package" },

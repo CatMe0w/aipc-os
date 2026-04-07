@@ -12,11 +12,7 @@ target, initialize the memory controller first with `poke` commands before using
 
 ## Install
 
-Requires Python 3.11 - 3.13.
-
-```
-uv tool install .
-```
+See the repository root [README](../../README.md) for workspace setup.
 
 On Linux, install the udev rule for non-root access:
 

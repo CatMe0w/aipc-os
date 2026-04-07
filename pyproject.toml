@@ -1,0 +1,5 @@
+[tool.uv.workspace]
+members = [
+    "tools/usbboot",
+    "tools/nand-dump",
+]
