@@ -2,4 +2,6 @@
 members = [
     "tools/usbboot",
     "tools/nand-dump",
+    "tools/nand-dump-min",
+    "tools/nand-extract",
 ]
