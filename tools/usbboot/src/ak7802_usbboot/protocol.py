@@ -44,11 +44,11 @@ TAIL_MAGIC   = 0x1413
 SYNC_BYTE    = 0x60
 
 # Opcodes (from handle_usbboot_packet, bootrom offset 0x3CE4)
-OPCODE_WRITE32        = 0x1F  # Write 32-bit value to addr; arg0=value
+OPCODE_WRITE32        = 0x1F  # Write 32-bit value to addr; arg1=value
 OPCODE_DOWNLOAD_DONE  = 0x3C  # End download session
 OPCODE_DOWNLOAD_BEGIN = 0x3F  # Begin download; addr=target, arg0=byte_count
 OPCODE_UPLOAD_BEGIN   = 0x7F  # Begin upload; addr=source, arg0=byte_count
-OPCODE_EXECUTE        = 0x9F  # Branch to addr; no return
+OPCODE_EXECUTE        = 0x9F  # Jump to addr; stub may return to bootrom
 
 
 def build_cmd_frame(opcode: int, addr: int = 0, arg0: int = 0, arg1: int = 0) -> bytes:

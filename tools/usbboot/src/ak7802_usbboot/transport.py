@@ -18,9 +18,18 @@ from .protocol import (
 # USB transfer timeout in milliseconds.
 # Generous to accommodate slow host-controller scheduling on all platforms.
 _TIMEOUT_MS = 3000
+_EXECUTE_PROBE_IO_TIMEOUT_MS = 50
+_EXECUTE_PROBE_INTERVAL_S = 0.01
+_EXECUTE_WAIT_TIMEOUT_S = 1.0
+_BOOTROM_PROBE_ADDR = 0x0
+_BOOTROM_PROBE_BYTES = b"\x06\x00\x00\xEA"
 
 
 class DeviceNotFoundError(Exception):
+    pass
+
+
+class ExecuteTimeoutError(Exception):
     pass
 
 
@@ -34,20 +43,53 @@ class AK7802:
         self._dev = dev
         if dev.is_kernel_driver_active(0):
             dev.detach_kernel_driver(0)
+        # USB bus reset: ensures both host and device data toggles are in
+        # sync (DATA0).  The AK7802 bootrom does not reset endpoint data
+        # toggles on SET_CONFIGURATION - only a bus reset does that at the
+        # hardware level.  Without this, a second connection to the same
+        # powered-on device will have desynchronized toggles and the first
+        # bulk OUT packet is silently discarded by the device.
+        dev.reset()
+        # After reset the kernel may auto-bind a driver to the interface.
+        if dev.is_kernel_driver_active(0):
+            dev.detach_kernel_driver(0)
         dev.set_configuration()
 
     # ------------------------------------------------------------------
     # Low-level I/O
     # ------------------------------------------------------------------
 
-    def _write(self, data: bytes) -> None:
-        self._dev.write(EP_BULK_OUT, data, _TIMEOUT_MS)
+    def _write(self, data: bytes, timeout_ms: int = _TIMEOUT_MS) -> None:
+        self._dev.write(EP_BULK_OUT, data, timeout_ms)
 
-    def _read(self, length: int) -> bytes:
-        return bytes(self._dev.read(EP_BULK_IN, length, _TIMEOUT_MS))
+    def _read(self, length: int, timeout_ms: int = _TIMEOUT_MS) -> bytes:
+        return bytes(self._dev.read(EP_BULK_IN, length, timeout_ms))
 
     def _send_cmd(self, opcode: int, addr: int = 0, arg0: int = 0, arg1: int = 0) -> None:
         self._write(build_cmd_frame(opcode, addr, arg0, arg1))
+
+    def _drain_trailing_zlp(self, timeout_ms: int = _TIMEOUT_MS) -> None:
+        try:
+            self._read(FRAME_SIZE, timeout_ms=timeout_ms)
+        except usb.core.USBTimeoutError:
+            pass
+
+    def _probe_bootrom_ready(self) -> bool:
+        try:
+            self._send_cmd(
+                OPCODE_UPLOAD_BEGIN,
+                addr=_BOOTROM_PROBE_ADDR,
+                arg0=len(_BOOTROM_PROBE_BYTES),
+            )
+            data = self._read(
+                len(_BOOTROM_PROBE_BYTES),
+                timeout_ms=_EXECUTE_PROBE_IO_TIMEOUT_MS,
+            )
+        except usb.core.USBError:
+            return False
+
+        self._drain_trailing_zlp(timeout_ms=_EXECUTE_PROBE_IO_TIMEOUT_MS)
+        return data == _BOOTROM_PROBE_BYTES
 
     # ------------------------------------------------------------------
     # Protocol operations
@@ -107,23 +149,35 @@ class AK7802:
             remaining -= received
             if progress is not None:
                 progress(received)
-        # Drain the trailing ZLP the device always sends after the data.
-        try:
-            self._dev.read(EP_BULK_IN, FRAME_SIZE, 200)
-        except usb.core.USBTimeoutError:
-            pass  # no ZLP arrived within the drain window - that is fine
+        self._drain_trailing_zlp()
         return bytes(buf)
 
-    def execute(self, addr: int) -> None:
+    def execute(self, addr: int, wait: bool = False) -> None:
         """
-        Branch to addr on the device. The device will not respond after this;
-        the USB session ends immediately from the host's perspective.
+        Jump to addr on the device.
+
+        If the stub returns (MOV PC, LR / BX LR), the bootrom resumes its
+        USB command loop and subsequent operations work normally.
+
+        wait: if True, poll for the BootROM to resume USB boot mode by reading
+              4 bytes from 0x0 until they match the BootROM entry instruction
+              bytes (06 00 00 EA). This avoids relying on a fixed delay when a
+              returning stub races with the EXECUTE return path.
         """
         self._send_cmd(OPCODE_EXECUTE, addr=addr)
+        if wait:
+            deadline = time.monotonic() + _EXECUTE_WAIT_TIMEOUT_S
+            while time.monotonic() < deadline:
+                if self._probe_bootrom_ready():
+                    return
+                time.sleep(_EXECUTE_PROBE_INTERVAL_S)
+            raise ExecuteTimeoutError(
+                "EXECUTE did not return to USB boot mode before timeout"
+            )
 
     def poke(self, addr: int, value: int) -> None:
         """Write a single 32-bit value to a device address."""
-        self._send_cmd(OPCODE_WRITE32, addr=addr, arg0=value)
+        self._send_cmd(OPCODE_WRITE32, addr=addr, arg1=value)
 
 
 def find_device(wait: bool = True) -> AK7802:

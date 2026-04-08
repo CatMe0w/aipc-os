@@ -128,15 +128,20 @@ def read(addr: int, length: int, file: str, verbose: bool) -> None:
 @main.command(name="exec")
 @click.option("--addr", required=True, type=_INT, metavar="ADDR",
               help="Address to execute (decimal or 0x hex).")
+@click.option("--wait/--no-wait", default=False,
+              help="Wait for a returning stub to resume USB boot mode.")
 @click.option("-v", "--verbose", is_flag=True)
-def exec_cmd(addr: int, verbose: bool) -> None:
-    """Branch to ADDR on the device. The USB session ends after this."""
+def exec_cmd(addr: int, wait: bool, verbose: bool) -> None:
+    """Jump to ADDR on the device."""
     if verbose:
-        click.echo(f"exec  addr={addr:#010x}")
+        click.echo(f"exec  addr={addr:#010x}  wait={wait}")
 
     dev = _get_device()
-    dev.execute(addr)
-    click.echo(f"executing at {addr:#010x}")
+    dev.execute(addr, wait=wait)
+    if wait:
+        click.echo(f"executed at {addr:#010x}; USB boot resumed")
+    else:
+        click.echo(f"executing at {addr:#010x}")
 
 
 # ---------------------------------------------------------------------------
