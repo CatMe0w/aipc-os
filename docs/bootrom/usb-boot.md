@@ -10,8 +10,9 @@ branching to an arbitrary address.
 When `detect_boot_override()` returns 1, the bootrom calls
 `usbboot_main_loop()`, which:
 
-1. Zeroes out three state structures: `usb_ep0_reply_t`, `usbboot_tx_ctx_t`,
-   and `usbboot_cmd_state_t`.
+1. Initializes three state structures: zeroes `usb_ep0_reply_t`, zeroes
+   `usbboot_cmd_state_t`, and zeroes the first three fields of
+   `usbboot_tx_ctx_t` (`remaining`, `offset`, `active`).
 2. Initializes the UART console (for diagnostic output).
 3. Initializes the USB hardware.
 4. Prints `"\nAspen2_Usbboot>#"` on UART.
@@ -23,8 +24,8 @@ When `detect_boot_override()` returns 1, the bootrom calls
 `usbboot_hw_init()` performs:
 
 1. Clear SYSCTRL+0x58 low 3 bits, then set to 6 (enable USB block).
-2. Configure L2 buffer assignment: L2CTR_ASSIGN_REG1 low 6 bits cleared,
-   then bit 3 set (assigns L2 buffer 1 to the USB data path).
+2. Configure L2 buffer assignment: L2CTR_ASSIGN_REG1 (0x2002C090)
+   low 6 bits cleared, then bit 3 set (= 0x08, assigns USB data path).
 3. Force full-speed mode: write 1 to USB+0x344.
 4. Clear USB POWER register (USB+0x01 = 0).
 
@@ -162,9 +163,9 @@ fails either check is treated as data (during an active download session).
 | ------ | -------------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | 0x3F   | DOWNLOAD_BEGIN | addr = destination, arg0 = byte count | Begin a download session; subsequent non-command packets are written sequentially starting at `addr` |
 | 0x3C   | DOWNLOAD_DONE  | (none)                                | End the download session; resets progress counter                                                    |
-| 0x1F   | WRITE32        | addr = target, arg0 = value           | Write a 32-bit value to `addr`; reads back and prints the result on UART                             |
+| 0x1F   | WRITE32        | addr = target, arg1 = value           | Write a 32-bit value to `addr`; reads back and prints the result on UART                             |
 | 0x7F   | UPLOAD_BEGIN   | addr = source, arg0 = byte count      | Begin uploading `arg0` bytes from `addr` to the host via EP2 IN                                      |
-| 0x9F   | EXECUTE        | addr = branch target                  | Clear EP3 RXCSR1 and branch to `addr`; does not return                                               |
+| 0x9F   | EXECUTE        | addr = branch target                  | Clear EP3 RXCSR1 bit 0 (`RXPKTRDY`) and call `addr` as a function (see below)                        |
 
 Any unrecognized opcode resets the command state to idle (NONE).
 
@@ -176,6 +177,22 @@ treated as raw payload data. The data bytes are written sequentially to
 `cmd_state.addr + cmd_state.progress`, and `progress` is incremented by the
 USB RX byte count of each packet. A DOWNLOAD_DONE command (or any new command
 frame) ends the session.
+
+### EP3 Receive Path and L2BUF_01
+
+Every USB EP3 OUT packet (whether command frame or raw data) is first written
+by the USB hardware into L2BUF_01 at 0x48000200 via DMA. The bootrom then
+copies the data from L2BUF_01 into a local stack variable (`cmd_pkt`) before
+parsing. This means each incoming USB packet overwrites 0x48000200–0x4800023F
+regardless of the current protocol state.
+
+**Consequence for downloads to 0x48000200**: When DOWNLOAD_BEGIN targets
+address 0x48000200, each subsequent data packet and the DOWNLOAD_DONE /
+EXECUTE command frames all overwrite the first 64 bytes. After the final
+EXECUTE command, 0x48000200–0x4800023F contains the EXECUTE command frame
+(starting with 28 bytes of 0x60 sync_pad), not the intended payload. Code
+uploaded to L2 buffer for execution must be loaded at **0x48000240 or later**
+to avoid this corruption.
 
 ### Upload Data Flow
 
@@ -190,21 +207,47 @@ transfer completion.
 **`usbboot_cmd_state_t`** (16 bytes):
 | Offset | Field | Description |
 |--------|----------|------------------------------------------|
-| 0x00 | opcode | Current command state (enum) |
+| 0x00 | mode | Download-active discriminator / last non-download marker |
 | 0x04 | addr | Target/source address |
 | 0x08 | arg0 | Byte count or value |
 | 0x0C | progress | Bytes transferred so far (download only) |
 
-**`usbboot_tx_ctx_t`** (12 bytes):
+Note: only `mode == 0x3F` is tested later to mean "download active". The
+bootrom stores `0x1F` for both WRITE32 and EXECUTE, so this field is not a
+strict copy of the last opcode.
+
+**`usbboot_tx_ctx_t`** (16 bytes):
 | Offset | Field | Description |
 |--------|-----------|------------------------------------------|
-| 0x00 | active | 1 = upload in progress |
-| 0x04 | base_addr | Source address for upload |
-| 0x08 | offset | Current offset from base_addr |
-| 0x0C | remaining | Bytes remaining to send |
+| 0x00 | remaining | Bytes remaining to send |
+| 0x04 | offset | Current offset from `base_addr` |
+| 0x08 | active | 1 = upload in progress |
+| 0x0C | base_addr | Source address for upload |
 
-Note: the `offset` and `remaining` fields together track the upload progress.
-`offset` is reset to 0 after each complete transfer.
+Note: `offset` and `remaining` track upload progress. `base_addr` is written by
+UPLOAD_BEGIN before first use; `usbboot_main_loop` only zeros the first three
+fields at startup.
+
+### EXECUTE Mechanism
+
+The EXECUTE handler uses a manual function-call sequence, not a tail branch:
+
+```
+4154  MOV  LR, PC                    ; LR = 0x415C (return address)
+4158  LDR  PC, [R11,#-0xC+var_70]    ; PC = exec_addr
+415c  B    locret_41F8               ; reached if stub returns
+```
+
+Since LR is set to the instruction after the branch, the called code **can
+return** to the bootrom by executing `MOV PC, LR` (or any equivalent). If
+the stub returns, execution continues at `handle_usbboot_packet`'s epilogue,
+and the bootrom USB command loop resumes normally.
+
+The stub inherits the bootrom's stack pointer. At the point of the EXECUTE
+call, SP is inside the bootrom's call chain (`usbboot_main_loop` →
+`usb_irq_dispatch` → `handle_usbboot_packet`), residing in L2 buffer SRAM
+around 0x48000E70. The initial SP set at `bootrom_entry` is **0x48000FFC**
+(for USB boot mode) or **0x4800157C** (before SPI/NF boot probing).
 
 ## Bulk IN Transfer Details
 
@@ -222,3 +265,70 @@ Note: the `offset` and `remaining` fields together track the upload progress.
 
 The write-forbid register (USB+0x338) is toggled to gate L2 buffer writes
 during the staging process.
+
+## Bootrom Errata
+
+### SET_CONFIGURATION does not reset data toggles
+
+The USB 2.0 spec (§9.1.1.5) requires all endpoint data toggles to be reset to
+DATA0 when the device processes a SET_CONFIGURATION request. The AK7802 bootrom
+does not do this — the SET_CONFIGURATION handler (opcode 9 in
+`usb_handle_setup_request`) only sends a status-stage ZLP and returns. Neither
+`usb_handle_bus_reset` nor `usb_configure_endpoint_maxpacket` writes the
+ClrDataTog bits (TXCSR1 bit 6 / RXCSR1 bit 7).
+
+**Consequence**: If the host resets its own data toggles (e.g. a new process
+calls `set_configuration()`), the host-side toggles return to DATA0 while the
+device-side toggles remain at whatever value they held from the previous
+session. The resulting toggle mismatch causes the device to ACK but silently
+discard the next bulk OUT packet. From the host's perspective the device stops
+responding entirely after the first successful session.
+
+**Workaround**: Issue a USB bus reset (`usb.core.Device.reset()`) before
+`set_configuration()`. A bus reset resets data toggles at the hardware level
+on both sides.
+
+### WRITE32 reads value from arg1, not arg0
+
+The WRITE32 opcode (0x1F) documentation and intuition suggest the value should
+be passed in `arg0` (packet offset 0x36). However, the bootrom extracts the
+write value from `arg1` (packet offset 0x3A). The extraction uses the same
+split-halfword pattern as the address field: low 16 bits from bytes 0x3A–0x3B,
+high 16 bits from bytes 0x3C–0x3D.
+
+Passing the value in `arg0` results in writing 0 to the target address (since
+`arg1` defaults to 0).
+
+### EXECUTE return path can drop an EP3 OUT packet
+
+`usb_irq_dispatch()` snapshots EP3 `RXCSR1` before calling
+`handle_usbboot_packet()`, then unconditionally writes that **pre-saved**
+snapshot back with bit 0 cleared after the handler returns:
+
+```
+3cc0  STRB  R2, [R3]   ; INDEX = 3
+3cd4  STRB  R3, [R2]   ; RXCSR1 = saved_rxcsr1 & 0xFE
+```
+
+The EXECUTE path inside `handle_usbboot_packet()` also clears `RXCSR1.bit0`
+before jumping to the uploaded stub:
+
+```
+412c  STRB  R2, [R3]   ; INDEX = 3
+4148  STRB  R3, [R2]   ; RXCSR1 &= ~1
+4158  LDR   PC, [R11,#-0xC+var_70]
+```
+
+If the stub returns to the bootrom and a new EP3 OUT packet arrived while the
+stub was running, the hardware can set `RXPKTRDY` in the meantime. The stale
+write at `0x3CD4` then clears that newly-set bit without calling
+`handle_usbboot_packet()` again, so the just-arrived packet is dropped.
+
+This is a real lost-packet window in the return path, not just a naming
+artifact.
+
+**Workaround**: if an EXECUTE stub will return, the host must not send the next
+EP3 OUT packet until it knows the stub has already finished. A fixed delay can
+work only if it safely exceeds the stub's worst-case runtime; an out-of-band
+completion signal (UART/GPIO/other side effect) is more reliable. A stub that
+never returns avoids this specific issue entirely.

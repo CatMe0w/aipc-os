@@ -74,7 +74,7 @@ See [spi-boot.md](spi-boot.md) for details.
 Sets rRTC_BOOTMOD = 0x04000000, then calls `probe_flash_boot_source()`.
 
 - Initializes the NF sequencer hardware
-- Iterates through 8 sets of probe parameters (`spi_probe_params[0..7]`)
+- Iterates through 8 sets of probe parameters (`nf_probe_params[0..7]`)
 - For each set, issues the probe command sequence, reads 0x20 bytes, and checks
   for the "ANYKA382" signature
 - On match, reads the full header and dispatches by image type

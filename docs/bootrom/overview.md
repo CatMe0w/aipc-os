@@ -1,17 +1,36 @@
 # AK7802 Bootrom Overview
 
 The AK7802 bootrom is a mask ROM program (~19 KB, 0x4A60 bytes) embedded in the
-SoC. It runs immediately after reset on the ARM926EJ-S core and is responsible
-for selecting a boot source, loading the first-stage payload, and transferring
-execution to it.
+SoC. After reset, the ARM926EJ-S begins execution at address `0x00000000`; the
+instruction there is the reset vector, which immediately branches to the main
+bootrom entry at `0x00000020`. The bootrom then selects a boot source, loads
+the first-stage payload, and transfers execution to it.
+
+## Verifying the Analyzed BootROM
+
+The bootrom is mask ROM and is not writable. If you want to confirm that your
+device contains the same bootrom image analyzed by this documentation, dump the
+ROM over USB boot mode:
+
+```bash
+uv run ak7802-usbboot read --addr 0x0 --len 0x4a60 bootrom.bin
+```
+
+Expected SHA-256: 76f87330b9e2d1d2804acc5489cf085389db8452f1c503c8fcf6a8c0305e0ce9
+
+If the hash differs, do not assume the offsets and behavior documented here are
+identical.
 
 ## Exception Vector Table
 
-The ROM begins at address 0x00000000 with the standard ARM exception vector
-table. The reset vector jumps directly to `bootrom_entry` at offset 0x0020.
-All other vectors (Undefined Instruction, SVC, Prefetch Abort, Data Abort,
-IRQ, FIQ) redirect to addresses in DDR at 0x30000004..0x3000001C, allowing
-a loaded program to install its own handlers.
+The ROM begins at address `0x00000000` with the standard ARM exception vector
+table. The CPU's first fetch after reset is the instruction at `0x00000000`,
+and that reset vector immediately jumps to `bootrom_entry` at `0x00000020`.
+The bytes between `0x00000000` and `0x00000020` are not dead space; they are
+the rest of the exception vector table. The other vectors (Undefined
+Instruction, SVC, Prefetch Abort, Data Abort, IRQ, FIQ) redirect to addresses
+in DDR at `0x30000004..0x3000001C`, allowing a loaded program to install its
+own handlers.
 
 | Vector           | Mechanism     | Target     |
 | ---------------- | ------------- | ---------- |
@@ -46,7 +65,7 @@ DGPIO[3:2] strap pins (see [boot-flow.md](boot-flow.md)):
 | 0x20026000 | -      | UART controller registers            |
 | 0x2002A000 | -      | NAND Flash sequencer registers       |
 | 0x2002B000 | -      | NAND Flash ECC/DMA registers         |
-| 0x48000000 | 0x1800 | L2 buffer SRAM                       |
+| 0x48000000 | 0x2000 | L2 buffer SRAM (8 KB, aliases above) |
 | 0x70000000 | -      | USB controller registers (MUSBMHDRC) |
 | 0x30000000 | -      | DDR SDRAM base (external memory)     |
 

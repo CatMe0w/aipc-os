@@ -13,7 +13,7 @@ enters the console loop.
 The UART initialization sets:
 
 - SYSCTRL+0x78 bit 9 (sharepin UART TX/RX enable)
-- L2CTR_DMAFRAC bits [29:28] (UART L2 buffer path)
+- L2CTR_DMA_PATH_CFG (0x2002C084) bits [29:28] (UART L2 buffer path)
 - UART+0x00 = 807405133 (0x30200A4D) - baud rate and frame config
 - UART+0x0C = 0
 
@@ -117,9 +117,9 @@ All address/value prompts use a shared hex input routine. It:
 
 ### Transmit (`uart_putc`)
 
-1. Sets L2CTR_UARTBUF_CFG bit 16 (TX buffer enable).
-2. Writes the character byte to the L2 buffer TX slot at 0x48000E14.
-3. Clears the L2 fractional count at 0x48000F8C.
+1. Sets L2CTR_BUF8_15_CFG (0x2002C08C) bit 16 (enables the UART TX-side L2 path).
+2. Writes the character word to `L2_UART_TX_PORT` at 0x48001000.
+3. Clears `L2_UART_TX_FRAC_PORT` at 0x4800103C.
 4. Sets UART+0x00 bit 28 (TX start) and UART+0x04 bits for TX trigger.
 5. Polls UART+0x08 bits [12:0] until the count reaches 0 (TX complete).
 
@@ -128,8 +128,10 @@ All address/value prompts use a shared hex input routine. It:
 1. Sets UART+0x00 bit 23 (RX enable).
 2. Polls UART+0x04 bit 30 until RX data is available.
 3. Reads the L2 buffer index from UART+0x08 bits [17:13] to locate the
-   RX data in L2 SRAM.
-4. Reads one 32-bit word from the L2 buffer page.
+   RX data in L2 SRAM. For `idx != 0`, the address is
+   `L2_UART_RX_PAGE_BASE + idx×4` = `0x4800107C + idx×4`; for `idx == 0`, the
+   bootrom instead reads `L2_UART_RX_PAGE0` at 0x480010FC.
+4. Reads one 32-bit word from the selected L2 UART RX page.
 5. Checks UART+0x04 bit 2 (fractional flag): if set, reads the fractional
    byte count from UART+0x08 bits [23:22] and masks the word accordingly.
    Otherwise, all 4 bytes are valid.
