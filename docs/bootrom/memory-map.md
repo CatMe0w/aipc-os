@@ -126,8 +126,8 @@ was determined empirically via USB boot mode write-readback testing:
 | 0x240–0xE6F   | 3120 B | SRAM   | Usable (largest contiguous block)                                                                                                                           |
 | 0xE70–0xFFC   | 396 B  | Stack  | Bootrom stack (SP initialized to 0x48000FFC at entry); grows down through the `usbboot_main_loop` → `usb_irq_dispatch` → `handle_usbboot_packet` call chain |
 | 0x1000–0x10FF | 256 B  | HW     | UART buffer / control region; includes `L2_UART_TX_PORT` (0x48001000), `L2_UART_TX_FRAC_PORT` (0x4800103C), and the UART RX page window beginning at `L2_UART_RX_PAGE_BASE` (0x4800107C) |
-| 0x1100–0x157B | 1148 B | SRAM   | BootROM-proven stack/SRAM region                                                                                                                            |
-| 0x157C–0x15FF | 132 B  | ?      | Not used by BootROM; do not assume usable                                                                                                                   |
+| 0x1100–0x157B | 1148 B | SRAM   | Bootrom-proven stack/SRAM region                                                                                                                            |
+| 0x157C–0x15FF | 132 B  | ?      | Not used by bootrom; do not assume usable                                                                                                                   |
 | 0x1600–0x1FFF | 2560 B | HW     | Hardware-controlled region; reads return fluctuating values across runs, suggesting active DMA or controller state                                          |
 
 **Status legend**: HW = hardware-managed (not reliably writable by CPU during
@@ -154,7 +154,7 @@ available. The UART and hardware-controlled regions (0x1000–0x10FF,
 
 When using DOWNLOAD_BEGIN to write data to 0x48000200 (L2BUF_01), the USB
 hardware DMA overwrites the first 64 bytes (0x48000200–0x4800023F) with every
-subsequent USB packet — including the DOWNLOAD_DONE and EXECUTE command frames.
+subsequent USB packet - including the DOWNLOAD_DONE and EXECUTE command frames.
 This means the first 64 bytes of any payload downloaded to 0x48000200 are
 destroyed before execution begins. Code that needs to be executed from L2
 buffer should be loaded at 0x48000240 or later.

@@ -268,11 +268,43 @@ during the staging process.
 
 ## Bootrom Errata
 
+### EP0 MaxPacketSize incompatible with XHCI initial endpoint context
+
+The device descriptor declares `bMaxPacketSize0 = 16`, and the bootrom sends
+16-byte packets on EP0 from the very first data transaction. However, the XHCI
+specification (§4.3) requires the host controller to initialize the Default
+Control Endpoint MaxPacketSize to **8** for full-speed devices. The host cannot
+learn the actual max packet size until it has successfully read byte 7 of the
+device descriptor and updated the endpoint context - but the first packet
+already violates the 8-byte assumption.
+
+When the XHCI hardware receives a 16-byte EP0 DATA packet on an endpoint
+configured for 8, it raises a **babble error** (the device transmitted more
+data than the endpoint allows per transaction). The host aborts enumeration
+immediately - it reports the device descriptor as invalid and tears down the
+device before it is ever registered for matching.
+
+A secondary issue compounds this: the bootrom's `usb_handle_get_descriptor`
+ignores `wLength` for device descriptors entirely. Furthermore, before
+`SET_ADDRESS` sets `reply->status` to 1, the handler returns only **16 of
+18** device descriptor bytes (missing `iSerialNumber` and
+`bNumConfigurations`), producing a truncated descriptor even on hosts that
+tolerate the oversized packet.
+
+Linux and Windows XHCI implementations are empirically tolerant of this (likely
+using a larger initial max packet size or recovering from the babble during
+initial enumeration). macOS's XHCI driver strictly follows the spec and fails.
+
+**Affected platforms**: macOS (confirmed on Apple Silicon with USB-C, macOS
+26.4). Linux and Windows are not affected.
+
+**Workaround**: Use a Linux or Windows host for USB boot.
+
 ### SET_CONFIGURATION does not reset data toggles
 
 The USB 2.0 spec (§9.1.1.5) requires all endpoint data toggles to be reset to
 DATA0 when the device processes a SET_CONFIGURATION request. The AK7802 bootrom
-does not do this — the SET_CONFIGURATION handler (opcode 9 in
+does not do this - the SET_CONFIGURATION handler (opcode 9 in
 `usb_handle_setup_request`) only sends a status-stage ZLP and returns. Neither
 `usb_handle_bus_reset` nor `usb_configure_endpoint_maxpacket` writes the
 ClrDataTog bits (TXCSR1 bit 6 / RXCSR1 bit 7).
