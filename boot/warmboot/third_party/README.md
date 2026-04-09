@@ -1,7 +1,7 @@
 # HaRET (Handheld Reverse Engineering Tool)
 
 **Purpose**: 
-The core executable for the AIPC OS Warmboot flavor. It hijacks the native Windows CE environment on the Anyka AK7802 SoC and boots the Linux kernel directly from RAM.
+The core executable for the AIPC OS Warmboot flavor. It hijacks the native Windows CE environment on the device and boots the Linux kernel directly from RAM.
 
 **Status**: 
 Historical third-party artifact. Included in this repository to prevent link rot and ensure the warmboot environment can be reproduced out-of-the-box. 

@@ -38,13 +38,13 @@ DELAY 1 tick
 END
 ```
 
-**v1.88 difference 1** — `0x20026000 ← 0x30200433` (UART base register): v1.88
+**v1.88 difference 1** - `0x20026000 <- 0x30200433` (UART base register): v1.88
 initializes the UART clock and baud rate here, during the bootrom-executed DDR
 init phase, before the ARM payload starts. As a result, v1.88's `nboot_main` no
-longer calls a separate `uart_init()` — the UART is already configured by the
+longer calls a separate `uart_init()` - the UART is already configured by the
 time the first character is printed.
 
-**v1.88 difference 2** — `0x2002D008`: the upper half-word changes from `0x0005`
+**v1.88 difference 2** - `0x2002D008`: the upper half-word changes from `0x0005`
 to `0x0003`. This register controls DDR refresh timing; the change likely reflects
 a different DDR chip or revised timing parameters between the two device
 generations.

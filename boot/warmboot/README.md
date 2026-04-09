@@ -1,6 +1,6 @@
 # AIPC OS: Warmboot Flavor
 
-The Warmboot flavor is the most accessible entry point for testing and running AIPC OS on the AK7802 platform. It leverages HaRET to hijack the native Windows CE environment, allowing you to boot the Linux kernel directly from an SD card without hardware modifications.
+The Warmboot flavor is the most accessible entry point for testing and running AIPC OS. It leverages HaRET to hijack the native Windows CE environment, allowing you to boot the Linux kernel directly from an SD card without hardware modifications.
 
 ## Prerequisites
 
@@ -12,7 +12,7 @@ To perform a warmboot, you need the following files located in the same director
 
 ## Usage
 
-1.  Insert the prepared SD card into the AK7802 device.
+1.  Insert the prepared SD card into the device.
 2.  Boot the device into the default Windows CE environment.
 3.  Use the file explorer to navigate to the SD card directory.
 4.  Execute `haret.exe`.
