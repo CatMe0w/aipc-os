@@ -14,7 +14,7 @@ the bootrom.
 | 0x2002A000   | 0x2002A06F  | NAND Flash Sequencer               |
 | 0x2002B000   | 0x2002B00F  | NAND Flash ECC/DMA Control         |
 | 0x30000000   | -           | DDR SDRAM (external memory)        |
-| 0x48000000   | 0x48001FFF  | L2 Buffer SRAM (8 KB, aliases)     |
+| 0x48000000   | 0x4800157F  | L2 Buffer SRAM (5.375 KB or 5504 B; aliases from 0x48002000) |
 | 0x70000000   | 0x70000FFF  | USB Controller (MUSBMHDRC-like)    |
 
 ## System Control Registers (SYSCTRL, base 0x08000000)
@@ -22,7 +22,7 @@ the bootrom.
 | Offset | Bootrom Usage                                                                                         |
 | ------ | ----------------------------------------------------------------------------------------------------- |
 | +0x0C  | Written with 23003 at entry; likely clock or watchdog config                                          |
-| +0x18  | Clock PLL configuration; used by `sub_FA8` with formula `(12*n) \| 0xC000000` and busy-wait on bit 29 |
+| +0x18  | Clock PLL configuration; used by `delay_ticks` with formula `(12*n) \| 0xC000000` and busy-wait on bit 29 |
 | +0x50  | RTC/USB indexed sideband write register (see [diag-mode.md](diag-mode.md))                            |
 | +0x4C  | RTC/USB sideband status; bit 24 = transfer-done flag                                                  |
 | +0x54  | `rRTC_BOOTMOD` - boot stage marker / RTC sideband read-back                                           |
@@ -108,10 +108,12 @@ Each FIFO word encodes a micro-operation:
 
 ## L2 Buffer SRAM (base 0x48000000)
 
-The L2 buffer is an 8 KB SRAM used as an intermediate buffer for all peripheral
-DMA paths (UART, USB, NAND, SPI). The physical address range is
-0x48000000-0x48001FFF; accesses above 0x48001FFF alias back with a 0x2000
-period (confirmed by write-readback probing).
+The L2 buffer is a 5.375 KB (5504 bytes) SRAM used as an intermediate buffer
+for all peripheral DMA paths (UART, USB, NAND, SPI). The physically connected
+address range is 0x48000000-0x4800157F; addresses 0x48001580-0x48001FFF are
+not connected (reads return noise, writes have no effect). Accesses from
+0x48002000 onward alias back with a 0x2000 period (confirmed by
+write-readback probing).
 
 ### Physical Layout
 
@@ -126,18 +128,19 @@ was determined empirically via USB boot mode write-readback testing:
 | 0x240-0xE6F   | 3120 B | SRAM   | Usable (largest contiguous block)                                                                                                                           |
 | 0xE70-0xFFC   | 396 B  | Stack  | Bootrom stack (SP initialized to 0x48000FFC at entry); grows down through the `usbboot_main_loop` -> `usb_irq_dispatch` -> `handle_usbboot_packet` call chain |
 | 0x1000-0x10FF | 256 B  | HW     | UART buffer / control region; includes `L2_UART_TX_PORT` (0x48001000), `L2_UART_TX_FRAC_PORT` (0x4800103C), and the UART RX page window beginning at `L2_UART_RX_PAGE_BASE` (0x4800107C) |
-| 0x1100-0x157B | 1148 B | SRAM   | Bootrom-proven stack/SRAM region                                                                                                                            |
-| 0x157C-0x15FF | 132 B  | ?      | Not used by bootrom; do not assume usable                                                                                                                   |
-| 0x1600-0x1FFF | 2560 B | HW     | Hardware-controlled region; reads return fluctuating values across runs, suggesting active DMA or controller state                                          |
+| 0x1100-0x157F | 1152 B | SRAM   | Usable                                                                                                                                                      |
+| 0x1580-0x1FFF | 2688 B | NC     | Not connected; reads return noise, writes have no effect                                                                                                    |
 
 **Status legend**: HW = hardware-managed (not reliably writable by CPU during
 USB boot mode), Stack = bootrom stack (writable SRAM but actively used;
-available after EXECUTE), SRAM = freely usable general-purpose memory.
+available after EXECUTE), SRAM = freely usable general-purpose memory,
+NC = not connected (reads noise, writes ineffective).
 
 Note: after EXECUTE hands control to a stub, the bootrom stack region
 (0xE70-0xFFC) and the USB staging regions (0x000-0x03F, 0x200-0x23F) become
-available. The UART and hardware-controlled regions (0x1000-0x10FF,
-0x1600-0x1FFF) may remain hardware-managed depending on peripheral state.
+available. The UART region (0x1000-0x10FF) may remain hardware-managed
+depending on peripheral state. The range 0x1580-0x1FFF is not connected and
+cannot be used regardless of peripheral state.
 
 ### Write Granularity
 
