@@ -21,7 +21,7 @@ After the tests complete, the bootrom enters an infinite idle loop.
 ## GPIO4 Test Output Pins
 
 The diagnostic mode uses GPIO4 bits 10 and 11 (bit index = argument + 6,
-where argument 4 → bit 10, argument 5 → bit 11) as test status indicators:
+where argument 4 -> bit 10, argument 5 -> bit 11) as test status indicators:
 
 | Pin (bit) | Role           | Driven by  |
 | --------- | -------------- | ---------- |

@@ -183,13 +183,13 @@ frame) ends the session.
 Every USB EP3 OUT packet (whether command frame or raw data) is first written
 by the USB hardware into L2BUF_01 at 0x48000200 via DMA. The bootrom then
 copies the data from L2BUF_01 into a local stack variable (`cmd_pkt`) before
-parsing. This means each incoming USB packet overwrites 0x48000200–0x4800023F
+parsing. This means each incoming USB packet overwrites 0x48000200-0x4800023F
 regardless of the current protocol state.
 
 **Consequence for downloads to 0x48000200**: When DOWNLOAD_BEGIN targets
 address 0x48000200, each subsequent data packet and the DOWNLOAD_DONE /
 EXECUTE command frames all overwrite the first 64 bytes. After the final
-EXECUTE command, 0x48000200–0x4800023F contains the EXECUTE command frame
+EXECUTE command, 0x48000200-0x4800023F contains the EXECUTE command frame
 (starting with 28 bytes of 0x60 sync_pad), not the intended payload. Code
 uploaded to L2 buffer for execution must be loaded at **0x48000240 or later**
 to avoid this corruption.
@@ -244,8 +244,8 @@ the stub returns, execution continues at `handle_usbboot_packet`'s epilogue,
 and the bootrom USB command loop resumes normally.
 
 The stub inherits the bootrom's stack pointer. At the point of the EXECUTE
-call, SP is inside the bootrom's call chain (`usbboot_main_loop` →
-`usb_irq_dispatch` → `handle_usbboot_packet`), residing in L2 buffer SRAM
+call, SP is inside the bootrom's call chain (`usbboot_main_loop` ->
+`usb_irq_dispatch` -> `handle_usbboot_packet`), residing in L2 buffer SRAM
 around 0x48000E70. The initial SP set at `bootrom_entry` is **0x48000FFC**
 (for USB boot mode) or **0x4800157C** (before SPI/NF boot probing).
 
@@ -325,8 +325,8 @@ on both sides.
 The WRITE32 opcode (0x1F) documentation and intuition suggest the value should
 be passed in `arg0` (packet offset 0x36). However, the bootrom extracts the
 write value from `arg1` (packet offset 0x3A). The extraction uses the same
-split-halfword pattern as the address field: low 16 bits from bytes 0x3A–0x3B,
-high 16 bits from bytes 0x3C–0x3D.
+split-halfword pattern as the address field: low 16 bits from bytes 0x3A-0x3B,
+high 16 bits from bytes 0x3C-0x3D.
 
 Passing the value in `arg0` results in writing 0 to the target address (since
 `arg1` defaults to 0).

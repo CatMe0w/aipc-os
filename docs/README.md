@@ -4,7 +4,8 @@ This directory contains reverse-engineering notes and reference documents for th
 
 ## Index
 
-- [bootrom](bootrom/README.md): Reverse-engineered bootrom architecture, boot flow, boot sources, interfaces, and image format.
+- [bootrom](bootrom/README.md): Reverse-engineered AK7802 SoC bootrom architecture, boot flow, boot sources, interfaces, and image format.
+- [nboot](nboot/README.md): Reverse-engineered AIPC netbook firmware v1.58.2 and v1.88 first-stage bootloader architecture and boot flow.
 
 ## License
 

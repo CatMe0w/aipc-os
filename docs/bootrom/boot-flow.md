@@ -36,13 +36,13 @@ return value encodes the boot mode:
 ```
 detect_boot_override()
   │
-  ├─ 1 → usbboot_main_loop()           [never returns]
+  ├─ 1 -> usbboot_main_loop()           [never returns]
   │
-  ├─ 2 → enter_ap2_bios_console()      [never returns]
+  ├─ 2 -> enter_ap2_bios_console()      [never returns]
   │
-  ├─ 3 → bootrom_diag_mode()           [never returns]
+  ├─ 3 -> bootrom_diag_mode()           [never returns]
   │
-  └─ 0 → Normal boot (continue below)
+  └─ 0 -> Normal boot (continue below)
 ```
 
 ## Normal Boot: Storage Probe Sequence
@@ -65,9 +65,9 @@ See [spi-boot.md](spi-boot.md) for details.
 
 | Return | Action                                        |
 | ------ | --------------------------------------------- |
-| 1      | Valid type-8 image → jump to 0x48000200 (L2)  |
-| 2      | Valid type-6 image → jump to 0x30000000 (DDR) |
-| 0      | No valid SPI image found → continue to NAND   |
+| 1      | Valid type-8 image -> jump to 0x48000200 (L2)  |
+| 2      | Valid type-6 image -> jump to 0x30000000 (DDR) |
+| 0      | No valid SPI image found -> continue to NAND   |
 
 ### Step 2: NAND Flash Probe
 
@@ -83,9 +83,9 @@ See [nand-boot.md](nand-boot.md) for details.
 
 | Return | Action                                           |
 | ------ | ------------------------------------------------ |
-| 1      | Valid type-8 image → jump to 0x48000200 (L2)     |
-| 2      | Valid type-6 image → jump to 0x30000000 (DDR)    |
-| 0      | No valid NAND image found → continue to fallback |
+| 1      | Valid type-8 image -> jump to 0x48000200 (L2)     |
+| 2      | Valid type-6 image -> jump to 0x30000000 (DDR)    |
+| 0      | No valid NAND image found -> continue to fallback |
 
 ### Step 3: Fallback
 

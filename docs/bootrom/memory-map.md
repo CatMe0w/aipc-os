@@ -79,7 +79,7 @@ address is `L2_UART_RX_PAGE_BASE + idx×4` = `0x4800107C + idx×4`, where
 | +0x05C | NF timing register 0; default value 1006545 (0x0F5B51) |
 | +0x060 | NF timing register 1                                   |
 
-The BootROM-visible NF sequencer FIFO lives at 0x2002A000–0x2002A058:
+The BootROM-visible NF sequencer FIFO lives at 0x2002A000-0x2002A058:
 
 | Offset         | Description                                   |
 | -------------- | --------------------------------------------- |
@@ -110,7 +110,7 @@ Each FIFO word encodes a micro-operation:
 
 The L2 buffer is an 8 KB SRAM used as an intermediate buffer for all peripheral
 DMA paths (UART, USB, NAND, SPI). The physical address range is
-0x48000000–0x48001FFF; accesses above 0x48001FFF alias back with a 0x2000
+0x48000000-0x48001FFF; accesses above 0x48001FFF alias back with a 0x2000
 period (confirmed by write-readback probing).
 
 ### Physical Layout
@@ -120,24 +120,32 @@ was determined empirically via USB boot mode write-readback testing:
 
 | Offset Range  | Size   | Status | Description                                                                                                                                                 |
 | ------------- | ------ | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0x000–0x03F   | 64 B   | HW     | USB EP2 bulk IN staging (L2BUF_00); written by `usb_bulk_in_send_next_chunk` during every USB TX                                                            |
-| 0x040–0x1FF   | 448 B  | SRAM   | Usable                                                                                                                                                      |
-| 0x200–0x23F   | 64 B   | HW     | USB EP3 bulk OUT DMA target; USB hardware writes every incoming EP3 packet here before the bootrom copies it to the stack                                   |
-| 0x240–0xE6F   | 3120 B | SRAM   | Usable (largest contiguous block)                                                                                                                           |
-| 0xE70–0xFFC   | 396 B  | Stack  | Bootrom stack (SP initialized to 0x48000FFC at entry); grows down through the `usbboot_main_loop` → `usb_irq_dispatch` → `handle_usbboot_packet` call chain |
-| 0x1000–0x10FF | 256 B  | HW     | UART buffer / control region; includes `L2_UART_TX_PORT` (0x48001000), `L2_UART_TX_FRAC_PORT` (0x4800103C), and the UART RX page window beginning at `L2_UART_RX_PAGE_BASE` (0x4800107C) |
-| 0x1100–0x157B | 1148 B | SRAM   | Bootrom-proven stack/SRAM region                                                                                                                            |
-| 0x157C–0x15FF | 132 B  | ?      | Not used by bootrom; do not assume usable                                                                                                                   |
-| 0x1600–0x1FFF | 2560 B | HW     | Hardware-controlled region; reads return fluctuating values across runs, suggesting active DMA or controller state                                          |
+| 0x000-0x03F   | 64 B   | HW     | USB EP2 bulk IN staging (L2BUF_00); written by `usb_bulk_in_send_next_chunk` during every USB TX                                                            |
+| 0x040-0x1FF   | 448 B  | SRAM   | Usable                                                                                                                                                      |
+| 0x200-0x23F   | 64 B   | HW     | USB EP3 bulk OUT DMA target; USB hardware writes every incoming EP3 packet here before the bootrom copies it to the stack                                   |
+| 0x240-0xE6F   | 3120 B | SRAM   | Usable (largest contiguous block)                                                                                                                           |
+| 0xE70-0xFFC   | 396 B  | Stack  | Bootrom stack (SP initialized to 0x48000FFC at entry); grows down through the `usbboot_main_loop` -> `usb_irq_dispatch` -> `handle_usbboot_packet` call chain |
+| 0x1000-0x10FF | 256 B  | HW     | UART buffer / control region; includes `L2_UART_TX_PORT` (0x48001000), `L2_UART_TX_FRAC_PORT` (0x4800103C), and the UART RX page window beginning at `L2_UART_RX_PAGE_BASE` (0x4800107C) |
+| 0x1100-0x157B | 1148 B | SRAM   | Bootrom-proven stack/SRAM region                                                                                                                            |
+| 0x157C-0x15FF | 132 B  | ?      | Not used by bootrom; do not assume usable                                                                                                                   |
+| 0x1600-0x1FFF | 2560 B | HW     | Hardware-controlled region; reads return fluctuating values across runs, suggesting active DMA or controller state                                          |
 
 **Status legend**: HW = hardware-managed (not reliably writable by CPU during
 USB boot mode), Stack = bootrom stack (writable SRAM but actively used;
 available after EXECUTE), SRAM = freely usable general-purpose memory.
 
 Note: after EXECUTE hands control to a stub, the bootrom stack region
-(0xE70–0xFFC) and the USB staging regions (0x000–0x03F, 0x200–0x23F) become
-available. The UART and hardware-controlled regions (0x1000–0x10FF,
-0x1600–0x1FFF) may remain hardware-managed depending on peripheral state.
+(0xE70-0xFFC) and the USB staging regions (0x000-0x03F, 0x200-0x23F) become
+available. The UART and hardware-controlled regions (0x1000-0x10FF,
+0x1600-0x1FFF) may remain hardware-managed depending on peripheral state.
+
+### Write Granularity
+
+The L2 buffer SRAM does not support byte-granularity writes. A `STRB` to any
+address within the L2 region replicates the written byte across the entire
+aligned 32-bit word. For example, storing 0x78 to address 0x48000240 via `STRB`
+produces 0x78787878 at the aligned word 0x48000240-0x48000243. All writes to the
+L2 buffer must use word-width store instructions (`STR`).
 
 ### Named Regions
 
@@ -153,7 +161,7 @@ available. The UART and hardware-controlled regions (0x1000–0x10FF,
 ### Critical: USB Boot Download to 0x48000200
 
 When using DOWNLOAD_BEGIN to write data to 0x48000200 (L2BUF_01), the USB
-hardware DMA overwrites the first 64 bytes (0x48000200–0x4800023F) with every
+hardware DMA overwrites the first 64 bytes (0x48000200-0x4800023F) with every
 subsequent USB packet - including the DOWNLOAD_DONE and EXECUTE command frames.
 This means the first 64 bytes of any payload downloaded to 0x48000200 are
 destroyed before execution begins. Code that needs to be executed from L2
