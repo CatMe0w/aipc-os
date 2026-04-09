@@ -3,6 +3,7 @@ AIPC OS Project Licensing Declaration & Root License
 The AIPC OS repository is a collection of reverse-engineering tools, bootloaders, kernel patches, and hardware documentation. Different components of this project are distributed under specific licenses:
 
 - Kernel Patches (kernel/): GNU General Public License v2.0 (GPLv2). See `kernel/COPYING`.
+- AIPC DOOM (doom/): GNU General Public License v2.0 (GPLv2). See `doom/COPYING`.
 - Documentation (docs/): Creative Commons Attribution-ShareAlike 4.0 (CC-BY-SA 4.0). See `docs/LICENSE`.
 
 For all other components, scripts, tools, and unspecified files located in the root directory or `boot/` and `tools/` subdirectories (unless otherwise stated in their respective directories), the following MIT License applies:
