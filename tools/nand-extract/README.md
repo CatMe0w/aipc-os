@@ -1,50 +1,31 @@
 # aipc-nand-extract
 
-Extract boot images from an AIPC netbook WinCE NAND dump produced by `nand-dump`
-or `nand-dump-min`.
+Extract partitions from an AIPC WinCE NAND dump.
+
+It first finds the vendor `PTB` block near the end of NAND, then scans for the
+`NBT` entry as the start of the fixed `0x30`-byte partition records, and parses
+forward until `END`.
 
 ## Usage
 
-```
+```sh
 uv run aipc-nand-extract nand.img -o out/
 ```
 
 Without `-o`, files are written to an `extracted/` directory next to the
 input image.
 
-## NAND partition layout
+## Output
 
-| Offset       | Size   | Content                                      |
-| ------------ | ------ | -------------------------------------------- |
-| `0x00000000` | 128 KB | nboot (ANYKA382 type-6 DDR image)            |
-| `0x00040000` | 512 KB | eboot IPL (Anyka IMG wrapper + EBOOT binary) |
-| `0x00240000` | 512 KB | eboot BAK (backup copy)                      |
-| `0x00480000` | ~68 MB | NK / WinCE OS image region                   |
-| `0x1FF60000` | 4 KB   | PTB (Partition Table Block)                  |
+The tool writes:
 
-## Output files
+- `ptb.json`: parsed PTB metadata and derived extraction results
+- `ptb.raw`: raw 4 KB PTB block
+- `<tag>.raw`: PTB-selected full partition slices for every non-`END` PTB entry
+- `nboot.nb0`, `eboot.nb0`, `eboot_bak.nb0`: payloads derived from known boot partitions
+- `nboot_ddr_init.txt`: DDR/init register script extracted from the `ANYKA382` nboot wrapper
+- `nk_ecec_XX.raw`: page-aligned `ECEC` sub-images found inside `nk.raw`
 
-| File                 | Format   | Description                                                                         |
-| -------------------- | -------- | ----------------------------------------------------------------------------------- |
-| `nboot.nb0`          | raw ARM  | nboot payload, loaded to `0x30000000` by the bootrom. Initializes DDR, loads eboot. |
-| `nboot.akimg`        | Anyka    | Full ANYKA382 image (bootrom header + register init script + payload).              |
-| `nboot_ddr_init.txt` | text     | Human-readable DDR register init sequence extracted from the ANYKA382 header.       |
-| `eboot.nb0`          | raw ARM  | EBOOT binary with Anyka IMG header stripped. Same name the vendor uses.             |
-| `eboot.akimg`        | Anyka    | Full Anyka IMG region (`IMG\0` header + binary).                                    |
-| `eboot_bak.nb0`      | raw ARM  | Backup EBOOT (typically identical to `eboot.nb0`).                                  |
-| `eboot_bak.akimg`    | Anyka    | Backup Anyka IMG region.                                                            |
-| `nk.raw`             | raw dump | NK / OS region, raw NAND content. Not standard WinCE BIN format.                    |
-| `ptb.bin`            | binary   | Partition Table Block (Anyka config data).                                          |
-
-### File format notes
-
-- **`.nb0`** is the standard WinCE naming for a raw binary NAND boot image -
-  flat ARM code with no container, suitable for direct loading or
-  disassembly.
-- **`.akimg`** is a project-local convention for Anyka proprietary image
-  wrappers (ANYKA382 bootrom format or `IMG\0` envelope). These contain
-  metadata (signatures, load descriptors, register init scripts) that the
-  raw `.nb0` files do not.
-- **`nk.raw`** is deliberately not named `NK.bin` because the region does
-  not use the standard WinCE BIN format (`B000FF\n` header + address/data
-  records). The eboot loads it via an Anyka-specific mechanism.
+`nk.raw` is not expected to begin with `B000FF`. On this platform, `EBOOT`
+boots through the vendor `PTB` and then loads one or more `ECEC` images from
+the `NK` partition.

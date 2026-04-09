@@ -118,7 +118,7 @@ def read(addr: int, length: int, file: str, verbose: bool) -> None:
     with open(file, "wb") as f:
         f.write(data)
 
-    click.echo(f"read {len(data):#x} bytes from {addr:#010x} → {file}")
+    click.echo(f"read {len(data):#x} bytes from {addr:#010x} -> {file}")
 
 
 # ---------------------------------------------------------------------------
@@ -161,4 +161,4 @@ def poke(addr: int, value: int, verbose: bool) -> None:
 
     dev = _get_device()
     dev.poke(addr, value)
-    click.echo(f"wrote {value:#010x} → {addr:#010x}")
+    click.echo(f"wrote {value:#010x} -> {addr:#010x}")

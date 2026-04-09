@@ -1,198 +1,371 @@
-"""
-Extract boot images from an AIPC netbook WinCE NAND dump.
+"""Extract PTB-indexed partitions from an AIPC NAND dump."""
 
-Partition layout (512 MB NAND, 2048-byte pages, 128 or 256 KB blocks):
-
-  Offset       Size    Content
-  0x00000000   128KB   nboot (ANYKA382 type-6 DDR image, loaded by bootrom)
-  0x00020000   128KB   (reserved)
-  0x00040000   512KB   eboot IPL (IMG wrapper + WinCE EBOOT binary)
-  0x000C0000   256KB   eboot tail / config data
-  0x00240000   512KB   eboot BAK (backup copy)
-  0x00480000   ~68MB   NK / WinCE OS image region
-  0x03E00000+          FAT filesystem
-  0x1FF60000   4KB     PTB (Partition Table Block)
-"""
-
+import json
 import struct
+from dataclasses import dataclass
 from pathlib import Path
 
 import click
 
+BLOCK_SIZE = 0x20000
+PTB_ENTRY_SIZE = 0x30
+PTB_MAX_ENTRIES = 32
 
-def extract_nboot(data: bytes, out_dir: Path) -> None:
-    """Extract nboot from ANYKA382 header at offset 0."""
-    sig = data[4:12]
-    if sig != b"ANYKA382":
-        click.echo("  WARNING: ANYKA382 signature not found at offset 0x04")
-        return
 
-    counts = struct.unpack_from("<BBBB", data, 0x0C)
-    chunks_per_page = counts[0]
-    page_count = counts[1]
-    image_type = struct.unpack_from("<I", data, 0x20)[0]
+@dataclass(frozen=True)
+class PTBEntry:
+    index: int
+    raw_tag: bytes
+    filename: str
+    unk0: int
+    flags: int
+    start_block: int
+    block_count: int
+    load_addr: int
+
+    @property
+    def tag(self) -> str:
+        return self.raw_tag.rstrip(b"\x00").decode("ascii", errors="replace")
+
+    @property
+    def offset(self) -> int:
+        return self.start_block * BLOCK_SIZE
+
+    @property
+    def size(self) -> int:
+        return self.block_count * BLOCK_SIZE
+
+    def to_json(self) -> dict:
+        return {
+            "index": self.index,
+            "tag": self.tag,
+            "filename": self.filename,
+            "unk0": self.unk0,
+            "flags": self.flags,
+            "start_block": self.start_block,
+            "block_count": self.block_count,
+            "offset": self.offset,
+            "size": self.size,
+            "load_addr": self.load_addr,
+        }
+
+
+def decode_c_string(raw: bytes) -> str:
+    return raw.split(b"\x00", 1)[0].decode("ascii", errors="replace")
+
+
+def find_ptb(data: bytes) -> int | None:
+    needle = b"PTB\x00"
+    start = max(0, len(data) - 0x4000000)
+    off = len(data)
+    while True:
+        pos = data.rfind(needle, start, off)
+        if pos == -1:
+            return None
+        if pos % BLOCK_SIZE == 0:
+            return pos
+        off = pos
+
+
+def parse_ptb_entry(raw: bytes, index: int) -> PTBEntry:
+    return PTBEntry(
+        index=index,
+        raw_tag=raw[4:8],
+        filename=decode_c_string(raw[8:24]),
+        unk0=struct.unpack_from("<I", raw, 0x00)[0],
+        flags=struct.unpack_from("<I", raw, 0x1C)[0],
+        start_block=struct.unpack_from("<I", raw, 0x20)[0],
+        block_count=struct.unpack_from("<I", raw, 0x24)[0],
+        load_addr=struct.unpack_from("<I", raw, 0x28)[0],
+    )
+
+
+def parse_ptb_table(ptb_data: bytes) -> tuple[int, list[PTBEntry]]:
+    best_offset = -1
+    best_entries: list[PTBEntry] = []
+    pos = -1
+    while True:
+        pos = ptb_data.find(b"NBT\x00", pos + 1)
+        if pos == -1:
+            break
+        if pos < 4:
+            continue
+        table_offset = pos - 4
+        if table_offset % 4:
+            continue
+
+        entries: list[PTBEntry] = []
+        for index in range(PTB_MAX_ENTRIES):
+            off = table_offset + index * PTB_ENTRY_SIZE
+            end = off + PTB_ENTRY_SIZE
+            if end > len(ptb_data):
+                break
+            entry = parse_ptb_entry(ptb_data[off:end], index)
+            entries.append(entry)
+            if entry.tag == "END":
+                break
+
+        if entries and entries[0].tag == "NBT" and entries[-1].tag == "END" and len(entries) > len(best_entries):
+            best_offset = table_offset
+            best_entries = entries
+
+    if best_offset < 0:
+        raise ValueError("PTB entry table not found")
+    return best_offset, best_entries
+
+
+def find_entry(entries: list[PTBEntry], tag: str) -> PTBEntry | None:
+    for entry in entries:
+        if entry.tag == tag:
+            return entry
+    return None
+
+
+def write_raw_partition(data: bytes, out_dir: Path, stem: str, entry: PTBEntry) -> Path:
+    path = out_dir / f"{entry.tag}.raw"
+    path.write_bytes(data[entry.offset : entry.offset + entry.size])
+    return path
+
+
+def extract_nboot_nb0(raw: bytes, out_dir: Path, stem: str) -> dict | None:
+    if raw[4:12] != b"ANYKA382":
+        return None
+    chunks_per_page, page_count, _, _ = struct.unpack_from("<BBBB", raw, 0x0C)
+    image_type = struct.unpack_from("<I", raw, 0x20)[0]
     page_size = chunks_per_page * 512
-
-    type_name = {6: "DDR", 8: "L2"}.get(image_type, "?")
-    click.echo(f"  Signature:       ANYKA382")
-    click.echo(f"  Image type:      {image_type} ({type_name})")
-    click.echo(f"  Page size:       {page_size} B ({chunks_per_page} chunks/page)")
-    click.echo(f"  Payload pages:   {page_count}")
-
-    payload_offset = page_size
     payload_size = page_count * page_size
-    click.echo(f"  Payload:         0x{payload_offset:X}..0x{payload_offset + payload_size:X}"
-               f" ({payload_size} bytes)")
-
-    full = data[: page_size + payload_size]
-    (out_dir / "nboot.akimg").write_bytes(full)
-    click.echo(f"  -> nboot.akimg ({len(full)} B)")
-
-    payload = data[payload_offset : payload_offset + payload_size]
-    (out_dir / "nboot.nb0").write_bytes(payload)
-    click.echo(f"  -> nboot.nb0 ({len(payload)} B, load addr 0x30000000)")
-
+    payload = raw[page_size : page_size + payload_size]
+    path = out_dir / f"{stem}.nb0"
+    path.write_bytes(payload)
     script_path = out_dir / "nboot_ddr_init.txt"
     with open(script_path, "w") as f:
-        f.write("# nboot register init script (type-6 DDR init)\n")
-        f.write("# Format: address value  (or special tag)\n")
-        script_base = 0x24
+        f.write("# nboot register init script\n")
+        f.write("# Format: address value\n")
         for i in range(32):
-            off = script_base + i * 8
+            off = 0x24 + i * 8
             if off + 8 > page_size:
                 break
-            addr = struct.unpack_from("<I", data, off)[0]
-            val = struct.unpack_from("<I", data, off + 4)[0]
+            addr = struct.unpack_from("<I", raw, off)[0]
+            val = struct.unpack_from("<I", raw, off + 4)[0]
             if addr == 0x88888888:
                 f.write(f"END        0x{val:08X}\n")
                 break
-            elif addr == 0x66668888:
+            if addr == 0x66668888:
                 f.write(f"DELAY      {val} ticks\n")
             else:
                 f.write(f"0x{addr:08X} 0x{val:08X}\n")
-    click.echo(f"  -> nboot_ddr_init.txt")
+    return {
+        "path": path.name,
+        "image_type": image_type,
+        "page_size": page_size,
+        "payload_pages": page_count,
+        "payload_offset": page_size,
+        "payload_size": payload_size,
+        "ddr_init_path": script_path.name,
+    }
 
 
-def extract_eboot(data: bytes, out_dir: Path, name: str, offset: int) -> None:
-    """Extract eboot from Anyka IMG wrapper at given offset."""
-    magic = data[offset : offset + 4]
-    if magic != b"IMG\x00":
-        click.echo(f"  WARNING: IMG magic not found at 0x{offset:X}")
-        return
-
-    img_type = data[offset + 4 : offset + 8].rstrip(b"\x00").decode("ascii")
-    filename = data[offset + 8 : offset + 0x18].split(b"\x00")[0].decode("ascii")
-    load_addr = struct.unpack_from("<I", data, offset + 0x18)[0]
-    region_size = struct.unpack_from("<I", data, offset + 0x1C)[0]
-
-    click.echo(f"  IMG type:        {img_type}")
-    click.echo(f"  Filename:        {filename}")
-    click.echo(f"  Load addr:       0x{load_addr:08X}")
-    click.echo(f"  Region size:     0x{region_size:X} ({region_size // 1024} KB)")
-
-    img_region = data[offset : offset + region_size]
-    (out_dir / f"{name}.akimg").write_bytes(img_region)
-    click.echo(f"  -> {name}.akimg ({len(img_region)} B)")
-
-    # Strip Anyka IMG header; binary code starts at +0x2C
-    bin_data = data[offset + 0x2C : offset + region_size]
-    end = len(bin_data)
-    while end > 0 and bin_data[end - 1] in (0x00, 0xFF):
+def extract_img_nb0(raw: bytes, out_dir: Path, stem: str) -> dict | None:
+    img_offset = raw.find(b"IMG\x00")
+    if img_offset < 0:
+        return None
+    img_type = decode_c_string(raw[img_offset + 4 : img_offset + 8])
+    filename = decode_c_string(raw[img_offset + 8 : img_offset + 24])
+    load_addr = struct.unpack_from("<I", raw, img_offset + 0x18)[0]
+    region_size = struct.unpack_from("<I", raw, img_offset + 0x1C)[0]
+    nb0 = raw[img_offset + 0x2C : img_offset + region_size]
+    end = len(nb0)
+    while end > 0 and nb0[end - 1] in (0x00, 0xFF):
         end -= 1
     end = (end + 3) & ~3
-    bin_trimmed = bin_data[:end]
-
-    (out_dir / f"{name}.nb0").write_bytes(bin_trimmed)
-    click.echo(f"  -> {name}.nb0 ({len(bin_trimmed)} B)")
-
-
-def extract_nk(data: bytes, out_dir: Path) -> None:
-    """Extract the NK / WinCE OS region."""
-    nk_start = 0x00480000
-    block_size = 0x20000
-
-    last_data_block = nk_start
-    consecutive_empty = 0
-    for block_start in range(nk_start, len(data), block_size):
-        block = data[block_start : block_start + block_size]
-        is_empty = all(b == 0xFF for b in block) or all(b == 0x00 for b in block)
-        if not is_empty:
-            last_data_block = block_start + block_size
-            consecutive_empty = 0
-        else:
-            consecutive_empty += 1
-            if consecutive_empty >= 16:
-                break
-
-    nk_size = last_data_block - nk_start
-    click.echo(f"  Region:          0x{nk_start:08X}..0x{last_data_block:08X}")
-    click.echo(f"  Size:            0x{nk_size:X} ({nk_size // (1024 * 1024)} MB)")
-
-    nk_data = data[nk_start:last_data_block]
-    (out_dir / "nk.raw").write_bytes(nk_data)
-    click.echo(f"  -> nk.raw ({len(nk_data)} B)")
-
-    if nk_data[:7] == b"B000FF\n":
-        img_start = struct.unpack_from("<I", nk_data, 7)[0]
-        img_len = struct.unpack_from("<I", nk_data, 11)[0]
-        click.echo(f"  WinCE BIN header: start=0x{img_start:08X}, len=0x{img_len:X}")
-    else:
-        click.echo(f"  No WinCE BIN (B000FF) header; Anyka proprietary format")
+    path = out_dir / f"{stem}.nb0"
+    path.write_bytes(nb0[:end])
+    return {
+        "path": path.name,
+        "img_offset": img_offset,
+        "img_type": img_type,
+        "filename": filename,
+        "load_addr": load_addr,
+        "region_size": region_size,
+        "nb0_size": end,
+    }
 
 
-def extract_ptb(data: bytes, out_dir: Path) -> None:
-    """Extract the PTB (Partition Table Block)."""
-    ptb_offset = 0x1FF60000
-    if ptb_offset + 4 > len(data):
-        click.echo("  PTB offset out of range")
-        return
-    magic = data[ptb_offset : ptb_offset + 4]
-    if magic != b"PTB\x00":
-        click.echo(f"  WARNING: PTB magic not found at 0x{ptb_offset:X}")
-        return
+def scan_ecec_headers(raw: bytes) -> list[dict]:
+    headers = []
+    for offset in range(0, len(raw) - 0x4C, 0x800):
+        if raw[offset + 0x40 : offset + 0x44] != b"ECEC":
+            continue
+        field_44 = struct.unpack_from("<I", raw, offset + 0x44)[0]
+        field_48 = struct.unpack_from("<I", raw, offset + 0x48)[0]
+        if field_44 <= field_48:
+            continue
+        headers.append(
+            {
+                "offset": offset,
+                "header_field_44": field_44,
+                "header_field_48": field_48,
+                "load_base": field_44 - field_48,
+            }
+        )
+    return headers
 
-    click.echo(f"  Offset:          0x{ptb_offset:08X}")
-    ptb_data = data[ptb_offset : ptb_offset + 4096]
-    (out_dir / "ptb.bin").write_bytes(ptb_data)
-    click.echo(f"  -> ptb.bin ({len(ptb_data)} B)")
+
+def find_u32(raw: bytes, value: int) -> list[int]:
+    needle = struct.pack("<I", value)
+    hits = []
+    pos = -4
+    while True:
+        pos = raw.find(needle, pos + 4)
+        if pos < 0:
+            return hits
+        if pos % 4 == 0:
+            hits.append(pos)
+
+
+def scan_chain_spans(raw: bytes, headers: list[dict]) -> dict[int, int]:
+    if len(headers) < 2:
+        return {}
+
+    first_blob = raw[: headers[1]["offset"]]
+    chain_off = first_blob.find(b"@chain information")
+    if chain_off < 0:
+        return {}
+
+    bases = {header["load_base"] for header in headers}
+    spans: dict[int, int] = {}
+    for base in bases:
+        for hit in find_u32(first_blob, base):
+            if not (chain_off - 0x200 <= hit <= chain_off + 0x200):
+                continue
+            start = max(0, hit - 4)
+            end = min(len(first_blob), start + 0x80)
+            for rec_off in range(start, max(start, end - 0x20) + 1, 0x20):
+                vals = struct.unpack_from("<8I", first_blob, rec_off)
+                for tuple_off in (0, 4):
+                    load_base = vals[tuple_off + 1]
+                    span_size = vals[tuple_off + 2]
+                    if load_base in bases and span_size and span_size % 0x800 == 0:
+                        spans[load_base] = span_size
+            if spans:
+                return spans
+    return spans
+
+
+def find_ecec_images(raw: bytes) -> list[dict]:
+    headers = scan_ecec_headers(raw)
+    spans = scan_chain_spans(raw, headers)
+    images = []
+    for index, header in enumerate(headers):
+        next_offset = headers[index + 1]["offset"] if index + 1 < len(headers) else len(raw)
+        size = spans.get(header["load_base"], next_offset - header["offset"])
+        images.append(
+            {
+                "offset": header["offset"],
+                "size": min(size, len(raw) - header["offset"]),
+                "load_base": header["load_base"],
+                "header_field_44": header["header_field_44"],
+                "header_field_48": header["header_field_48"],
+            }
+        )
+    return images
+
+
+def write_ecec_images(raw: bytes, out_dir: Path, images: list[dict]) -> list[dict]:
+    written = []
+    for index, image in enumerate(images):
+        path = out_dir / f"nk_ecec_{index:02d}.raw"
+        path.write_bytes(raw[image["offset"] : image["offset"] + image["size"]])
+        written.append({**image, "path": path.name})
+    return written
+
+
+def entry_stem(entry: PTBEntry) -> str:
+    return {
+        "NBT": "nboot",
+        "IPL": "eboot",
+        "BAK": "eboot_bak",
+        "NK": "nk",
+    }.get(entry.tag, entry.tag.lower())
 
 
 @click.command()
 @click.argument("nand_image", type=click.Path(exists=True))
 @click.option(
-    "-o", "--output",
+    "-o",
+    "--output",
     type=click.Path(),
     default=None,
     help="Output directory. Default: <nand_image_dir>/extracted.",
 )
 def main(nand_image: str, output: str | None) -> None:
-    """Extract boot images from an AIPC netbook NAND dump.
-
-    Splits NAND_IMAGE into nboot, eboot, NK, and PTB components.
-    """
     nand_path = Path(nand_image)
     out_dir = Path(output) if output else nand_path.parent / "extracted"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    data = nand_path.read_bytes()
+    ptb_offset = find_ptb(data)
+    if ptb_offset is None:
+        raise click.ClickException("PTB not found")
+
+    ptb_raw = data[ptb_offset : ptb_offset + 0x1000]
+    (out_dir / "ptb.raw").write_bytes(ptb_raw)
+
+    version = decode_c_string(ptb_raw[4:8])
+    table_offset, entries = parse_ptb_table(ptb_raw)
+    metadata: dict = {
+        "nand_image": nand_path.name,
+        "nand_size": len(data),
+        "block_size": BLOCK_SIZE,
+        "ptb": {
+            "offset": ptb_offset,
+            "version": version,
+            "table_offset": table_offset,
+            "raw_path": "ptb.raw",
+            "entries": [entry.to_json() for entry in entries],
+        },
+        "outputs": {},
+    }
 
     click.echo(f"Reading {nand_path} ...")
-    data = nand_path.read_bytes()
     click.echo(f"  Size: {len(data)} bytes ({len(data) // (1024 * 1024)} MB)")
+    click.echo(f"Output: {out_dir}")
+    click.echo(f"PTB: 0x{ptb_offset:08X}, version {version}, table 0x{table_offset:X}")
 
-    out_dir.mkdir(parents=True, exist_ok=True)
-    click.echo(f"Output: {out_dir}\n")
+    for entry in entries:
+        if entry.tag == "END":
+            continue
+        stem = entry_stem(entry)
+        raw_path = write_raw_partition(data, out_dir, stem, entry)
+        item = {
+            "entry": entry.to_json(),
+            "raw_path": raw_path.name,
+            "raw_is_partition_slice": True,
+        }
+        raw = raw_path.read_bytes()
+        nb0_info = None
+        if entry.tag == "NBT":
+            nb0_info = extract_nboot_nb0(raw, out_dir, stem)
+        elif entry.tag in {"IPL", "BAK"}:
+            nb0_info = extract_img_nb0(raw, out_dir, stem)
+        if nb0_info is not None:
+            item["derived_nb0"] = nb0_info
+        if entry.tag == "NK":
+            item["ecec_images"] = write_ecec_images(raw, out_dir, find_ecec_images(raw))
+        metadata["outputs"][stem] = item
 
-    click.echo("=== nboot ===")
-    extract_nboot(data, out_dir)
+    json_path = out_dir / "ptb.json"
+    json_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
+    click.echo(f"  -> {json_path.name}")
+    for name, item in metadata["outputs"].items():
+        click.echo(f"  -> {item['raw_path']}")
+        if "derived_nb0" in item:
+            click.echo(f"  -> {item['derived_nb0']['path']}")
+            if "ddr_init_path" in item["derived_nb0"]:
+                click.echo(f"  -> {item['derived_nb0']['ddr_init_path']}")
+        for image in item.get("ecec_images", []):
+            click.echo(f"  -> {image['path']}")
 
-    click.echo("\n=== eboot (IPL) ===")
-    extract_eboot(data, out_dir, "eboot", 0x00040000)
 
-    click.echo("\n=== eboot (BAK) ===")
-    extract_eboot(data, out_dir, "eboot_bak", 0x00240000)
-
-    click.echo("\n=== NK ===")
-    extract_nk(data, out_dir)
-
-    click.echo("\n=== PTB ===")
-    extract_ptb(data, out_dir)
-
-    click.echo(f"\nDone. Files written to {out_dir}")
+if __name__ == "__main__":
+    main()
