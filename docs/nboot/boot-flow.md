@@ -81,7 +81,10 @@ loop:
 ```
 
 After relocation, nboot runs entirely from `0x30E00000`, leaving `0x30000000`
-free for eboot (loaded at `0x30038000`).
+free for eboot. The handoff target is `0x30038000`, but nboot actually starts
+copying the `IPL` container at `0x30037FD4`, so the `0x2C`-byte `IMG` header
+lands immediately before the entry point and the first payload instruction
+(`IPL.raw+0x2C`) ends up at `0x30038000`.
 
 **3. Set up CPU mode and stack pointers, then jump:**
 
@@ -106,7 +109,7 @@ void __noreturn nboot_main()
     uart_putc('S');           // UART ready, NAND init starting
     nboot_init_nand_params();
     uart_putc('L');           // NAND ready, loading eboot
-    nboot_load_eboot(0x30038000, /*start_block=*/2, /*max_bytes=*/0x64000);
+    nboot_load_eboot(0x30037FD4, /*start_block=*/2, /*max_bytes=*/0x64000);
     uart_putc('B');           // eboot loaded, jumping
     ((void(*)(void))0x30038000)();
     // never returns
@@ -174,9 +177,18 @@ Both versions program the same NAND controller registers:
 
 ## Phase 3: eboot Loading (`nboot_load_eboot`)
 
-`nboot_load_eboot(dst=0x30038000, start_block=2, max_bytes=0x64000)` loads up
-to 400 KB from NAND starting at block 2 (the IPL partition per the PTB) into
-DDR at `0x30038000`.
+`nboot_load_eboot(dst=0x30037FD4, start_block=2, max_bytes=0x64000)` loads up
+to 400 KB from NAND starting at block 2 into DDR. The fixed start block matches
+the current `PTB` `IPL` entry, but nboot does not parse `PTB` at runtime.
+
+The `0x30037FD4` destination is deliberate: it is `0x2C` bytes before the
+handoff address `0x30038000`, matching the size of the `IMG` wrapper at the
+start of `IPL.raw`. As a result:
+
+- `IPL.raw[0x0000:0x002C]` lands at `0x30037FD4-0x30037FFF`
+- `IPL.raw[0x002C]` lands at `0x30038000`
+- the bytes actually visible to the jumped-to payload are
+  `IPL.raw[0x002C:0x64000]` (equivalently `eboot.nb0[0:0x63FD4]`)
 
 **Algorithm:**
 
@@ -190,6 +202,10 @@ DDR at `0x30038000`.
    v1.88: 1 block).
 4. Stop when the remaining byte count reaches zero (all `max_bytes` loaded).
 
+This means nboot loads only the first `0x64000` bytes of the `IPL` partition
+slice, even though the `IMG` header inside `IPL.raw` advertises a larger
+`0x80000`-byte region.
+
 **Bad block detection** (`nboot_classify_block`):
 
 - Reads the OOB area of the first page of the block (v1.58.2 uses
@@ -200,7 +216,9 @@ DDR at `0x30038000`.
 
 ## Phase 4: Jump to eboot
 
-After loading completes, nboot jumps directly to the start of the loaded image
-at physical address `0x30038000`. No further processing is done; nboot does not
-set up page tables or enable the MMU. eboot is responsible for all subsequent
-hardware initialization.
+After loading completes, nboot jumps directly to `0x30038000`, which is where
+the first payload word from `IPL.raw+0x2C` was placed. No parsing of the `IMG`
+header is performed; the header is handled only by the shifted destination
+address. nboot does not consult the `PTB` load address and does not set up page
+tables or enable the MMU before the handoff. eboot is responsible for all
+subsequent hardware initialization.

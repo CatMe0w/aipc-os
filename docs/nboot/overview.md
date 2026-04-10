@@ -28,7 +28,7 @@ AK7802 bootrom
             │  copies self to 0x30E00000
             └─> nboot_main (0x30E000CC)
                     │  initializes NAND controller
-                    │  loads eboot -> DDR 0x30038000
+                    │  loads IPL raw bytes -> DDR 0x30037FD4
                     └─> eboot entry (0x30038000)
 ```
 
@@ -44,7 +44,8 @@ detail.
 | ----------------------- | ---------------------------------------------- |
 | `0x30000000-0x30000CFF` | nboot ARM payload (initial load by bootrom)    |
 | `0x30036000`            | SVC mode stack pointer (set by nboot)          |
-| `0x30038000`            | eboot load destination                         |
+| `0x30037FD4`            | IPL container load start (`IMG` header included) |
+| `0x30038000`            | eboot handoff / first payload instruction      |
 | `0x30E00000-0x30E00CFF` | nboot relocated copy (runs from here)          |
 | `0x30E00064`            | NAND parameter table (embedded in nboot image) |
 | `0x30E00D00-0x30E00D13` | Runtime NAND parameter variables               |
