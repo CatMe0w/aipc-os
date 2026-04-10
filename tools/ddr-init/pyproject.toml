@@ -1,0 +1,22 @@
+[project]
+name = "aipc-ddr-init"
+version = "0.1.0"
+description = "DDR initialization tool for AIPC via USB boot mode"
+authors = [
+    { name = "CatMe0w", email = "CatMe0w@live.cn" }
+]
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "ak7802-usbboot",
+    "click>=8.1",
+]
+
+[tool.uv.sources]
+ak7802-usbboot = { workspace = true }
+
+[project.scripts]
+aipc-ddr-init = "aipc_ddr_init.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.3,<0.12.0"]
+build-backend = "uv_build"

@@ -4,10 +4,26 @@ requires-python = ">=3.11, <3.14"
 
 [manifest]
 members = [
+    "aipc-ddr-init",
     "aipc-nand-extract",
     "ak7802-nand-dump",
     "ak7802-nand-dump-min",
     "ak7802-usbboot",
+]
+
+[[package]]
+name = "aipc-ddr-init"
+version = "0.1.0"
+source = { editable = "tools/ddr-init" }
+dependencies = [
+    { name = "ak7802-usbboot" },
+    { name = "click" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ak7802-usbboot", editable = "tools/usbboot" },
+    { name = "click", specifier = ">=8.1" },
 ]
 
 [[package]]
