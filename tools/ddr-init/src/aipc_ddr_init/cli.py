@@ -4,7 +4,7 @@ from pathlib import Path
 
 import click
 
-from ak7802_usbboot.transport import ExecuteTimeoutError, find_device
+from ak7802_usbboot.transport import AK7802, ExecuteTimeoutError, find_device
 
 STUB_ADDR = 0x48000240
 
@@ -36,6 +36,38 @@ def _default_stub_path(firmware: str) -> Path:
     return Path(__file__).resolve().parents[2] / "stub" / filename
 
 
+def ddr_init(
+    dev: AK7802,
+    firmware: str,
+    stub: Path | None = None,
+    addr: int = STUB_ADDR,
+) -> tuple[str, Path]:
+    """Upload and execute the DDR init stub on an already-open device."""
+    label, _ = _FIRMWARE_STUBS[firmware]
+    stub_path = stub if stub is not None else _default_stub_path(firmware)
+
+    if not stub_path.exists():
+        raise click.ClickException(
+            f"stub not found: {stub_path}\n"
+            "Build it first with: cd tools/ddr-init/stub && make"
+        )
+
+    data = stub_path.read_bytes()
+    if not data:
+        raise click.ClickException(f"stub is empty: {stub_path}")
+
+    dev.write_mem(addr, data)
+
+    try:
+        dev.execute(addr, wait=True)
+    except ExecuteTimeoutError as exc:
+        raise click.ClickException(
+            f"DDR init stub at {addr:#010x} did not return to USB boot mode"
+        ) from exc
+
+    return label, stub_path
+
+
 @click.command()
 @click.option(
     "--firmware",
@@ -63,26 +95,13 @@ def main(firmware: str, stub: Path | None, addr: int, verbose: bool) -> None:
     label, _ = _FIRMWARE_STUBS[firmware]
     stub_path = stub if stub is not None else _default_stub_path(firmware)
 
-    if not stub_path.exists():
-        raise click.ClickException(f"stub not found: {stub_path}\n" "Build it first with: cd tools/ddr-init/stub && make")
-
-    data = stub_path.read_bytes()
-    if not data:
-        raise click.ClickException(f"stub is empty: {stub_path}")
-
     if verbose:
         click.echo(f"firmware  {label}")
         click.echo(f"stub      {stub_path}")
         click.echo(f"addr      {addr:#010x}")
-        click.echo(f"size      {len(data):#x} bytes")
 
     dev = find_device(wait=True)
-    dev.write_mem(addr, data)
-
-    try:
-        dev.execute(addr, wait=True)
-    except ExecuteTimeoutError as exc:
-        raise click.ClickException(f"DDR init stub at {addr:#010x} did not return to USB boot mode") from exc
+    ddr_init(dev, firmware=firmware, stub=stub, addr=addr)
 
     click.echo(f"DDR init for firmware {label} completed")
 

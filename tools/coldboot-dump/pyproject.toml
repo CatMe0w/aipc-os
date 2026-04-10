@@ -1,0 +1,26 @@
+[project]
+name = "aipc-coldboot-dump"
+version = "0.1.0"
+description = "Cold-boot DDR dump tool for the AIPC netbook via USB boot mode"
+readme = "README.md"
+authors = [
+    { name = "CatMe0w", email = "CatMe0w@live.cn" }
+]
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "aipc-ddr-init",
+    "ak7802-usbboot",
+    "click>=8.1",
+    "tqdm>=4.66",
+]
+
+[tool.uv.sources]
+aipc-ddr-init = { workspace = true }
+ak7802-usbboot = { workspace = true }
+
+[project.scripts]
+aipc-coldboot-dump = "aipc_coldboot_dump.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.3,<0.12.0"]
+build-backend = "uv_build"
