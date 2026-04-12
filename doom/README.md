@@ -1,6 +1,6 @@
 # AIPC DOOM
 
-Bare-metal DOOM port for the AIPC netbook, based on [doomgeneric](https://github.com/ozkl/doomgeneric). No operating system is involved.
+Bare-metal DOOM port for the AIPC netbook, based on [doomgeneric](https://github.com/ozkl/doomgeneric).
 
 ## Building
 
