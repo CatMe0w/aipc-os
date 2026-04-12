@@ -1,0 +1,811 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AIPC OS | The joke hardware. A serious OS.</title>
+    <meta name="description" content="Bringing Linux 7.x to a vintage handheld the internet summarized as: thirty-second boot. Three-second uptime."/>
+    <link rel="canonical" href="https://aipc-os.catme0w.org/en" />
+    <link rel="alternate" hreflang="zh" href="https://aipc-os.catme0w.org/" />
+    <link rel="alternate" hreflang="en" href="https://aipc-os.catme0w.org/en" />
+    <link rel="stylesheet" href="/src/fonts.css" />
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      :root {
+        --bg: #09090b;
+        --bg2: #111113;
+        --bg3: #18181c;
+        --border: #2a2a32;
+        --border2: #3a3a44;
+        --text: #e8e8f0;
+        --text2: #9090a8;
+        --text3: #5a5a70;
+        --accent: rgb(168, 199, 250);
+        --accent-dim: rgba(168, 199, 250, 0.15);
+        --accent-border: rgba(168, 199, 250, 0.25);
+        --accent-hover: rgba(168, 199, 250, 0.07);
+        --green: #4ade80;
+        --green-dim: #16532d;
+        --green-bg: rgba(74, 222, 128, 0.08);
+        --amber: #fbbf24;
+        --amber-bg: rgba(251, 191, 36, 0.08);
+        --blue: rgb(168, 199, 250);
+        --blue-bg: rgba(168, 199, 250, 0.07);
+        --mono: "IBM Plex Mono", monospace;
+        --sans: "IBM Plex Sans", system-ui, sans-serif;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--sans);
+        font-size: 18px;
+        line-height: 1.7;
+        overflow-x: hidden;
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0, 0, 0, 0.03) 2px, rgba(0, 0, 0, 0.03) 4px);
+        pointer-events: none;
+        z-index: 1000;
+      }
+
+      /* NAV */
+      nav {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 200;
+        padding: 0 3rem;
+        height: 52px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid var(--border);
+        background: rgba(9, 9, 11, 0.88);
+        backdrop-filter: blur(12px);
+      }
+      .nav-site {
+        font-family: var(--mono);
+        font-size: 14px;
+        color: var(--text3);
+        text-decoration: none;
+        letter-spacing: 0.03em;
+      }
+      .nav-site:hover {
+        color: var(--text2);
+      }
+      .nav-links {
+        display: flex;
+        gap: 2rem;
+        list-style: none;
+      }
+      .nav-links a {
+        font-family: var(--mono);
+        font-size: 13px;
+        color: var(--text3);
+        text-decoration: none;
+        letter-spacing: 0.06em;
+        transition: color 0.15s;
+      }
+      .nav-links a:hover {
+        color: var(--text2);
+      }
+      @media (max-width: 640px) {
+        .nav-links {
+          display: none;
+        }
+      }
+
+      /* HERO */
+      .hero {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 6rem 2rem 3rem;
+        text-align: center;
+        position: relative;
+        overflow: hidden;
+      }
+      .hero-content {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      .hero-zh {
+        position: absolute;
+        bottom: 2rem;
+        left: 50%;
+        transform: translateX(-50%);
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--text3);
+        text-decoration: none;
+        letter-spacing: 0.08em;
+        transition: color 0.15s;
+        white-space: nowrap;
+      }
+      .hero-zh:hover {
+        color: var(--text2);
+      }
+      .hero::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image:
+          linear-gradient(rgba(168, 199, 250, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(168, 199, 250, 0.03) 1px, transparent 1px);
+        background-size: 40px 40px;
+        mask-image: radial-gradient(ellipse 80% 70% at 50% 50%, black 30%, transparent 100%);
+        pointer-events: none;
+      }
+
+      .hero-logo {
+        font-family: "Doto", var(--mono);
+        font-size: clamp(3.5rem, 10vw, 7rem);
+        font-weight: 400;
+        font-variation-settings: "ROND" 0;
+        letter-spacing: 0.04em;
+        line-height: 1;
+        margin-bottom: 0.2em;
+        color: var(--text);
+        position: relative;
+        animation: fadeup 0.8s ease both;
+      }
+      .hero-logo::after {
+        content: "AIPC OS";
+        font-family: "Doto", var(--mono);
+        font-weight: 400;
+        font-variation-settings: "ROND" 0;
+        position: absolute;
+        left: 2px;
+        top: 2px;
+        color: rgba(168, 199, 250, 0.1);
+        pointer-events: none;
+        white-space: nowrap;
+      }
+
+      .hero-tagline {
+        font-family: var(--mono);
+        font-size: clamp(1.15rem, 3vw, 1.65rem);
+        font-weight: 400;
+        color: var(--text);
+        margin-bottom: 0.9rem;
+        letter-spacing: 0.04em;
+        animation: fadeup 0.8s 0.15s ease both;
+      }
+
+      .hero-sub {
+        font-family: var(--mono);
+        font-size: clamp(0.8rem, 1.8vw, 0.95rem);
+        color: var(--text3);
+        margin-bottom: 2.5rem;
+        letter-spacing: 0.03em;
+        animation: fadeup 0.8s 0.3s ease both;
+      }
+      .hero-sub .hl {
+        color: var(--amber);
+      }
+
+      .hero-cta {
+        display: inline-block;
+        font-family: var(--mono);
+        font-size: 14px;
+        padding: 11px 30px;
+        border: 1px solid var(--accent-border);
+        color: var(--accent);
+        text-decoration: none;
+        letter-spacing: 0.08em;
+        transition:
+          background 0.2s,
+          border-color 0.2s;
+        animation: fadeup 0.8s 0.45s ease both;
+      }
+      .hero-cta::before {
+        content: "> ";
+        opacity: 0.5;
+      }
+      .hero-cta:hover {
+        background: var(--accent-hover);
+        border-color: var(--accent);
+      }
+
+      @keyframes fadeup {
+        from {
+          opacity: 0;
+          transform: translateY(14px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      /* SECTIONS */
+      .section {
+        padding: 5rem 3rem;
+        max-width: 1040px;
+        margin: 0 auto;
+      }
+      hr.section-divider {
+        border: none;
+        border-top: 1px solid var(--border);
+        margin: 0;
+      }
+
+      .section-eyebrow {
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--accent);
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        margin-bottom: 0.6rem;
+        opacity: 0.7;
+      }
+      .section-title {
+        font-family: var(--sans);
+        font-size: clamp(1.5rem, 3vw, 2.1rem);
+        font-weight: 500;
+        margin-bottom: 1.5rem;
+        letter-spacing: 0.01em;
+      }
+      .prose {
+        color: var(--text2);
+        font-size: 17px;
+        line-height: 1.9;
+      }
+      .prose p + p {
+        margin-top: 1.1em;
+      }
+      .prose em {
+        font-style: normal;
+      }
+
+      /* ROADMAP */
+      .roadmap {
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+        margin-top: 2rem;
+      }
+      .rm-item {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 0 1.5rem;
+      }
+
+      .rm-gutter {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding-top: 5px;
+      }
+      .rm-node {
+        width: 11px;
+        height: 11px;
+        border-radius: 50%;
+        flex-shrink: 0;
+        border: 1.5px solid var(--border2);
+        background: var(--bg);
+      }
+      .rm-node.ok {
+        background: var(--green);
+        border-color: var(--green);
+        box-shadow: 0 0 7px rgba(74, 222, 128, 0.35);
+      }
+      .rm-node.wip {
+        background: var(--accent);
+        border-color: var(--accent);
+      }
+      .rm-node.pending {
+        background: var(--bg);
+        border-color: var(--border2);
+      }
+      .rm-trail {
+        width: 1px;
+        background: var(--border);
+        flex: 1;
+        margin-top: 4px;
+        min-height: 32px;
+      }
+
+      .rm-body {
+        padding-bottom: 2rem;
+      }
+      .rm-status-line {
+        font-family: var(--mono);
+        font-size: 14px;
+        display: flex;
+        align-items: baseline;
+        gap: 0.8em;
+        margin-bottom: 0.35rem;
+      }
+      .rm-tag {
+        display: inline-block;
+        font-family: var(--mono);
+        font-size: 14px;
+        white-space: pre;
+        letter-spacing: 0;
+      }
+      .rm-tag-ok {
+        color: var(--green);
+      }
+      .rm-tag-wip {
+        color: var(--accent);
+      }
+      .rm-tag-wait {
+        color: var(--text3);
+      }
+      .rm-label {
+        font-weight: 500;
+        font-size: 17px;
+        color: var(--text);
+        font-family: var(--sans);
+      }
+      .rm-desc {
+        font-size: 15px;
+        color: var(--text2);
+        margin-top: 0.2rem;
+        line-height: 1.75;
+      }
+
+      .sp-inner {
+        display: inline-block;
+        width: 6ch;
+        letter-spacing: 0;
+        vertical-align: baseline;
+      }
+      .sp-inner .sc {
+        display: inline-block;
+        width: 1ch;
+      }
+      .sc-on {
+        color: var(--accent);
+      }
+      .sc-off {
+        color: rgba(168, 199, 250, 0.22);
+      }
+
+      /* DRIVER GRID */
+      .driver-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 1px;
+        background: var(--border);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        overflow: hidden;
+        margin-top: 1.5rem;
+      }
+      .driver-cell {
+        background: var(--bg2);
+        padding: 0.85rem 1.1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+      }
+      .driver-name {
+        font-family: var(--mono);
+        font-size: 13px;
+        color: var(--text2);
+      }
+      .driver-status {
+        font-family: var(--mono);
+        font-size: 12px;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .ds-ok {
+        color: var(--green);
+      }
+      .ds-wip {
+        color: var(--accent);
+      }
+      .ds-no {
+        color: var(--text3);
+      }
+
+      /* ONE MORE THING */
+      .omt-lead {
+        color: var(--text2);
+        font-size: 17px;
+        line-height: 1.85;
+        margin-bottom: 2.5rem;
+      }
+      .omt-flavors {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1px;
+        background: var(--border);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        overflow: hidden;
+      }
+      @media (max-width: 640px) {
+        .omt-flavors {
+          grid-template-columns: 1fr;
+        }
+      }
+      .flavor-card {
+        background: var(--bg2);
+        padding: 2.2rem;
+      }
+      .flavor-tag {
+        font-family: var(--mono);
+        font-size: 12px;
+        letter-spacing: 0.14em;
+        padding: 3px 10px;
+        border-radius: 2px;
+        display: inline-block;
+        margin-bottom: 1rem;
+      }
+      .flavor-warm .flavor-tag {
+        background: var(--amber-bg);
+        color: var(--amber);
+        border: 1px solid rgba(251, 191, 36, 0.2);
+      }
+      .flavor-cold .flavor-tag {
+        background: var(--blue-bg);
+        color: var(--accent);
+        border: 1px solid var(--accent-border);
+      }
+      .flavor-title {
+        font-family: var(--sans);
+        font-size: 1.1rem;
+        font-weight: 500;
+        margin-bottom: 0.75rem;
+      }
+      .flavor-body {
+        font-size: 15px;
+        color: var(--text2);
+        line-height: 1.85;
+      }
+      .flavor-body p + p {
+        margin-top: 0.8em;
+      }
+
+      /* FOOTER */
+      footer {
+        border-top: 1px solid var(--border);
+        padding: 1.5rem 3rem;
+        text-align: center;
+      }
+      .footer-text {
+        font-family: var(--mono);
+        font-size: 13px;
+        color: var(--text3);
+      }
+      .footer-link {
+        color: var(--text2);
+        text-decoration: underline;
+        text-underline-offset: 3px;
+        text-decoration-color: var(--border2);
+      }
+      .footer-link:hover {
+        color: var(--text);
+        text-decoration-color: var(--text3);
+      }
+    </style>
+  </head>
+  <body>
+    <nav>
+      <a class="nav-site" href="https://catme0w.org">catme0w.org</a>
+      <ul class="nav-links">
+        <li><a href="#summary">About</a></li>
+        <li><a href="#roadmap">Roadmap</a></li>
+        <li><a href="#hardware">Hardware</a></li>
+        <li><a href="#omt">Future</a></li>
+      </ul>
+    </nav>
+
+    <!-- HERO -->
+    <section class="hero">
+      <div class="hero-content">
+        <div class="hero-logo">AIPC OS</div>
+        <h1 class="hero-tagline">The joke hardware. A serious OS.</h1>
+        <p class="hero-sub">
+          Bringing Linux 7.x to a vintage handheld the internet summarized as: <span class="hl">thirty-second boot. Three-second uptime.</span>
+        </p>
+        <a class="hero-cta" href="https://github.com/CatMe0w/aipc-os">Work in progress</a>
+      </div>
+      <a class="hero-zh" href="/">中文版本</a>
+    </section>
+
+    <hr class="section-divider" />
+
+    <!-- ABOUT -->
+    <div class="section" id="summary">
+      <div class="section-eyebrow">// about</div>
+      <h2 class="section-title">What Is AIPC</h2>
+      <div class="prose">
+        <p>
+          AIPC was a handheld computer sold in China through television shopping channels around 2009. Its advertisements became a lasting subject of internet
+          mockery - the claims were extravagant, the hardware was not, and the gap between the two was comedic enough to outlive the product by over a decade.
+        </p>
+        <p>
+          For seventeen years, the AIPC has existed almost entirely as a meme. Its actual hardware has received almost no serious technical attention: the SoC
+          is undocumented, and no mainline kernel support exists. The AIPC OS project is an attempt to change that. The goal is a complete port of the Linux 7.x
+          mainline kernel to the Anyka AK7802 SoC - turning a piece of discarded novelty hardware into a working, hackable platform that finally earns the name
+          "handheld computer."
+        </p>
+        <p>
+          Outside China, the same mold was used for a family of netbooks sold under the Sylvania brand. Those machines use a different SoC that already has
+          mainline Linux support and can boot directly from USB. The AIPC has neither. That gap is what this project exists to close.
+        </p>
+      </div>
+    </div>
+
+    <hr class="section-divider" />
+
+    <!-- ROADMAP -->
+    <div class="section" id="roadmap">
+      <div class="section-eyebrow">// roadmap</div>
+      <h2 class="section-title">Where things stand</h2>
+
+      <div class="roadmap">
+        <div class="rm-item">
+          <div class="rm-gutter">
+            <div class="rm-node ok"></div>
+            <div class="rm-trail"></div>
+          </div>
+          <div class="rm-body">
+            <div class="rm-status-line">
+              <!-- prettier-ignore -->
+              <span class="rm-tag rm-tag-ok">[  OK  ]</span>
+              <span class="rm-label">Early kernel boot</span>
+            </div>
+            <div class="rm-desc">Initial device tree complete. Linux 7.0-rc3 boots to a shell. Display and UART are functional.</div>
+          </div>
+        </div>
+
+        <div class="rm-item">
+          <div class="rm-gutter">
+            <div class="rm-node ok"></div>
+            <div class="rm-trail"></div>
+          </div>
+          <div class="rm-body">
+            <div class="rm-status-line">
+              <!-- prettier-ignore -->
+              <span class="rm-tag rm-tag-ok">[  OK  ]</span>
+              <span class="rm-label">GPIO, SPI, and USB drivers</span>
+            </div>
+            <div class="rm-desc">A prerequisite for keyboard support, and the milestone that marks Linux as genuinely usable on the AIPC.</div>
+          </div>
+        </div>
+
+        <div class="rm-item">
+          <div class="rm-gutter">
+            <div class="rm-node wip"></div>
+            <div class="rm-trail"></div>
+          </div>
+          <div class="rm-body">
+            <div class="rm-status-line">
+              <span class="rm-tag rm-tag-wip"
+                >[<span class="sp-inner"
+                  ><span class="sc sc-on" id="s0">*</span><span class="sc sc-on" id="s1">*</span><span class="sc sc-on" id="s2">*</span
+                  ><span class="sc sc-off" id="s3"> </span><span class="sc sc-off" id="s4"> </span><span class="sc sc-off" id="s5"> </span></span
+                >]</span
+              >
+              <span class="rm-label">Userland and desktop</span>
+            </div>
+            <div class="rm-desc">With only 64 MB of RAM, a custom distribution stack is needed rather than an off-the-shelf base.</div>
+          </div>
+        </div>
+
+        <div class="rm-item">
+          <div class="rm-gutter">
+            <div class="rm-node pending"></div>
+            <div class="rm-trail"></div>
+          </div>
+          <div class="rm-body">
+            <div class="rm-status-line">
+              <span class="rm-tag rm-tag-wait">[ WAIT ]</span>
+              <span class="rm-label">First public image</span>
+            </div>
+            <div class="rm-desc">
+              Release the first bootable image covering all or most of the original firmware's functionality: browser, office suite, PDF reader, video player,
+              and more.
+            </div>
+          </div>
+        </div>
+
+        <div class="rm-item">
+          <div class="rm-gutter">
+            <div class="rm-node pending"></div>
+          </div>
+          <div class="rm-body">
+            <div class="rm-status-line">
+              <span class="rm-tag rm-tag-wait">[ WAIT ]</span>
+              <span class="rm-label">Further work</span>
+            </div>
+            <div class="rm-desc">Custom bootloader, 2D GPU acceleration, touchscreen hardmod...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <hr class="section-divider" />
+
+    <!-- HARDWARE -->
+    <div class="section" id="hardware">
+      <div class="section-eyebrow">// hardware</div>
+      <h2 class="section-title">Hardware and driver status</h2>
+
+      <div class="driver-grid">
+        <div class="driver-cell">
+          <div class="driver-name">ARM926EJ-S core</div>
+          <div class="driver-status ds-ok"><span>●</span> working</div>
+        </div>
+        <div class="driver-cell">
+          <div class="driver-name">MMU</div>
+          <div class="driver-status ds-ok"><span>●</span> working</div>
+        </div>
+        <div class="driver-cell">
+          <div class="driver-name">Timers</div>
+          <div class="driver-status ds-ok"><span>●</span> working</div>
+        </div>
+        <div class="driver-cell">
+          <div class="driver-name">Clocks / PLL</div>
+          <div class="driver-status ds-ok"><span>●</span> working</div>
+        </div>
+        <div class="driver-cell">
+          <div class="driver-name">Display</div>
+          <div class="driver-status ds-ok"><span>●</span> working</div>
+        </div>
+        <div class="driver-cell">
+          <div class="driver-name">UART</div>
+          <div class="driver-status ds-ok"><span>●</span> working</div>
+        </div>
+        <div class="driver-cell">
+          <div class="driver-name">SPI controller</div>
+          <div class="driver-status ds-wip"><span>●</span> in progress</div>
+        </div>
+        <div class="driver-cell">
+          <div class="driver-name">I2C controller</div>
+          <div class="driver-status ds-wip"><span>●</span> in progress</div>
+        </div>
+        <div class="driver-cell">
+          <div class="driver-name">Keyboard</div>
+          <div class="driver-status ds-wip"><span>●</span> in progress</div>
+        </div>
+        <div class="driver-cell">
+          <div class="driver-name">USB (SoC-native)</div>
+          <div class="driver-status ds-wip"><span>●</span> in progress</div>
+        </div>
+        <div class="driver-cell">
+          <div class="driver-name">USB (CH374)</div>
+          <div class="driver-status ds-wip"><span>●</span> in progress</div>
+        </div>
+        <div class="driver-cell">
+          <div class="driver-name">Reset management</div>
+          <div class="driver-status ds-no"><span>○</span> not started</div>
+        </div>
+        <div class="driver-cell">
+          <div class="driver-name">Power management</div>
+          <div class="driver-status ds-no"><span>○</span> not started</div>
+        </div>
+        <div class="driver-cell">
+          <div class="driver-name">NAND Flash</div>
+          <div class="driver-status ds-no"><span>○</span> not started</div>
+        </div>
+        <div class="driver-cell">
+          <div class="driver-name">SD / MMC</div>
+          <div class="driver-status ds-no"><span>○</span> not started</div>
+        </div>
+        <div class="driver-cell">
+          <div class="driver-name">Ethernet</div>
+          <div class="driver-status ds-no"><span>○</span> not started</div>
+        </div>
+        <div class="driver-cell">
+          <div class="driver-name">Wi-Fi</div>
+          <div class="driver-status ds-no"><span>○</span> not started</div>
+        </div>
+        <div class="driver-cell">
+          <div class="driver-name">Touchpad</div>
+          <div class="driver-status ds-no"><span>○</span> not started</div>
+        </div>
+        <div class="driver-cell">
+          <div class="driver-name">Backlight</div>
+          <div class="driver-status ds-no"><span>○</span> not started</div>
+        </div>
+        <div class="driver-cell">
+          <div class="driver-name">Battery monitor</div>
+          <div class="driver-status ds-no"><span>○</span> not started</div>
+        </div>
+        <div class="driver-cell">
+          <div class="driver-name">RTC</div>
+          <div class="driver-status ds-no"><span>○</span> not started</div>
+        </div>
+        <div class="driver-cell">
+          <div class="driver-name">Audio</div>
+          <div class="driver-status ds-no"><span>○</span> not started</div>
+        </div>
+        <div class="driver-cell">
+          <div class="driver-name">2D GPU</div>
+          <div class="driver-status ds-no"><span>○</span> not started</div>
+        </div>
+        <div class="driver-cell">
+          <div class="driver-name">Video decode</div>
+          <div class="driver-status ds-no"><span>○</span> not started</div>
+        </div>
+      </div>
+    </div>
+
+    <hr class="section-divider" />
+
+    <!-- ONE MORE THING -->
+    <div class="section" id="omt">
+      <div class="section-eyebrow">// one more thing</div>
+      <h2 class="section-title">Future plans</h2>
+      <p class="omt-lead">Two boot flavors are planned for AIPC OS.</p>
+
+      <div class="omt-flavors">
+        <div class="flavor-card flavor-warm">
+          <div class="flavor-title"><span style="color: var(--amber)">Warmboot</span>: Boot from within Windows CE</div>
+          <div class="flavor-body">
+            <p>
+              No disassembly. No USB port required. Copy files to an SD card and run the launcher from the stock Windows CE firmware, HaRET handles the rest.
+            </p>
+            <p>This is the current development focus, and the prerequisite for making AIPC OS accessible without any hardware modification.</p>
+          </div>
+        </div>
+        <div class="flavor-card flavor-cold">
+          <div class="flavor-title"><span style="color: var(--accent)">Coldboot</span>: Boot directly, bypassing Windows CE</div>
+          <div class="flavor-body">
+            <p>Requires disassembly to short the USB_BOOT pads. Power on and enter the bootloader directly, with no pass through Windows CE.</p>
+            <p>AIPC OS can also be flashed to the onboard NAND, enabling a WinCE + Linux dual-boot, or a full replacement of the stock firmware.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      <p class="footer-text">with 💖 from <a href="https://catme0w.org" class="footer-link">catme0w</a></p>
+    </footer>
+
+    <script>
+      const cells = [
+        document.getElementById("s0"),
+        document.getElementById("s1"),
+        document.getElementById("s2"),
+        document.getElementById("s3"),
+        document.getElementById("s4"),
+        document.getElementById("s5"),
+      ];
+      if (cells[0]) {
+        const positions = [0, 1, 2, 3, 2, 1];
+        let fi = 0;
+        setInterval(() => {
+          const base = positions[fi % positions.length];
+          cells.forEach((c, i) => {
+            const lit = i >= base && i < base + 3;
+            const mid = i === base + 1;
+            if (lit) {
+              c.className = "sc sc-on";
+              c.style.opacity = mid ? "1" : "0.45";
+            } else {
+              c.className = "sc sc-off";
+              c.style.opacity = "";
+            }
+            c.textContent = lit ? "*" : " ";
+          });
+          fi++;
+        }, 1000);
+      }
+    </script>
+  </body>
+</html>

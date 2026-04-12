@@ -6,3 +6,5 @@ __pycache__/
 *.o
 *.elf
 *.bin
+node_modules/
+dist/

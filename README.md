@@ -52,6 +52,10 @@ Python CLI tools (uv workspace) for talking to the device:
 | `aipc-nand-extract` | Extract partitions from a raw NAND dump using PTB |
 | `ak7802-usbboot` | USB boot mode protocol: peek, poke, upload, execute |
 
+### Website (`website/`)
+
+Source for [aipc-os.catme0w.org](https://aipc-os.catme0w.org/).
+
 ## Quick start
 
 ```

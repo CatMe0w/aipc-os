@@ -1,0 +1,21 @@
+{
+  "name": "aipc-os-website",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deploy": "pnpm build && wrangler pages deploy dist --project-name=aipc-os"
+  },
+  "devDependencies": {
+    "vite": "^8.0.8",
+    "vite-plugin-minify": "^2.1.0",
+    "wrangler": "^4.81.1"
+  },
+  "dependencies": {
+    "@fontsource/doto": "^5.2.10",
+    "@fontsource/ibm-plex-mono": "^5.2.7",
+    "@fontsource/ibm-plex-sans": "^5.2.8"
+  }
+}
