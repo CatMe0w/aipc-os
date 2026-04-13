@@ -1,197 +1,143 @@
 # USB HID Input
 
-The AIPC unit has an internal USB HID keyboard that is the **only** input
-device available to EBOOT in normal operation. There is no physical UART
-console (the UART pads on this board are damaged on the analyzed unit),
-and the two external USB-A ports visible on the chassis are also routed
-through the same bridge chip. All three USB ports - the two external
-ones and the internal keyboard - come from a single **WCH CH374** USB
-host bridge chip connected over **SPI0**, not from the AK7802's own
-integrated USB controller.
+EBOOT's maintenance gate uses a CH374-backed USB HID path. Before the
+F1/password UI appears, `maintenance_menu_entry` initializes the SPI
+controller used by CH374, runs the CH374 register setup sequence, clears
+the HID key-state bytes at `0x801045F0..0x801045F2` and `0x801045F6`,
+and then calls `maintenance_menu`.
 
-This document describes:
+This document records the SPI-side register usage, the CH374 command and
+init sequence, the HID polling path, and the password gate that sits in
+front of the maintenance menu.
 
-1. SPI0 register layout (distinct from SPI2)
-2. CH374 architecture and the SPI-command protocol used to program it
-3. The HID keyboard input path through EBOOT
-4. The maintenance-mode password gate at a high level
+## SPI Controller Used By CH374
 
-The maintenance menu's full behavior (which menu items exist, what each
-one does, how the body is decompiled) is **not documented here**. The
-scratchpad analysis of the maintenance menu code path was incomplete and
-partly incorrect, and the decompilation has open questions that would
-fit better in a dedicated document once the analysis is redone from the
-clean EBOOT image. This document is intentionally scoped to the
-**input-path hardware layer** so that a future maintenance-mode
-document can build on it without rewriting the CH374 details.
+`ch374_init` calls `spi_init_controller(0)`, which selects physical
+`0x20024000` and stores its virtual base in `0x80107768`. The numbering
+used by the surrounding documentation is still unresolved; this page
+records only the physical base that EBOOT actually selects.
 
-## SPI0 (base 0x20020000)
+The transfer helpers use these offsets relative to the selected SPI
+base:
 
-SPI0 is a separate instance from SPI2 even though both appear at similar
-offsets in the SoC MMIO space. The two controllers share the same base
-offset layout (`+0x00` control, `+0x04` status, `+0x0C` count, `+0x18`
-TX data, `+0x1C` RX data), but **the bit assignments inside the control
-register are different**.
+| Offset | Use in EBOOT |
+| ------ | ------------ |
+| `+0x00` | control |
+| `+0x04` | status |
+| `+0x0C` | transfer count |
+| `+0x10` | cleared before TX |
+| `+0x14` | cleared before RX |
+| `+0x18` | TX data |
+| `+0x1C` | RX data |
+| `+0x20` | written once by `spi_config_mode_clock` to `0x00FFFFFF` |
 
-### SPI0 Control Register (+0x00)
+The bit assignments that are directly visible in the transfer path are:
 
-Bit assignments as used by the CH374 driver layer:
+| Register | Bit | Meaning |
+| -------- | --- | ------- |
+| ctrl `+0x00` | `0` | RX mode select |
+| ctrl `+0x00` | `1` | START / busy |
+| ctrl `+0x00` | `5` | chip select |
+| status `+0x04` | `2` | TX FIFO ready |
+| status `+0x04` | `6` | RX data ready |
+| status `+0x04` | `8` | transfer complete |
 
-| Bit    | Meaning                                                         |
-| ------ | --------------------------------------------------------------- |
-| 0      | RX mode select (1 = receive, 0 = transmit)                      |
-| 1      | START / busy; write 1 to start a transfer, reads as busy flag   |
-| 5      | **CS assert** (1 = drive CS low, 0 = release CS high)           |
-| others | Clock divider, programmed once at init via a helper             |
+`ch374_init` programs the controller twice through
+`spi_config_mode_clock`, first for `1_000_000` Hz and then for
+`18_000_000` Hz.
 
-Comparison with SPI2: on SPI2, bit 0 is CS (inverted polarity), bit 1 is
-direction, and bit 5 is transfer-enable. SPI0 places CS on bit 5 and
-puts the RX/TX direction on bit 0. **Code written for SPI2 cannot be
-retargeted to SPI0 by changing only the base address.** This was
-verified from the `spi_cs_assert` and `spi_cs_deassert` helpers which
-write `|= 0x20` and `&= ~0x20` to the SPI0 control register.
+## CH374 Command Path
 
-### SPI0 Status Register (+0x04)
+`ch374_reg_write(reg, value)` sends a 3-byte SPI write under CS:
 
-| Bit | Meaning             |
-| --- | ------------------- |
-| 2   | TX FIFO ready       |
-| 6   | RX FIFO ready       |
-| 8   | Transfer complete   |
-
-The status bit positions happen to be consistent between SPI0 and SPI2.
-Only the control-register bits differ.
-
-### Chip Select Routing
-
-The CH374's CS line is driven by the SPI0 controller's internal CS
-output pin (bit 5 of SPI0 control), not by an external GPIO asserted
-from software. EBOOT's `spi_cs_assert` / `spi_cs_deassert` helpers just
-set and clear bit 5 of the SPI0 control register; no GPIO writes are
-involved.
-
-## CH374 USB Host Bridge
-
-The CH374 is a WCH QinHeng USB 2.0 full-speed host/device bridge chip.
-It exposes a byte-level SPI register interface on one side and a USB
-host controller with up to 4 endpoints and host-mode support on the
-other. On AIPC, the CH374 is configured as a host and presents three
-USB ports to the system:
-
-- Two external USB-A ports visible on the chassis
-- One internal port wired to the HID keyboard module
-
-EBOOT's CH374 driver is a thin wrapper around the chip's register
-interface. It is only used during the maintenance mode path: normal
-boot does not talk to CH374 at all (the boot path uses neither the
-external USB ports nor the keyboard). When WinCE NK.bin runs, it
-re-initializes CH374 for full USB host operation, and EBOOT's CH374
-state is irrelevant.
-
-### SPI Command Protocol
-
-CH374 register accesses use a **3-byte SPI command** in the form:
-
-```
-byte 0: register index
-byte 1: 0x80         (direction-or-command marker)
-byte 2: value
+```text
+[reg, 0x80, value]
 ```
 
-A register write sends all three bytes; a read sends the first two and
-reads the third back. The helper `ch374_reg_write` wraps this pattern.
-The exact semantics of the `0x80` second byte are not fully documented
-here; it is the same across all accesses observed in EBOOT.
+`ch374_reg_read(reg)` uses a different format. It sends `[reg, 0xC0]`
+and reads back one response byte:
 
-### Registers Programmed at Init
+```text
+TX: [reg, 0xC0]
+RX: [value]
+```
 
-EBOOT's CH374 initialization writes the following register values
-(register numbers are CH374-local, not SoC register offsets):
+`ch374_read_buffer(cmd, len, dst)` uses the same `0xC0` read marker,
+then copies `len` returned bytes into `dst`. `ch374_set_address(addr,
+len, buf)` is a two-step command: it first sends `[addr, 0x80]`, then
+sends `len` bytes from `buf`.
 
-| Register | Stage 1 | Stage 2 | Notes                         |
-| -------- | ------- | ------- | ----------------------------- |
-| reg 5    | 64      | 64      | `[partial]`                   |
-| reg 6    | 0       | 192     | Two-stage init; purpose TBD   |
-| reg 7    | 3       | 3       | `[partial]`                   |
-| reg 8    | 0       | 0       | `[partial]`                   |
-| reg 9    | 31      | 31      | `[partial]`                   |
-| reg 14   | 0       | 0       | `[partial]`                   |
-| reg 2    | read-clear-bit-7-write | - | Status/interrupt bit clear |
+The initialization order in `maintenance_menu_entry` is
+`ch374_init()`, `ch374_register_setup_stage1()`, and
+`ch374_register_setup_stage2()`. Since
+`ch374_register_setup_stage1()` itself tail-calls stage 2, stage 2 runs
+twice in total.
 
-Decoding these fully requires the CH374 datasheet; they are listed here
-so a future investigation has a starting point.
+The observed register writes are:
 
-The init function itself is called only when EBOOT enters the
-maintenance mode path. The regular boot flow (load NK from NAND, jump)
-does not call it, so CH374 remains uninitialized on the happy path.
+| Step | Register writes |
+| ---- | --------------- |
+| stage 1 | `6=0`, `8=0`, `14=0`, `9=31`, `7=3`, `5=64` |
+| stage 2 | `6=192`, then `2 = reg2 & 0x7F` |
 
-## HID Keyboard Input Path
+These are CH374-local register numbers. Their chip-level meaning is not
+decoded here.
 
-Once CH374 is initialized, EBOOT polls the keyboard endpoint for HID
-boot-protocol reports (8-byte reports containing a modifier byte,
-reserved byte, and up to 6 concurrent usage codes). The polling helper
-translates each incoming usage code to an ASCII character and hands it
-to the menu-driven UI layer. The character delivery path goes through
-a function that stores the most recent key into `.data` at byte
-`0x80058489`.
+## HID Polling Path
 
-This is the mechanism by which the maintenance-mode prompt receives
-user input: characters are not read from a UART but from a software
-keyboard scan loop that talks to the CH374 through SPI0.
+`ch374_poll_hid_keycode(report_buf)` polls up to three tracked USB
+device slots. For each slot whose state bytes indicate an attached and
+ready device, it selects the slot with `sub_80072A9C(slot)`, writes
+`reg9 = 0x11`, issues `ch374_set_address(0xC0, 0x14, tmp)`, and then
+calls `ch374_read_hid_report(report_buf, &report_len)`.
 
-The USB HID usage codes observed for the maintenance password are:
+`ch374_read_hid_report` succeeds when its return value is `0x14`. On
+that path it reads the report length from `reg11`, fetches that many
+bytes with `ch374_read_buffer(0xC0, len, report_buf)`, and toggles the
+saved data-toggle state for the selected slot.
 
-- `0x1D` = `Z`
-- `0x17` = `T`
-- `0x0E` = `K`
-- `0x28` = Enter
+If `report_len >= 8`, EBOOT passes the buffer to `sub_80070174`, which
+interprets it as a boot-keyboard report: byte `0` is the modifier
+bitmap, byte `1` is reserved, and bytes `2..7` hold the six concurrent
+HID usage slots. `sub_80070174` and `sub_80070000` keep per-port key
+state in RAM and forward key transitions into the higher-level UI input
+path through `sub_8006FFD0`.
 
-The exact scan-code-to-ASCII translation table used by EBOOT is not
-tabulated in this document.
+This path carries HID usage codes, not ASCII characters. The usages that
+matter to the maintenance gate are:
 
-## Maintenance Mode Password
+| Usage | Key |
+| ----- | --- |
+| `0x3A` | `F1` |
+| `0x29` | `Esc` |
+| `0x28` | `Enter` |
+| `0x1D` | `Z` |
+| `0x17` | `T` |
+| `0x0E` | `K` |
 
-The maintenance menu is gated behind a four-character password:
-**`Z T K Enter`** (type the letter Z, then T, then K, then press
-Enter). The password has been verified on real hardware.
+## Maintenance Password Gate
 
-Activation sequence, in order:
+It first polls for an `F1` keypress (`0x3A`) for `100` iterations with
+`delay_ms(10)` between polls. If `F1` is seen, it prompts for the
+password and compares the first three typed usage codes against
+`{0x1D, 0x17, 0x0E}`. `Enter` (`0x28`) submits the attempt but is not
+part of the `memcmp`.
 
-1. Power the device with the HID keyboard connected.
-2. During the brief window when EBOOT shows its banner, press **F1**
-   to enter the password prompt mode.
-3. Type `Z`, `T`, `K`.
-4. Press Enter to submit.
+At the user level the password is still:
 
-If the password is accepted, the maintenance menu is displayed. The
-menu's contents and individual actions are **out of scope** for this
-documentation.
+```text
+Z T K Enter
+```
 
-### What is not documented here
-
-- The full set of maintenance-mode menu items, their display strings,
-  and their actions are documented separately in
-  [maintenance-mode.md](maintenance-mode.md).
+See [maintenance-mode.md](maintenance-mode.md) for the menu behavior
+after the password check succeeds.
 
 ## Unresolved
 
-- SPI0 clock divider layout (offsets above bit 5): not documented.
-- SPI0 `+0x20` (if such a register exists by analogy to SPI2) is not
-  referenced by any path in EBOOT that this document covers.
-- Full CH374 register map decode for the seven init registers above.
-- CH374 interrupt path: the chip has an INT output pin that is wired
-  to an AK7802 GPIO, but EBOOT polls the CH374 synchronously and does
-  not consume the interrupt. The GPIO pin that receives the CH374
-  INT signal is not identified.
-- The exact function that compares the typed password characters
-  against the expected sequence is now identified: `maintenance_menu`
-  uses a standard `memcmp` on the first 3 bytes of the input buffer
-  against the hardcoded reference `{0x1D, 0x17, 0x0E}`. The earlier
-  confusion about a "Duff's device dispatcher" was based on analysis
-  of a corrupted EBOOT image and does not apply to the clean binary.
-- Maintenance menu body (item list, per-item handlers, update paths,
-  NAND programming operations): documented in
-  [maintenance-mode.md](maintenance-mode.md).
-- Whether the two external USB-A ports are usable by EBOOT or only by
-  NK.bin. Observation suggests EBOOT's CH374 driver is scoped to the
-  keyboard path only.
+- The exact CH374 register meanings for registers `2`, `5`, `6`, `7`,
+  `8`, `9`, `11`, and `14`.
+- The exact physical mapping of the three tracked USB device slots to
+  board connectors.
+- The higher-level event API behind `sub_8006FFD0` / `sub_8007330C`.
+- The full non-HID CH374 paths in EBOOT, including the USB mass-storage
+  code paths hinted by strings such as `Not USB Mass Storage Device`.

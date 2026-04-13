@@ -1,11 +1,9 @@
 # Ethernet Driver
 
 EBOOT talks to a Microchip ENC28J60 SPI Ethernet controller attached to
-the AK7802's SPI2 bus. It uses a compact driver layer to implement the
-standard WinCE OAL Ethernet HAL entry points (`OEMEthInit`,
-`OEMEthSendFrame`, `OEMEthGetFrame`) and a state machine that broadcasts
-`BOOTME` UDP packets to announce the device, then accepts a TFTP
-download over the WinCE EDBG protocol.
+the AK7802's SPI2 bus. It uses a compact driver layer plus a small
+Ethernet dispatch block behind `OEMEthSendFrame` / `OEMEthGetFrame`,
+then runs a `BOOTME` + EDBG + TFTP download state machine.
 
 This document covers:
 
@@ -13,7 +11,7 @@ This document covers:
 2. The ENC28J60 register addressing scheme used internally
 3. The driver function layer (init, control-register read/write, bank
    select, TX, RX)
-4. The OEM Ethernet HAL vtable that dispatches to driver backends
+4. The Ethernet HAL dispatch block that dispatches to driver backends
 5. The `BOOTME` + EDBG + TFTP download state machine
 6. The hardcoded default network configuration
 
@@ -59,13 +57,14 @@ SPI_CTRL = (div << 8) | 0x52
 SPI_CONFIG2 = 0xFFFFFF                 // purpose unknown, written once
 ```
 
+For a 248 MHz CPU clock the code first computes `div = 11`, then bumps
+it to `12` because `248 / (2 * (11 + 1)) = 10.33 MHz` still exceeds the
+10 MHz target. The programmed SPI clock is therefore
+`248 / (2 * (12 + 1)) = 9.54 MHz`.
+
 The `0x52` bits in the low byte are `bit 1 | bit 4 | bit 6` - their
 exact mode-selection meaning is `[partial]`, but this value is the one
 EBOOT uses for all ENC28J60 traffic and must be preserved.
-
-The SPI clock is kept at or below 10 MHz even though the ENC28J60
-datasheet allows up to 20 MHz. EBOOT's conservative choice is not
-challenged here.
 
 ## ENC28J60 Register Addressing
 
@@ -92,7 +91,8 @@ transaction for register 2.
 The bank-switch helper extracts bits `6:5` of the caller-side register
 number, compares against a software cache, and if different issues a
 `BFC` / `BFS` pair against `ECON1` to reprogram `BSEL[1:0]`. The cached
-bank value lives at `0x80106E60` in `.data`.
+bank-select bits live at `0x80104A60` in `.data`, stored as the masked
+values `0x00`, `0x20`, `0x40`, or `0x60`.
 
 ### SPI Opcode Prefixes
 
@@ -126,7 +126,7 @@ manipulation without read-modify-write.
 ### `enc28j60_init(mac_bytes)`
 
 Full initialization of the SPI bus and the ENC28J60 chip. The function
-is the INIT entry in the Ethernet HAL vtable. It always targets SPI2
+is the INIT entry in the Ethernet HAL dispatch block. It always targets SPI2
 and hard-codes the SPI2 base via `OALPAtoVA(0x20024000, 0)` regardless
 of what the vtable registration passes as a `base` argument. The
 sequence:
@@ -147,23 +147,20 @@ sequence:
    - `MACON1 = 0x0D`   (MARXEN | TXPAUS | RXPAUS)
    - `MACON2 = 0x00`
    - `MACON3 = old | 0x32`  (TXCRCEN | PADCFG=01 | FRMLNEN)
-   - `MABBIPG = 0x12`
+   - initial `MABBIPG = 0x12`
    - `MAIPGL:MAIPGH = 0x12, 0x0C`
    - `MAMXFLL:MAMXFLH = 0xEE, 0x05` (1518 bytes max frame)
 8. Write the 6-byte MAC address into `MAADR0..MAADR5` in reverse
    order (the chip stores MAADR with the first byte at the
    highest-numbered register).
-9. Issue an MII write via `MIREGADR + MIWRL + MIWRH` to initialize
-   the PHY (the specific PHY register written is `0x10`, value
-   `0x0001`, which triggers a standard operation but is not
-   independently documented here).
+9. Issue an MII write with `MIREGADR = 0x10`, `MIWRL = 0x00`,
+   `MIWRH = 0x01`.
 10. Poll `MIISTAT.BUSY` until the MII write completes.
-11. Enable interrupts via `EIE` BFS (bits `INTIE | PKTIE = 0xC0`) and
-    enable receive via `ECON1` BFS (bit `RXEN = 0x04`).
-
-This is a textbook ENC28J60 bring-up sequence. Linux's mainline
-`drivers/net/ethernet/microchip/enc28j60.c` performs substantially the
-same steps in the same order.
+11. Call a duplex helper that reads a PHY register through the MII
+    path, sets `MACON3.FULDPX` accordingly, and rewrites `MABBIPG`
+    to `0x15` for full duplex or `0x12` for half duplex.
+12. Enable interrupts via `EIE` BFS (bits `INTIE | PKTIE = 0xC0`) and
+    set `ECON1.RXEN` via BFS `0x04`.
 
 ### `enc28j60_wcr` / `enc28j60_rcr`
 
@@ -191,11 +188,12 @@ Transmits one Ethernet frame. The sequence:
    `SPI_STATUS` bit 2 between words.
 5. `ECON1` BFS with `TXRTS = 0x08` to request transmission.
 6. Poll `ECON1.TXRTS` until the bit clears (TX done).
-7. Read `ESTAT.TXABRT`. If set, read the transmit status vector,
-   print a diagnostic, clear the abort flag via `ECON1` BFC, and
-   retry.
-8. On success, return 0 (one retry loop at this level; the HAL
-   wrapper adds another four retries on top).
+7. Read `ESTAT.TXABRT`. If set, program `ERDPT = len + 1`, read the
+   8-byte transmit status vector, print a diagnostic, clear `ESTAT`
+   bits `0x12` via `BFC`, and restart the transmit sequence.
+8. On success, return 0. No bounded retry count is visible in this
+   function; it keeps looping on the `TXABRT` path until a transmit
+   completes without that flag.
 
 ### `enc28j60_rx_poll(buf_out, len_out)`
 
@@ -206,13 +204,14 @@ Non-blocking frame receive. The sequence:
 2. Check `EPKTCNT` (bank 1 register `0x19`). If zero, return 0.
 3. Program `ERDPT` to the cached next-packet pointer `0x800F36B0`.
 4. Use RBM (opcode `0x3A`) to read 6 bytes: 2 bytes next-packet
-   pointer followed by a 4-byte status vector.
+   pointer, 2 bytes byte count, and 2 bytes receive status.
 5. Update the cached next-packet pointer.
-6. Extract the byte count from the status vector.
+6. Extract the byte count from the middle 2 bytes of that header.
 7. Use RBM again to read the frame payload into `buf_out`.
-8. Program `ERXRDPT` to the new read pointer.
+8. Program `ERXRDPT` to the new next-packet pointer value.
 9. `ECON2` BFS with `PKTDEC = 0x40` to decrement the packet count.
-10. Return frame length (byte count minus 4-byte FCS) in `*len_out`.
+10. Store and return the received length. If the byte count is greater
+    than 4, subtract the 4-byte FCS; otherwise use the raw byte count.
 
 ### `enc28j60_read_buffer_bulk`
 
@@ -220,45 +219,53 @@ The inner helper used by `rx_poll` to pull bytes out of ENC28J60 SRAM
 4 at a time through `SPI_RXDATA`, with the RX FIFO flow control
 described in *SPI2 Usage* above.
 
-## Ethernet HAL Vtable
+## Ethernet HAL Dispatch Block
 
-EBOOT maintains a 9-slot Ethernet HAL vtable in `.bss` at
-`0x80106E40..0x80106E60`. The slots are:
+EBOOT maintains a small Ethernet HAL dispatch block in `.bss` at
+`0x80106E40..0x80106E60`. The slots written by the registration paths are:
 
 | Offset from 0x80106E40 | Purpose                                    |
 | ----------------------- | ------------------------------------------ |
 | +0x00                   | `[unknown]`                                |
-| +0x04                   | RX-ready helper (polled during main loop)  |
+| +0x04                   | backend-specific helper; populated only by the RNDIS path in audited code |
 | +0x08                   | always 0                                   |
 | +0x0C                   | RECV function (dispatched by OEMEthGetFrame) |
 | +0x10                   | miscellaneous helper                       |
 | +0x14                   | INIT function (called on driver bringup)   |
 | +0x18                   | SEND function (dispatched by OEMEthSendFrame) |
 | +0x1C                   | miscellaneous helper                       |
-| +0x20                   | cached ENC28J60 bank number                |
+| +0x20                   | backend-private field, zero-initialized by both registration paths |
 
-The vtable is populated by a **driver registration function** that
-takes a MAC address pointer and a state struct. EBOOT contains two
-driver registration functions, only one of which is expected to
-succeed at a time:
+The dispatch block is populated by a **driver registration function** that
+takes a MAC address pointer and a state struct. `fmd_read_partition_table`
+does **not** probe both backends and fall back automatically. Instead it
+reads BOOTARGS `0xA0020844` (copied there from PTB header field `+0x28`)
+and selects exactly one registration path:
 
-### ENC28J60 Registration (primary on AIPC)
+- `0`: Bulverde RNDIS / `AKUSB`
+- nonzero: `ENC28J60`
 
-Populates the vtable with the ENC28J60 driver's RECV, SEND, and INIT
-entries, and writes `0x20020000` (SPI0 physical base) into a state
-struct field as a bus-handle placeholder. The actual SPI base used by
-`enc28j60_init` is then hardcoded to SPI2 `0x20024000` inside the init
-function, so the state struct value is not consulted for register
-access.
+If the selected registration path fails, EBOOT returns failure from
+`fmd_read_partition_table`; the other backend is not retried in the same
+call path.
 
-### Bulverde RNDIS Registration (fallback, unused on AIPC)
+### ENC28J60 Registration (selected when transport is nonzero)
+
+Populates the dispatch block with the ENC28J60 driver's RECV, SEND, and
+INIT entries, and writes `0x20024000` into two state-struct fields at
+offsets `+0x0C` and `+0x10`. `enc28j60_init` then independently calls
+`OALPAtoVA(0x20024000, 0)` and uses the resulting SPI2 virtual base for
+register access.
+
+### Bulverde RNDIS Registration (selected when transport is zero)
 
 Attempts to initialize a USB RNDIS Ethernet adapter attached to the
 SoC's MUSB USB host controller at physical `0x70000000`. On AIPC, no
 USB Ethernet dongle is attached, and the init path fails with the
 OALMSG string `"ERROR: Failed to initialize Bulverde Rndis USB
-Ethernet controller."`. The driver registration function then returns
-failure and the ENC28J60 path is tried instead.
+Ethernet controller."`. When this backend is selected and that init
+fails, `fmd_read_partition_table` fails; there is no automatic retry to
+the ENC28J60 path in that same control flow.
 
 This path is mentioned here for completeness and as a warning that the
 `0x70000000` base in EBOOT's ethernet code is **not** a second
@@ -269,20 +276,28 @@ dongle through if one were present.
 ## `OEMEthSendFrame` and `OEMEthGetFrame`
 
 These are the two standard WinCE OAL entry points, and in EBOOT they
-are thin wrappers over the HAL vtable:
+are thin wrappers over the dispatch block:
 
 ```
-OEMEthGetFrame(): call vtable RECV slot, return as 16-bit frame length
+OEMEthGetFrame(buf, len_ptr):
+    return (uint16_t)vtable RECV slot(buf, len_ptr)
+
 OEMEthSendFrame(buf, len):
     for retry in 1..4:
-        if vtable SEND slot succeeds: return 1
+        if vtable SEND slot(buf, len) == 0: return 1
         OALMSG("INFO: OEMEthSendFrame: retrying send (%u)", retry)
     return 0
 ```
 
-`OEMEthSendFrame` adds four retries on top of the one-retry inner loop
-inside `enc28j60_tx_frame`, giving up to 5 total TX attempts per
-logical call.
+`OEMEthSendFrame` retries up to 4 times if the SEND slot returns a
+non-zero failure code. The ENC28J60 backend (`enc28j60_tx_frame`)
+returns `0` on success and handles `TXABRT` by retrying internally, so
+the wrapper-level retries are not normally used on that path.
+
+`OEMEthGetFrame` does not touch `R0` / `R1`; callers pass a receive
+buffer and length pointer straight through to the RECV slot. In
+`EbootSendBootmeAndWaitForTftp`, those are `0x800F5128` and a stack
+`uint16_t` initialized to `0x05F0`.
 
 `OEMEthGetFrame` is non-blocking: callers are responsible for looping
 and polling. The download state machine polls it directly.
@@ -291,12 +306,17 @@ and polling. The download state machine polls it directly.
 
 The EBOOT download path is a single state machine that:
 
+It is reached through `check_update_eboot_request()` on the KITL /
+network-download path after the PTB / boot-menu logic has decided to
+stay in EBOOT. The normal flash `NK` boot path does not enter this loop.
+
 1. Broadcasts `BOOTME` UDP packets on a fixed interval.
 2. Polls incoming Ethernet frames through `OEMEthGetFrame`.
 3. Dispatches on EtherType: `0x0806` (ARP) or `0x0800` (IP).
-4. Once a UDP packet matching the EDBG port arrives, hands off to the
-   TFTP state machine to receive the kernel image.
-5. Returns when the TFTP download completes.
+4. For IP frames, runs the IP parser helper, then the EDBG helper, then
+   the TFTP receive helper if the EDBG helper does not consume the
+   packet.
+5. Returns when the exit flag at `0x800F5718` becomes non-zero.
 
 Pseudo-code of the main loop:
 
@@ -304,8 +324,10 @@ Pseudo-code of the main loop:
 int EbootSendBootmeAndWaitForTftp(nic_state, ...) {
     int next_bootme = now() - 3;
     int bootme_count = 0;
+    uint8_t *rx_buf = (uint8_t *)0x800F5128;
+    uint16_t pkt_len;
 
-    while (!tftp_started_flag) {
+    while (!MEMORY[0x800F5718]) {
         // Send BOOTME every 3 seconds, up to 40 retries
         if (bootme_count < 40 && now() - next_bootme >= 3) {
             ++bootme_count;
@@ -313,21 +335,18 @@ int EbootSendBootmeAndWaitForTftp(nic_state, ...) {
             SendBootme(nic_state, ...);
         }
 
-        uint16_t pkt_len = OEMEthGetFrame();
-        if (!pkt_len) continue;
+        pkt_len = 0x05F0;
+        if (!OEMEthGetFrame(rx_buf, &pkt_len))
+            continue;
 
         uint16_t ethertype = ntohs(*(uint16_t *)(rx_buf + 12));
-
-        if (ethertype == 0x0800) {          // IP
-            if (ProcessIP(...) == 0) {
-                if (ProcessUDP(...) == 0) {
-                    TftpStateMachine(...);
-                }
-            }
-        } else if (ethertype == 0x0806) {   // ARP
-            if (ProcessARP(...) == 3) {
-                OALMSG("Some other station has IP Address: ... Aborting");
+        if (ethertype == 0x0806) {   // ARP
+            if (sub_8005D700(...) == 3)
                 return 0;
+        } else if (ethertype == 0x0800) {   // IP
+            if (!sub_8005DC00(...)) {
+                if (!sub_8005EB20(...))
+                    sub_8005D310(...);
             }
         }
     }
@@ -335,9 +354,9 @@ int EbootSendBootmeAndWaitForTftp(nic_state, ...) {
 }
 ```
 
-The RX frame buffer that `enc28j60_rx_poll` writes into is at
-`0x800F5134` in `.data`. The state machine reads EtherType and
-subsequent protocol fields from that buffer directly.
+The fixed RX frame buffer base passed to `OEMEthGetFrame` is
+`0x800F5128` in `.data`. The state machine then reads EtherType from
+`0x800F5134`, which is `rx_buf + 12`.
 
 ### TFTP / EDBG Port
 
@@ -348,45 +367,33 @@ destination:
 sub_8005BF50(src_addr, 0xD403, 0xD403, filename);
 ```
 
-This is **not standard TFTP on port 69**. Port `0xD403` is the WinCE
-EDBG-over-TFTP convention used between Platform Builder and EBOOT.
-Using a private port lets the Platform Builder-initiated flow coexist
-with other TFTP traffic and makes wire captures easy to filter.
+This call site uses `0xD403`, not UDP port 69.
 
 ### EDBG Commands
 
-OALMSG strings confirm that EBOOT implements at least two EDBG
-command handlers:
+`sub_8005EB20` first checks that the payload begins with `"EDBG"` and
+that byte 4 is `0xFF`. Two command values are currently decoded in
+byte 7:
 
-```
-Got EDBG_CMD_CONFIG, flags: 0x%X
-Got EDBG_CMD_JUMPIMG
-```
+| Byte 7 | Meaning   |
+| ------ | --------- |
+| 0x02   | `JUMPIMG` |
+| 0x03   | `CONFIG`  |
 
-`EDBG_CMD_CONFIG` receives a configuration word from the host;
-`EDBG_CMD_JUMPIMG` tells EBOOT to jump to the loaded image. The full
-set of EDBG commands supported by EBOOT is not enumerated in this
-document; the two above are the ones observed in the string table.
+`JUMPIMG` sets the exit flag consumed by the outer wait loop.
+`CONFIG` logs `flags:0x%X` from byte 8 and replies through
+`sub_8005D988`.
 
 ### BOOTME Broadcast
 
-`SendBootme` constructs a BOOTME UDP packet containing the device's
-MAC address, current IP, CPU/platform identifier strings, and
-version metadata. It is broadcast to `255.255.255.255` on a WinCE
-EDBG UDP port. Platform Builder on the host listens for these
-broadcasts to discover devices that are waiting for a download.
-
-The packet format is the standard WinCE BOOTME structure and is not
-documented here.
+`SendBootme` builds an `EDBG`-tagged BOOTME packet, writes broadcast
+destination `255.255.255.255`, sets UDP port `0xD403`, and sends it
+through `sub_8005D988`. The success path logs `Sent BOOTME to %s`.
 
 ### DHCP
 
-A full DHCP client implementation (`ProcessDHCP`, `SendDHCP`,
-`DHCPFindOption`, `EbootDHCPRetransmit`, all of the standard WinCE
-OAL DHCP helpers) is present in EBOOT's string table and callable,
-but it is not activated by default. EBOOT defaults to static IP
-configuration and only enters the DHCP path when the user selects a
-"use DHCP" option from the maintenance menu.
+DHCP-related helpers and strings are present in EBOOT, but this
+document focuses on the default static-IP path described below.
 
 ## Default Network Configuration
 
@@ -400,20 +407,12 @@ subnet mask  = 0x00FFFFFF little-endian = 255.255.255.0
 gateway      = 0                          (disabled)
 ```
 
-These values live at offsets `+0x10`, `+0x14`, and `+0x18` of the
-in-RAM PTB header at `0x80106EA0` (see
+These literal immediates are the **factory-reset defaults** written by
+`ptb_load_default_network_config` into PTB offsets `+0x10`, `+0x14`,
+and `+0x18` at `0x80106EA0` (see
 [partition-format.md](partition-format.md) for the header layout).
-The values are not read from NAND, from `config.txt`, from an
-upstream server, or from any runtime configuration source. They are
-baked into the EBOOT binary as literal immediates.
-
-When dumping the `PTB` block from a fresh unit's NAND, the same
-`c0 a8 00 0b ff ff ff 00` byte sequence is observed in the header's
-network config fields. This is **not** because NAND stores the
-configuration; it is because the factory programming tool copies
-EBOOT's in-RAM default PTB to NAND when flashing, and EBOOT's default
-has these values baked in. Two machines with unchanged configuration
-will show the same bytes for the same reason.
+If EBOOT later reloads a saved PTB snapshot from `CFG`, the active IP /
+mask / gateway values may instead come from that persisted PTB state.
 
 ### Runtime Network State
 
@@ -431,10 +430,7 @@ which is well inside EBOOT's working memory and does not conflict
 with the framebuffer (`0x33B00000`) or the NK load address
 (`0x30200000`).
 
-The full contents of this runtime network state structure (beyond the
-IP and mask at the first two slots) are not tabulated; a MAC address
-and BOOTME sequence number are likely present in adjacent slots but
-have not been independently identified.
+Fields beyond the first two slots are not named here.
 
 ## Unresolved
 
@@ -454,8 +450,8 @@ have not been independently identified.
 - The full BOOTME packet format emitted by `SendBootme` is not
   tabulated here.
 - The full set of EDBG commands supported on the RX path is not
-  enumerated; only `CONFIG` and `JUMPIMG` are confirmed from string
-  references.
+  enumerated; only command bytes `0x02` (`JUMPIMG`) and `0x03`
+  (`CONFIG`) are decoded in `sub_8005EB20`.
 - The runtime network state structure at `0xA0020830..` is only
   partially understood. Fields beyond IP and mask are not named.
 - The MII write performed during init (MIREGADR = `0x10`, value =

@@ -75,14 +75,14 @@ register is at `SYSCTRL + 0x80 + 8*B`; the input register is at
 
 ### GPIO4 Input Data Alignment
 
-GPIO4 (bank 3) has a 3-bit positional offset between its output register
-(`+0x98`) and its input register (`+0xC8`): output bit `N` corresponds to
-input bit `N + 3`, not `N`. EBOOT handles this inside the read helper by
-shifting the input data word left by 3 when the caller requests a pin in
-bank 3. The bootrom GPIO crosswalk reflects the same phenomenon in its
-`GPIO4[in 5], GPIO4[8]` style entries.
+The GPIO read helper (`sub_800629BC`) treats bank 3 specially only for
+physical pins `99..117` (`0x63..0x75`): before testing the requested bit,
+it shifts the `SYSCTRL + 0xC8` word left by 3. This aligns
+`GPIO4[in N]` with logical pin `GPIO4[N+3]`, matching the bootrom
+crosswalk's `GPIO4[in 5], GPIO4[8]` style entries.
 
-This offset does not apply to banks 0-2, only bank 3.
+Pins `96..98` are read without that shift. Banks 0-2 are also read
+without any adjustment.
 
 ## Driver Function Layer
 
@@ -115,28 +115,35 @@ Targets `SYSCTRL + 0x80 + 8*bank`.
 ### GPIO read helper
 
 Reads a pin's input bit and returns it as 0 or 1. Reads from
-`SYSCTRL + 0xBC + 4*bank`. Applies the 3-bit left shift described above
-for bank 3.
+`SYSCTRL + 0xBC + 4*bank`. For physical pins `99..117`, it applies the
+3-bit left shift described above before testing the bit.
 
 ### `gpio_enable_alt(alt_id)`
 
 Enables the alt function identified by `alt_id` (0..56). Looks up the
 function pointer at index `alt_id` in the dispatch table and invokes it.
-The target stub writes a specific bit or group of bits in either
-`SYSCTRL + 0x74` or `SYSCTRL + 0x78`.
+The target stub always updates sharepin state through SYSCTRL, typically
+by setting or clearing bits in `SYSCTRL + 0x78` and, for some IDs, also
+editing fields in `SYSCTRL + 0x74` via `reg_rmw`.
 
 The dispatch table lives at runtime address `0x800F0140` in `.data` and is
-228 bytes long (57 entries * 4 bytes). It is copied there from the
-read-only image during EBOOT's `.data` setup. A readiness check gates
-`gpio_enable_alt` calls that might fire before the copy completes.
+228 bytes long (57 entries * 4 bytes). `gpio_enable_alt` also calls
+`gpio_table_ready`, which walks a runtime-populated interval table at
+`0x800F0270` and rejects IDs outside the allowed ranges. Its sibling
+`sub_800638CC` performs the same range check for related wrappers. This
+is an ID validity check, not a readiness check.
 
 ### `gpio_aux_config_write(pin, value)` and its companion
 
-Two helpers write to the aux registers `+0x9C..+0xA8`. They cover
-**complementary sets of pins** and are dispatched based on a per-pin mode
-value obtained elsewhere (the maintenance path uses the constant `9` to
-select one of the two). Both helpers set a single bit in one of the aux
-registers, with the bit index derived from `pin mod 32`.
+Two helpers write to the aux registers `+0x9C..+0xA8`. They are selected
+by a per-pin mode value obtained elsewhere (the maintenance path uses the
+constant `9` to select `sub_80062BA4`, otherwise it uses
+`gpio_aux_config_write`). Each helper accepts its own hard-coded sparse
+pin allowlist; the two sets are not simply complementary, and they overlap
+on GPIO1 pins `16..27`.
+
+For both helpers, `value == 0` sets the selected aux bit and any non-zero
+value clears it.
 
 The aux registers themselves are `[partial]`: the single-bit-per-pin
 encoding is observed, but whether the bit controls pull-up, pull-down,
@@ -158,6 +165,8 @@ registers, and the per-stub polarity is mixed:
 - Some stubs OR a bit into `+0x78` when the alt function is being enabled.
 - Other stubs AND-NOT a bit into `+0x78` when the alt function is being
   enabled.
+- Some stubs also update fields in `+0x74` with `reg_rmw(base+0x74,
+  set_mask, clear_mask)` before touching `+0x78`.
 
 The driver exposes two internal helpers, one for each polarity. Each alt
 function stub picks the correct one based on how the underlying hardware
@@ -196,26 +205,24 @@ the GPIO interrupt controller hypothesis. EBOOT itself never unmasks any
 of these bits at runtime - it is a polling-mode bootloader - so the
 interrupt path remains unexercised through the EBOOT lifetime.
 
-Following this register setup, the same init function enables eight
-mandatory alt functions by calling `gpio_enable_alt` with IDs `44, 8, 53,
-13, 12, 16, 51, 52`. These IDs are the prerequisites for the later driver
-inits (NAND, SPI0, SPI2, UART, LCD). They are referenced by ID only; the
-mapping from ID to physical pin is not tabulated in this documentation
-(see `Unresolved` below).
+In `hw_phase1_init`, after `sysctrl_clock_init`, `hw_phase1_step2`, and
+`hw_phase1_step3`, EBOOT enables eight mandatory alt functions by calling
+`gpio_enable_alt` with IDs `44, 8, 53, 13, 12, 16, 51, 52`. These IDs are
+the prerequisites for the later driver inits (NAND, SPI0, SPI2, UART,
+LCD). They are referenced by ID only; the mapping from ID to physical pin
+is not tabulated in this documentation (see `Unresolved` below).
 
 ## Bank-0 Input Filter Table
 
 The 32-byte lookup table referenced by `gpio_bank_config_write` lives at
-`0x8010011C` in `.data`. It has one byte per bit in GPIO1 (index 0..31).
-During `.data` initialization, most entries are `0xFF` ("no action"), and
-a small set of entries hold valid bit indices into `SYSCTRL + 0xD4`.
+runtime address `0x800F011C`. It has one byte per bit in GPIO1 (index
+0..31). The helper treats `0xFF` as "no action" and otherwise uses the
+byte as a bit index into `SYSCTRL + 0xD4`.
 
-The exact table contents are not independently listed here because they
-depend on runtime `.data` initialization that is not fully captured in the
-clean binary dump. The bootrom's `diag-mode.md` documents that the
-bootrom sets `SYSCTRL + 0xD4` bits `[17:2]` and `[27:26]` - a total of 18
-bits - which is consistent with "18 out of 32 GPIO1 pins have an entry in
-the filter table".
+In the current clean image this RAM-resident table appears as all
+`0xFF`. The static image therefore does not preserve the final runtime
+per-pin mapping, so this document does not claim any specific non-`0xFF`
+entries.
 
 ## Cross-Reference
 
@@ -242,11 +249,14 @@ Key signals referenced from other EBOOT docs:
   enable register not confirmed.
 - Alt function ID to physical pin mapping: the 57-entry table in
   `.data` at `0x800F0140` is understood structurally (each entry is a
-  stub writing to `+0x74`/`+0x78`), but no complete ID-to-pin table has
-  been built. Building it requires walking all 57 stubs, recording the
-  bit mask each one writes, and then cross-referencing the bit position
-  against the pin assignments encoded in the sharepin mux registers.
-- Bank-0 input filter table at `0x8010011C`: observed as a 32-byte
-  `0xFF`-sentinel table, exact non-sentinel values not tabulated in this
-  documentation because they depend on ROM-initialized `.data` that was
-  not independently verified against the binary.
+  stub touching `+0x78` and sometimes `+0x74`), but no complete
+  ID-to-pin table has been built. Building it requires walking all 57
+  stubs, recording the masks they write, and then cross-referencing the
+  bit positions against the sharepin assignments.
+- Alt-function validator table at `0x800F0270`: structurally this is a
+  runtime interval table walked by `gpio_table_ready` /
+  `sub_800638CC`, but the final interval contents are not tabulated
+  here.
+- Bank-0 input filter table at `0x800F011C`: exact non-`0xFF` values are
+  not tabulated in this documentation because the clean binary dump does
+  not preserve the final runtime contents.

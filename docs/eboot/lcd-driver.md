@@ -5,6 +5,10 @@ panel. It also drives the panel backlight through a single-channel PWM
 generator exposed by SYSCTRL. This document records the register values
 and sequence needed to reproduce what EBOOT does.
 
+Unless otherwise noted, the sequence below is taken directly from
+`lcd_init` assembly. Where the code uses read-modify-write on a register,
+the cold-boot-equivalent final literal is shown.
+
 The LCD controller base is physical `0x20010000`, uncached virtual
 `0xA8010000` through `OALPAtoVA`. All register offsets below are relative
 to that base.
@@ -15,19 +19,19 @@ to that base.
 | ------ | ----------------------- | ------------------------------------------------- |
 | +0x00  | `0x80A80058` (final)    | Main control register; see *Control Register* below |
 | +0x10  | `0x00300006`            | H timing config 1 `[partial]`                     |
-| +0x14  | `0x07B00000`            | Framebuffer base address (28 bits, see note)      |
-| +0x18  | `0x03200160`            | Stride / per-line layout word `[partial]`         |
+| +0x14  | `0x07B00000`            | Framebuffer base register literal (see note)      |
+| +0x18  | `0x032001E0`            | Stride / per-line layout word `[partial]`         |
 | +0x3C  | `0x00000000`            | Cleared during init                               |
 | +0x40  | `0x00080003`            | V timing `[partial]`                              |
 | +0x44  | `0x00058320`            | H sync `[partial]`                                |
-| +0x48  | `0x000503A0`            | V sync `[partial]`                                |
+| +0x48  | `0x00050420`            | V sync `[partial]`                                |
 | +0x4C  | `0x00000018`            | Porch / 24 pixels `[partial]`                     |
 | +0x50  | `0x00000001`            | Enable flag `[partial]`                           |
 | +0x54  | `0x00F00000`            | Resolution-related `[partial]`                    |
 | +0x58  | `0x000001F9`            | 505 (V total)                                     |
 | +0xA8  | `0x00000000`            | Cleared                                           |
-| +0xAC  | `0x000C8160`            | `[partial]`                                       |
-| +0xB0  | `0x000C8160`            | `[partial]`                                       |
+| +0xAC  | `0x000C81E0`            | `[partial]`                                       |
+| +0xB0  | `0x000C81E0`            | `[partial]`                                       |
 | +0xB8  | bit 0 clear, bit 2 set  | `[partial]`                                       |
 | +0xC8  | bit 11 set              | `[partial]`                                       |
 | +0xE8  | `0x00000111`            | Pixel clock divider (see below)                   |
@@ -60,15 +64,21 @@ See the *Bring-Up Sequence* section below for the exact ordering.
 
 ### Framebuffer Base (+0x14)
 
-EBOOT writes `0x07B00000` into `+0x14`. This is the low 28 bits of the
-framebuffer physical address. The LCD DMA engine truncates its address
-to the 64 MB DDR range, so writing `0x07B00000` results in DMA reads
-from DDR physical `0x03B00000 + 0x30000000 = 0x33B00000`, which is the
-actual framebuffer location within the 64 MB DDR window.
+EBOOT writes the literal `0x07B00000` into `+0x14` after first masking
+off the previous high nibble. What `lcd_init` directly proves is only:
 
-The framebuffer region is 5 MB reserved starting at `0x33B00000`:
-`800 * 480 * 2 = 768000` bytes are live pixels, and the region is
-rounded up to 5 MB to give some headroom.
+- CPU-side framebuffer clears target cached virtual `0x87B00000`
+- the LCD controller register receives `0x07B00000`
+
+The commonly used physical interpretation `0x33B00000` comes from the
+platform's 64 MB DDR wrap behavior and observed working display state,
+not from an explicit comment or symbolic field decode inside
+`lcd_init` itself.
+
+On current hardware, the effective framebuffer region is treated as a
+5 MB area starting at `0x33B00000`: `800 * 480 * 2 = 768000` bytes are
+live pixels, and the region is rounded up to 5 MB to give some
+headroom.
 
 ### Pixel Clock Divider (+0xE8)
 
@@ -86,11 +96,9 @@ The `|0x101` mask is always set; only the `2 * div` part varies with
 clock selection.
 
 LCD pixel clock is also configured through a separate PAL IOCTL with
-ID `0x01012630` and value `48` during LCD init. The PAL path sets up
-the clock source and divider in the clock controller before the LCD
-controller's own divider is applied. The interaction between the two
-is not fully traced; the `0x111` value is known to work and the IOCTL
-path is noted for completeness.
+ID `0x010120EC` and payload `0x30` during LCD init. In the verified
+instruction order, EBOOT writes the controller-local divider at `+0xE8`
+first and issues the PAL IOCTL immediately afterwards.
 
 ## Panel Timing
 
@@ -115,60 +123,53 @@ configure. 47.82 Hz is typical for a cheap 800x480 TFT running at
 The complete init sequence performed by `lcd_init`, in order:
 
 ```c
-// 1. Ensure required alt functions are muxed to pads.
-//    Most of these are already done in hw_phase1_init as part of the
-//    mandatory eight alt functions (44, 8, 53, 13, 12, 16, 51, 52),
-//    which include the LCD data and sync lines. gpio_enable_alt is
-//    still called defensively for pins 51 and 52 by lcd_init itself.
-gpio_enable_alt(51);
-gpio_enable_alt(52);
-
-// 2. Clock and reset pulse.
+// 1. Clock and reset pulse.
 *LCD(0x3C) = 0;
 *SYSCTRL(0x0C) |=  (1 << 19);    // assert LCD reset
 *SYSCTRL(0x0C) &= ~(1 << 19);    // deassert (pulse)
 *SYSCTRL(0x0C) &= ~(1 <<  3);    // enable LCD clock (inverted polarity)
 
-// 3. Clear 5 MB of framebuffer memory.
+// 2. Clear 5 MB of framebuffer memory.
 memset(fb_virt, 0, 5 * 1024 * 1024);
 
-// 4. Program the pixel clock divider and control phase 1.
+// 3. Program the pixel clock divider and issue the PAL IOCTL.
 *LCD(0xE8) = 0x00000111;
-*LCD(0x00) = 0x00000040;         // control phase 1: bit 6 only
+pal_ioctl(0x010120EC, &value_0x30, 4, 0, 0, 0);
 
-// 5. Timing registers.
+// 4. Ensure the LCD pad routing is enabled.
+//    hw_phase1_init already enables alt IDs 44, 8, 53, 13, 12, 16, 51, 52.
+//    lcd_init itself re-enables only alt ID 51.
+gpio_enable_alt(51);
+
+// 5. Control phase 1.
+*LCD(0x00) = 0x00000040;         // actual code uses RMW
+
+// 6. Timing registers.
 *LCD(0x10) = 0x00300006;
 *LCD(0x40) = 0x00080003;
 *LCD(0x44) = 0x00058320;
-*LCD(0x48) = 0x000503A0;
+*LCD(0x48) = 0x00050420;
 *LCD(0x4C) = 0x00000018;
 *LCD(0x50) = 0x00000001;
 *LCD(0x54) = 0x00F00000;
 *LCD(0x58) = 0x000001F9;
 
-// 6. Control phase 2: main enable + mode.
-*LCD(0x00) = 0x80A80050;
+// 7. Control phase 2: main enable + mode.
+*LCD(0x00) = 0x80A80050;         // actual code uses RMW
 
-// 7. Layout / framebuffer base.
-*LCD(0xB0) = 0x000C8160;
-*LCD(0x14) = 0x07B00000;         // framebuffer base, DDR wraps to 0x33B00000
-*LCD(0x18) = 0x03200160;
+// 8. Layout / framebuffer base.
+*LCD(0xB0) = 0x000C81E0;
+*LCD(0x14) = 0x07B00000;         // actual code first preserves the high nibble
+*LCD(0x18) = 0x032001E0;
 *LCD(0xA8) = 0;
-*LCD(0xAC) = 0x000C8160;
+*LCD(0xAC) = 0x000C81E0;
 
-// 8. Control phase 3: start refresh.
+// 9. Control phase 3: start refresh.
 *LCD(0x00) |= 0x08;              // final value 0x80A80058
 
-// 9. Trailing config bits.
+// 10. Trailing config bits.
 *LCD(0xC8) |= 0x800;
 *LCD(0xB8) = (*LCD(0xB8) & ~1) | 4;
-
-// 10. PWM output pad routing (must come before writing PWM register).
-gpio_enable_alt(20);             // alt function ID, not a physical pin
-
-// 11. PWM programming for backlight.
-//     See the Backlight PWM section below.
-pwm_set(period_hz = 1000, duty_pct = 70);
 ```
 
 The ordering is reproduced from `lcd_init` and should be followed
@@ -177,13 +178,14 @@ literally. The critical points:
 - `SYSCTRL+0x0C` bit 3 is inverted polarity: **clear to enable**.
 - `SYSCTRL+0x0C` bit 19 is a pulse; toggle high then low.
 - `LCD+0x00` is written three times during init, not once.
+- `pal_ioctl(0x010120EC, &0x30, 4, 0, 0, 0)` occurs before the first
+  `LCD+0x00` control write.
 - Timing registers must be written between control phase 1 and
   control phase 2.
 - Layout registers (`+0x14`, `+0x18`, `+0xB0`, `+0xAC`) must be
   written between phase 2 and phase 3.
-- `gpio_enable_alt(20)` must be called before the PWM register is
-  written, or the backlight PWM signal is generated internally but
-  never routed to a pad and the display stays dark.
+- Backlight PWM routing and `pwm_set(1000, 70)` are not part of
+  `lcd_init`; they are performed later by `oem_platform_init`.
 
 ## Backlight PWM
 
@@ -212,7 +214,8 @@ low_cycles    = (100 - duty_pct) * period_cycles / 100
 SYSCTRL(0x2C) = low_cycles | (high_cycles << 16)
 ```
 
-EBOOT's LCD init calls `pwm_set(1000, 70)`:
+`oem_platform_init` calls `gpio_enable_alt(20)` and then
+`pwm_set(1000, 70)` after `lcd_init` returns:
 
 ```
 period_cycles = 12_000_000 / 1000 = 12000
@@ -228,20 +231,21 @@ as `high = 0xFFFF, low = 0`, and 0% duty is `high = 0, low = 0`.
 ### PWM Routing
 
 The PWM generator's output must be routed to a pad through the alt
-function mux. EBOOT does this via `gpio_enable_alt(20)`, where `20`
-is an **alt function ID**, not a physical pin number. The specific
-alt function that ID `20` enables is inferred to be the PWM pad
-routing targeting physical `GPIO1[9]` (which the bootrom GPIO
+function mux. `oem_platform_init` does this via `gpio_enable_alt(20)`,
+where `20` is an **alt function ID**, not a physical pin number. The
+specific alt function that ID `20` enables is inferred to be the PWM
+pad routing targeting physical `GPIO1[9]` (which the bootrom GPIO
 crosswalk identifies as `WLED_PWM`). See the `Unresolved` section
 below for the caveat.
 
 ## Framebuffer Placement
 
-EBOOT places the framebuffer at DDR physical `0x33B00000`, which is a
-5 MB region near the top of the 64 MB DDR window. The LCD controller's
-`+0x14` register receives `0x07B00000` instead - the 64 MB DDR address
-wrap in the memory decoder folds that value back onto `0x03B00000`
-within the DDR window, giving `0x33B00000` as the actual DMA source.
+EBOOT clears 5 MB at cached virtual `0x87B00000` and programs the LCD
+controller with the literal `0x07B00000`. On current hardware this
+configuration corresponds to the wrapped DDR framebuffer region usually
+described as physical `0x33B00000`, but that physical interpretation
+comes from platform address-wrap behavior rather than from `lcd_init`
+alone.
 
 Pixel format is RGB565 (16 bpp), so one line is `800 * 2 = 1600`
 bytes and the whole active framebuffer is `1600 * 480 = 768000` bytes.
@@ -270,12 +274,11 @@ inheriting whatever `lcd_init` or WinCE left behind.
   and cross-referencing the sharepin bit against a pin mapping. See
   [gpio-driver.md](gpio-driver.md) for the alt-ID-to-physical-pin
   problem in general.
-- The PAL IOCTL `0x01012630` that sets a value of `48` during LCD
-  clock setup: this is a separate clock-controller configuration
-  that runs in addition to `LCD+0xE8`. The relationship between the
-  two is not fully traced. The IOCTL appears to configure a clock
-  source divider in the clock controller before the LCD's own
-  divider is applied.
+- The exact meaning of PAL IOCTL `0x010120EC` with payload `0x30`
+  during LCD clock setup is not yet decoded. A conservative reading is
+  that EBOOT performs two separate clock-related steps for LCD bring-up:
+  this PAL IOCTL plus the controller-local divider write at `LCD+0xE8`.
+  Their precise division of responsibility is not yet confirmed.
 - Whether the LCD controller uses bit 31 of `+0x14` for anything,
   and whether writing the full 32-bit `0x07B00000` is necessary or
   whether the low 28 bits alone suffice, is not confirmed.

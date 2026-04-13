@@ -2,23 +2,24 @@
 
 This document lists the memory regions and registers that EBOOT uses beyond
 the set already documented in [docs/bootrom/memory-map.md](../bootrom/memory-map.md).
-The bootrom document is assumed as a prerequisite: anything it already lists
-(SYSCTRL base, SPI2 at `0x20024000`, NAND sequencer, UART, L2 buffer SRAM, USB
-controller, DDR SDRAM base) is not repeated here unless EBOOT adds new fields.
+The bootrom document is assumed as a prerequisite; entries already cataloged
+there are not repeated here unless EBOOT adds new fields or EBOOT-specific
+usage.
 
 ## Address Space Overview (EBOOT additions)
 
 | Base Address | End Address | Region                                     |
 | ------------ | ----------- | ------------------------------------------ |
 | 0x20010000   | 0x200100FF  | LCD controller                             |
-| 0x20020000   | 0x2002001F  | SPI0 (CH374 USB-over-SPI bridge)           |
-| 0x20021000   | 0x2002101F  | SPI1 (present but unused by EBOOT)         |
-| 0x2002D000   | 0x2002D00F  | DDR SDRAM controller (programmed by nboot) |
+| 0x20024000   | 0x20024023  | SPI controller block used by CH374 and ENC28J60 |
+| 0x20025000   | 0x20025023  | Second SPI-controller slot reachable through `spi_init_controller(1)` |
 | 0x30000000   | 0x33FFFFFF  | DDR SDRAM, 64 MB, wraps at 64 MB boundary  |
 
-The SoC implements at least three SPI controller instances. SPI0 and SPI2
-are used by EBOOT; SPI1 appears present in the register map but has no
-consumer in the analyzed image.
+Current EBOOT code actively uses physical `0x20024000`. `ch374_init` reaches
+it through `spi_init_controller(0)`, while `enc28j60_init` hard-codes the same
+base directly. `spi_init_controller(1)` can also select `0x20025000`, but no
+caller in this image uses that path. The vendor numbering of these SPI blocks
+is therefore left unresolved here.
 
 ## SYSCTRL Register Additions (base 0x08000000)
 
@@ -58,82 +59,64 @@ The CPU PLL configuration register at SYSCTRL+0x04 encodes the clock as:
 ```
 N  = PLL[5:0]           # multiplier low
 P  = PLL[8:6]           # post-divider exponent
-HS = PLL[15]            # high-speed bypass
 M  = PLL[20:17]         # pre-divider - 1
 
 VCO       = 4 MHz * (N + 62)
 pre_div   = VCO / (M + 1)
-CPU_CLK   = HS ? pre_div
-               : (P == 0 ? pre_div / 2 : pre_div / (1 << P))
+CPU_CLK   = (P == 0 ? pre_div / 2 : pre_div / (1 << P))
 ```
 
-Example: the typical 248 MHz configuration is `N=62, M=0, P=0, HS=0`:
+Example: the typical 248 MHz configuration is `N=62, M=0, P=0`:
 `VCO = 4 * (62 + 62) = 496 MHz`, `pre_div = 496 MHz`,
 `CPU_CLK = 496 / 2 = 248 MHz`.
 
-## SPI Controller Register Maps
+## SPI Controller Register Usage
 
-SPI0 and SPI2 share the same base offset layout but, importantly, their
-**control-register bit assignments differ** for chip-select and transfer-start.
-Code that drives one must not assume the other.
+Current EBOOT code reaches the SPI hardware through two paths. The CH374 path
+calls `spi_init_controller(0)` and then uses the generic helpers
+`spi_transfer_tx`, `spi_transfer_txrx`, and `spi_config_mode_clock`; the
+ENC28J60 path programs physical `0x20024000` directly inside `enc28j60_init`.
+The unused `spi_init_controller(1)` branch selects `0x20025000`, but no caller
+in this image exercises it.
 
-### SPI2 (base 0x20024000, ENC28J60)
+The register offsets that are directly visible in code are:
 
-Register offsets and bit meanings below are derived from the ENC28J60 driver
-code. This is the canonical SPI2 register map used by EBOOT.
+| Offset | Width | Observed use |
+| ------ | ----- | ------------ |
+| +0x00  | 32    | Control / mode word |
+| +0x04  | 32    | Status |
+| +0x0C  | 16    | Transfer count |
+| +0x10  | 32    | Cleared by the generic TX helper before write bursts |
+| +0x14  | 32    | Cleared by the generic TX/RX helper before the read phase |
+| +0x18  | 32    | TX data port |
+| +0x1C  | 32    | RX data port |
+| +0x20  | 32    | Written to `0x00FFFFFF` by both init paths `[partial]` |
 
-| Offset | Name         | Width | Description                                              |
-| ------ | ------------ | ----- | -------------------------------------------------------- |
-| +0x00  | SPI_CTRL     | 32    | Control register (see bit breakdown below)               |
-| +0x04  | SPI_STATUS   | 32    | Status register                                          |
-| +0x0C  | SPI_COUNT    | 16    | Byte count for current burst                             |
-| +0x18  | SPI_TXDATA   | 32    | TX data port; writes go to the bus (4 bytes at a time)   |
-| +0x1C  | SPI_RXDATA   | 32    | RX data port; reads come from the bus                    |
-| +0x20  | SPI_CONFIG2  | 32    | Mode/config register; EBOOT writes `0xFFFFFF` at init `[partial]` |
+In the ENC28J60 path, `enc28j60_init` computes a divider that keeps the SPI
+clock at or below 10 MHz, then programs `SPI_CTRL = (div << 8) | 0x52` and
+`SPI_CONFIG2 = 0x00FFFFFF`. For a 248 MHz CPU clock the code first computes
+`div = 11`, then bumps it to `12`, giving
+`248 / (2 * (12 + 1)) = 9.54 MHz`.
 
-`SPI_CTRL` bits:
+The ENC28J60 transfer code polls status bit `2` while filling `+0x18`, status
+bit `6` while draining `+0x1C`, and status bit `8` to wait for transfer
+completion. Those bit meanings are directly supported by the driver's control
+flow.
 
-| Bit    | Meaning                                                |
-| ------ | ------------------------------------------------------ |
-| 0      | CS (active low; clear = asserted)                      |
-| 1      | Direction / RW strobe (set during writes)              |
-| 5      | Transfer enable / hold bus active                      |
-| 8..15  | Clock divider: `SPI_CLK = CPU_CLK / (2 * (div + 1))`   |
-
-`SPI_STATUS` bits:
-
-| Bit | Meaning                                     |
-| --- | ------------------------------------------- |
-| 2   | TX FIFO has space for more data             |
-| 6   | RX data available                           |
-| 8   | Transfer complete                           |
-
-The clock divider is chosen to keep the SPI clock at or below 10 MHz.
-For a 248 MHz CPU clock this produces a divider value around 11, giving an
-actual SPI clock near 10.3 MHz.
-
-`SPI_CONFIG2` (+0x20) is written to `0xFFFFFF` once during init and never
-touched again. Its exact bit layout is not determined here; the register is
-listed as partial so consumers know to not rely on specific bits.
-
-### SPI0 (base 0x20020000, CH374)
-
-SPI0 drives the CH374 USB host bridge chip (see `usb-hid-input.md`). It uses
-the same base offset layout as SPI2 (`+0x00` ctrl, `+0x04` status, `+0x18`
-tx, `+0x1C` rx), but `SPI_CTRL` bit assignments are **not** the same as
-SPI2. In particular, CS and transfer-start map to different bits. The
-complete SPI0 bit layout is not fully characterized in this documentation
-and is marked `[partial]`.
-
-Consumers writing new SPI0 code should not copy the SPI2 bit constants.
+The generic SPI helper used by CH374 toggles control bits `0` and `1` around
+the TX/RX phase split and uses control bit `5` in `spi_cs_assert` /
+`spi_cs_deassert`. The exact semantic names of those bits are not yet unified
+with the ENC28J60-side view, so this document records only the operations that
+are directly visible in code.
 
 ## DDR Runtime Layout
 
-DDR SDRAM is 64 MB at physical `0x30000000..0x33FFFFFF`. The hardware
-address decoder masks the high bits at the 64 MB boundary, so physical
-addresses outside that range wrap back: e.g. a write to `0x07B00000` lands
-at `0x03B00000`, which the decoder then offsets to `0x33B00000` within the
-DDR window.
+DDR SDRAM is 64 MB at physical `0x30000000..0x33FFFFFF`. The broader
+platform analysis and the working LCD configuration indicate a wrap at
+the 64 MB boundary. From EBOOT assembly alone, the directly visible
+facts are the cached framebuffer clear at `0x87B00000` and the LCD base
+register literal `0x07B00000`; the effective `0x33B00000` DMA source is
+an inference from that wrap behavior.
 
 EBOOT's default DDR runtime layout:
 
@@ -144,17 +127,19 @@ EBOOT's default DDR runtime layout:
 | IMG wrapper             | 0x30037FD4 - 0x30037FFF   | 44-byte IMG header copied from NAND by nboot     |
 | EBOOT code and data     | 0x30038000+               | EBOOT `.text` / `.data` / `.bss`                 |
 | NK load target          | 0x30200000 (virt 0x80200000) | WinCE kernel loaded here by EBOOT before jump |
-| Framebuffer             | 0x33B00000                | 5 MB RGB565 primary surface (see `lcd-driver.md`) |
+| Framebuffer             | 0x33B00000                | Effective wrapped LCD DMA source on current hardware |
 | Top of DDR              | 0x33FFFFFF                | End of the 64 MB window                          |
 
-EBOOT writes the physical framebuffer address `0x07B00000` into the LCD
-controller's base register; the 64 MB wrap places the actual DMA source at
-`0x03B00000` + DDR base = `0x33B00000`.
+EBOOT writes the literal `0x07B00000` into the LCD controller's base
+register. On the current 64 MB board this corresponds to the effective
+DMA source conventionally described as `0x33B00000`; see
+[lcd-driver.md](lcd-driver.md) for the distinction between the assembly
+facts and the address-wrap interpretation.
 
 ## Virtual Address Mapping
 
-EBOOT installs a WinCE-style OEMAddressTable that maps all peripherals and
-DDR into two virtual regions:
+EBOOT uses a baked-in WinCE-style OEMAddressTable through `OALPAtoVA`,
+mapping peripherals and DDR into two virtual regions:
 
 - `0x8xxx_xxxx`: cached alias
 - `0xAxxx_xxxx`: uncached alias (same offsets as cached, different base)
@@ -166,15 +151,15 @@ All register accesses inside EBOOT use the uncached alias after calling
 | ------------ | ----------------- | ---------------- | -------------- |
 | 0x08000000   | 0xA8100000        | 0x88100000       | SYSCTRL        |
 | 0x20010000   | 0xA8010000        | 0x88010000       | LCD controller |
-| 0x20020000   | 0xA8020000        | 0x88020000       | SPI0           |
-| 0x20024000   | 0xA8024000        | 0x88024000       | SPI2           |
+| 0x20024000   | 0xA8024000        | 0x88024000       | SPI controller |
 | 0x2002A000   | 0xA802A000        | 0x8802A000       | NAND sequencer |
 | 0x30000000   | 0xA0000000        | 0x80000000       | DDR SDRAM      |
 | 0x48000000   | 0xA8200000        | 0x88200000       | L2 SRAM        |
 
 The exact base pairs are not tabulated across every region in this document;
-the list above is the set observed in EBOOT code. `OALPAtoVA` is the OEM hook
-and returns the correct virtual address given the physical.
+the list above is the set directly confirmed in the current analysis.
+`OALPAtoVA` is the OEM hook and returns the correct virtual address given the
+physical.
 
 The convention that DDR's uncached alias begins at `0xA0000000` is relevant
 for one runtime data structure: EBOOT stores the active network state
@@ -188,21 +173,25 @@ important ones:
 
 | Address      | Contents                                                               |
 | ------------ | ---------------------------------------------------------------------- |
-| 0x80104A5C   | Current SPI virtual base pointer (SPI0 or SPI2 depending on driver)    |
+| 0x80104A5C   | ENC28J60 SPI virtual base pointer                                      |
+| 0x80104A60   | Cached ENC28J60 bank-select bits (`0x00`, `0x20`, `0x40`, `0x60`)      |
+| 0x80107768   | Generic SPI virtual base pointer used by the CH374 path                |
+| 0x80107798   | Selected generic SPI controller index (`0` -> `0x20024000`, `1` -> `0x20025000`) |
 | 0x80106E14   | SYSCTRL virtual base pointer (populated by early init)                 |
-| 0x80106E40   | First slot of the Ethernet HAL vtable                                  |
+| 0x80106E40   | First slot of the Ethernet HAL dispatch block                          |
 | 0x80106E44   | Vtable: RX-ready helper                                                |
 | 0x80106E4C   | Vtable: receive function                                               |
 | 0x80106E54   | Vtable: driver init function                                           |
 | 0x80106E58   | Vtable: send function                                                  |
-| 0x80106E60   | Cached ENC28J60 bank number (for the bank-select helper)               |
+| 0x80106E60   | Backend-private field zeroed by Ethernet registration paths            |
 | 0x80106EA0   | Start of the in-RAM default PTB structure                              |
 | 0x80106EB0   | Device IP address (u32 little-endian; default `0x0B00A8C0`)            |
 | 0x80106EB4   | Subnet mask (u32 little-endian; default `0x00FFFFFF`)                  |
 | 0x80106EB8   | Gateway IP (u32 little-endian; default `0`)                            |
 | 0x800F0140   | Runtime copy of the 57-entry alt-function dispatch table               |
 | 0x800F36B0   | ENC28J60 cached `next_packet_ptr` (see `ethernet-driver.md`)           |
-| 0x800F5134   | Ethernet RX frame buffer start (written by `enc28j60_rx_poll`)         |
+| 0x800F5128   | Fixed Ethernet RX frame buffer base passed to `OEMEthGetFrame`         |
+| 0x800F5134   | EtherType field inside that RX buffer (`0x800F5128 + 12`)              |
 | 0xA0020838   | Active device IP in runtime network state (uncached DDR)               |
 | 0xA002083C   | Active subnet mask in runtime network state (uncached DDR)             |
 
@@ -219,8 +208,14 @@ important ones:
   GPIO driver (via a 32-byte lookup table) and by the bootrom's diagnostic
   mode. Likely a wake-source or input-filter enable register; bit meanings
   not confirmed.
-- SPI0 control register bit layout: only partially characterized. CS bit
-  index is not confirmed to match SPI2.
-- SPI2 `SPI_CONFIG2` (`+0x20`): written once at init, purpose unknown.
+- The vendor numbering of the SPI controller blocks is not fixed here.
+  Current EBOOT code actively uses physical `0x20024000`, and
+  `spi_init_controller(1)` names `0x20025000`, but the correspondence to any
+  external `SPI0` / `SPI1` / `SPI2` naming is not yet confirmed.
+- SPI `+0x20`: written to `0x00FFFFFF` by both the generic SPI init path and
+  the ENC28J60 init path, but its exact purpose is still unknown.
+- The generic SPI helper's use of control bits `0`, `1`, and `5`, and the
+  ENC28J60 driver's fixed low-byte mode value `0x52`, have not yet been
+  reconciled into a single register-level model.
 - The exact contents of the full `OEMAddressTable` are not reproduced here;
   only the entries observed through `OALPAtoVA` calls are listed.

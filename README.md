@@ -9,7 +9,7 @@ project homepage.
 
 ## Content
 
-### Documentation (`docs/`)
+### Documentation ([`docs/`](docs/))
 
 Three layers of the boot chain, reverse-engineered from scratch:
 
@@ -25,21 +25,21 @@ Three layers of the boot chain, reverse-engineered from scratch:
   mode password and menu, GPIO driver with two independent pin numbering
   systems, CPU PLL formula.
 
-### Bare-metal DOOM (`doom/`)
+### Bare-metal DOOM ([`doom/`](doom/))
 
 A [doomgeneric](https://github.com/ozkl/doomgeneric)-based DOOM port that
 runs directly on AIPC. Loaded over USB boot mode.
 
-### Boot methods (`boot/`)
+### Boot methods ([`boot/`](boot/))
 
 - `coldboot/` -- Boot Linux directly from internal disk, bypassing WinCE entirely (WIP).
 - `warmboot/` -- [HaRET](boot/warmboot/third_party/)-based Linux boot from within WinCE.
 
-### Linux kernel (`kernel/`)
+### Linux kernel ([`kernel/`](kernel/))
 
 Kernel sources and patches (work in progress).
 
-### Tools (`tools/`)
+### Tools ([`tools/`](tools/))
 
 Python CLI tools (uv workspace) for talking to the device:
 
@@ -52,7 +52,7 @@ Python CLI tools (uv workspace) for talking to the device:
 | `aipc-nand-extract` | Extract partitions from a raw NAND dump using PTB |
 | `ak7802-usbboot` | USB boot mode protocol: peek, poke, upload, execute |
 
-### Website (`website/`)
+### Website ([`website/`](website/))
 
 Source for [aipc-os.catme0w.org](https://aipc-os.catme0w.org/).
 
@@ -75,11 +75,11 @@ To build ARM stubs or the DOOM binary, you need `arm-none-eabi-gcc`.
 
 - **SoC**: Anyka AK7802 (ARM926EJ-S, 248/266 MHz typical)
 - **RAM**: 64 MB DDR SDRAM
-- **Storage**: 512 MB MLC NAND (Hynix likely), 4x528-byte interleaved ECC layout
+- **Storage**: 512 MB MLC NAND (Hynix typical), 4x528-byte interleaved ECC layout
 - **Display**: 800x480 TFT LCD, RGB565, ~48 Hz
-- **Ethernet**: Microchip ENC28J60 on SPI2
-- **USB HID**: WCH CH374 USB host bridge on SPI0 (internal keyboard)
-- **USB**: MUSB (Mentor Graphics) integrated in SoC, 2 external USB-A ports
+- **Ethernet**: Microchip ENC28J60 on SPI
+- **USB HID**: WCH CH374 USB host bridge on SPI, internal keyboard + 2 external USB-A ports
+- **USB**: MUSB (Mentor Graphics) integrated in SoC, 1 external USB-A port
 
 ## License
 

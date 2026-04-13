@@ -20,7 +20,7 @@ read from an external SPI NOR flash.
    from flash address 0.
 
 4. **Check signature**: Extract 8 bytes starting at offset +0x04 within the
-   read data (i.e., from L2BUF_01+0x10, which is 0x4800020C in memory) and
+   read data (i.e., from L2BUF_01+0x04, which is 0x48000204 in memory) and
    compare against the ASCII string `"ANYKA382"`.
 
 5. **Validate payload size**: On signature match, copy 2 dwords from the
@@ -61,30 +61,22 @@ read from an external SPI NOR flash.
 
 ## SPI Boot Image Header Layout
 
-The full header occupies the first 0x200 bytes of the SPI flash. The payload
-begins at flash offset 0x200.
+The bootrom reads 0x118 bytes of header material from flash offset 0. The
+payload begins at flash offset 0x200.
 
 ```
 Offset  Size   Field
-0x00    16     Header prefix (first 4 dwords in L2BUF_01)
+0x00    12     Header prefix
   0x00  4      [unverified - possibly version or flags]
   0x04  8      Signature: ASCII "ANYKA382" (packed as 2 × u32 LE)
-  0x0C  4      [unverified]
-0x10    8      SPI boot tail (copied as spi_tail)
-  0x10  4      payload_size - byte count of the payload at offset 0x200
-  0x14  4      spi_cfg | (other fields)
+0x0C    8      SPI boot tail (copied as spi_tail during the short read)
+  0x0C  4      payload_size - byte count of the payload at offset 0x200
+  0x10  4      spi_cfg | (other fields)
                Low byte [7:0] = SPI configuration byte for reconfigure
-0x18    ...    Extended header body (total 0x10C bytes from offset 0x0C)
-  ...   4      image_type - 6 = DDR image, 8 = L2 image
-  ...   256    init_script - register init table (type 6 only),
+0x14    4      image_type - 6 = DDR image, 8 = L2 image
+0x18    256    init_script - register init table (type 6 only),
                see boot-image-format.md
 ```
-
-The exact offset of `image_type` and `init_script` within the extended header
-depends on the structure packing. The decompiler treats the copy as 0x43 dwords
-(268 bytes) starting from offset 0x0C of the L2 buffer data, placing
-`image_type` and `init_script` within the `spi_boot_header_tail_t` structure
-[unverified - field offsets need hardware validation].
 
 ## Return Values
 

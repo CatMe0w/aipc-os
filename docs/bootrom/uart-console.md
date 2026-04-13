@@ -14,7 +14,7 @@ The UART initialization sets:
 
 - SYSCTRL+0x78 bit 9 (sharepin UART TX/RX enable)
 - L2CTR_DMA_PATH_CFG (0x2002C084) bits [29:28] (UART L2 buffer path)
-- UART+0x00 = 807405133 (0x30200A4D) - baud rate and frame config
+- UART+0x00 = 807405133 (0x3020064D) - baud rate and frame config
 - UART+0x0C = 0
 
 ## Console Loop
@@ -55,8 +55,8 @@ If the input does not match any command, the console prints `"Err Comm\n"`.
 Prompts: `"Input addr(0x30000000):"`
 
 Reads a hexadecimal address from UART (default: 0x30000000 if Enter is pressed
-with no input). Branches to the given address as a function call and does not
-return to the console on success.
+with no input). Branches to the given address as a function call. If the
+target returns, control resumes in the console.
 
 ### `download`
 
@@ -133,7 +133,7 @@ All address/value prompts use a shared hex input routine. It:
    bootrom instead reads `L2_UART_RX_PAGE0` at 0x480010FC.
 4. Reads one 32-bit word from the selected L2 UART RX page.
 5. Checks UART+0x04 bit 2 (fractional flag): if set, reads the fractional
-   byte count from UART+0x08 bits [23:22] and masks the word accordingly.
+   byte count from UART+0x08 bits [24:23] and masks the word accordingly.
    Otherwise, all 4 bytes are valid.
 6. Returns the number of valid bytes (1-4) and the packed data word.
 

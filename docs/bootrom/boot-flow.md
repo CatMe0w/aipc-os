@@ -5,9 +5,9 @@ entry point after reset.
 
 ## Initialization
 
-1. Write 23003 (0x59DB) to SYSCTRL+0x0C. Purpose is unclear; likely a clock
+1. Write 0x59DB to SYSCTRL+0x0C. Purpose is unclear; likely a clock
    or watchdog configuration [unverified].
-2. Switch the CPU to Supervisor mode with IRQ and FIQ disabled (CPSR = 0x13).
+2. Switch the CPU to SVC mode (CPSR = 0x13).
 
 ## Boot Override Detection
 
@@ -102,7 +102,7 @@ Reset
   ▼
 bootrom_entry
   │  SYSCTRL+0x0C = 0x59DB
-  │  CPSR = SVC mode, IRQs off
+  │  CPSR = SVC mode
   │
   ▼
 detect_boot_override()

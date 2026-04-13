@@ -10,7 +10,7 @@ NAND Flash (NF) sequencer hardware at 0x2002A000.
 
 1. SYSCTRL+0x74: clear bits [4:3], set bit 3 - selects the NF sharepin
    function.
-2. SYSCTRL+0x78: set bits [23:22, 17, 9] (0xC70200) - enables NF-related
+2. SYSCTRL+0x78: set bits [23:22, 18:16, 9] (0x00C70200) - enables NF-related
    clock and I/O paths.
 3. L2CTR_ASSIGN_REG1 (0x2002C090): clear bits [11:9] - unbind any
    previous L2 buffer assignment for the NF path.
@@ -18,7 +18,7 @@ NAND Flash (NF) sequencer hardware at 0x2002A000.
    (flush/reset the common buffer).
 5. L2CTR_DMA_PATH_CFG (0x2002C084): set bits [29:28].
 6. NF timing register 0 (0x2002A05C): write default value 1006545
-   (0x0F5B51).
+   (0x0F5BD1).
 
 ## Probe Procedure
 
@@ -29,16 +29,16 @@ NAND Flash (NF) sequencer hardware at 0x2002A000.
 2. For each parameter set:
    a. Delay 10 ticks.
    b. Copy the parameter structure (5 words: counts, command layout, timing
-   config 0/1, pre-delay ticks + extra config).
+   config 0/1, pre-delay ticks + sequencer delay ticks).
    c. Issue the probe command sequence via `nf_issue_probe_sequence()`.
    d. Read 0x20 bytes from the NF data buffer into L2BUF_01.
    e. Check for the `"ANYKA382"` signature at L2BUF_01 offset +0x04.
 
 3. On signature match:
    a. Copy 5 dwords from offset +0x0C of the L2 data into `nf_tail`.
-   b. Validate `pages_per_chunk` (must be 1, 4, or 8).
-   c. If the parameter set includes non-zero timing overrides, apply them
-   via `nf_set_boot_timings()`.
+   b. Validate `chunks_per_page` (must be 1, 4, or 8).
+   c. If the header load descriptor includes non-zero timing overrides,
+   apply them via `nf_set_boot_timings()`.
    d. Delay for `pre_delay_ticks` from the header.
    e. Re-issue the probe sequence and read 0x200 bytes (full first page).
    f. Copy 0x46 dwords (280 bytes) from offset +0x0C for the complete
@@ -62,7 +62,7 @@ NAND Flash (NF) sequencer hardware at 0x2002A000.
 6. Write the wait/delay word: if a non-zero delay tick count is specified,
    `(ticks << 11) | 0x401`; otherwise use the default 21505
    (= `(10 << 11) | 0x401`, i.e., 10-tick wait).
-7. Set NF_SEQ_CTRL_STA = 0x40000200 to launch the sequence.
+7. Set NF_SEQ_CTRL_STA = 0x40000600 to launch the sequence.
 8. Poll bit 31 of NF_SEQ_CTRL_STA until the sequence completes.
 
 ## NF Data Read
@@ -100,7 +100,7 @@ Each of the 8 probe parameter sets (`nf_probe_param_t`) contains:
 | command         | 4B   | addr_byte_count (byte), cmd1 (byte), cmd2 (byte), padding                                       |
 | timing_cfg0     | 4B   | NF timing register 0 override (0 = keep default)                                            |
 | timing_cfg1     | 4B   | NF timing register 1 override (0 = keep default)                                            |
-| delay_pair      | 4B   | Low 16 bits = pre_delay_ticks before bulk reads; high 16 bits = sequencer wait ticks        |
+| delay_pair      | 4B   | Low 16 bits = pre_delay_ticks before bulk reads; high 16 bits = sequencer wait ticks         |
 
 The 8 parameter sets cover different NAND flash configurations. The ROM table
 at `nf_probe_params` currently decodes to:

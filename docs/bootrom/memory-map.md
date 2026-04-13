@@ -59,8 +59,8 @@ the bootrom.
 | Offset | Description                                                                                                                               |
 | ------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | +0x00  | UART control register; bit 23 = RX enable, bit 28 = TX start                                                                              |
-| +0x04  | UART status register; bit 30 = RX data available, bit 16/17 = TX flags                                                                    |
-| +0x08  | UART config/count register; bits [17:13] = L2 buffer index for RX, bits [22:23] = fractional byte count, bits [12:0] = TX remaining count |
+| +0x04  | UART status/control register; bit 30 = RX data available, bit 2 = fractional-read flag; bootrom also writes 0x10010 here when starting TX |
+| +0x08  | UART config/count register; bits [17:13] = L2 buffer index for RX, bits [24:23] = fractional byte count, bits [12:0] = TX remaining count |
 
 UART data is transferred through L2 buffer SRAM rather than a dedicated FIFO.
 TX writes go to `L2_UART_TX_PORT` at 0x48001000 (an L2 buffer control/data port
@@ -76,7 +76,7 @@ address is `L2_UART_RX_PAGE_BASE + idx×4` = `0x4800107C + idx×4`, where
 
 | Offset | Description                                            |
 | ------ | ------------------------------------------------------ |
-| +0x05C | NF timing register 0; default value 1006545 (0x0F5B51) |
+| +0x05C | NF timing register 0; default value 1006545 (0x0F5BD1) |
 | +0x060 | NF timing register 1                                   |
 
 The BootROM-visible NF sequencer FIFO lives at 0x2002A000-0x2002A058:

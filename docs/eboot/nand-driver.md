@@ -2,11 +2,9 @@
 
 EBOOT contains a full NAND flash driver that is significantly more capable
 than the minimal NAND path in the bootrom. The bootrom loads nboot from
-NAND using a single probe-plus-continuous-stream pattern that works for
-small images but cannot correctly read a 2 KB-page NAND in general. EBOOT's
-driver uses a chip-database-driven, fresh-READ-per-chunk pattern that
-correctly handles the physical layout of the NAND parts actually installed
-on AIPC units.
+NAND using a simpler continuous-stream pattern. EBOOT's driver is table-
+driven and re-issues a fresh READ sequence for each 512-byte chunk, which
+is the pattern its own NAND boot loader and FMD layer expect.
 
 See also [docs/bootrom/nand-boot.md](../bootrom/nand-boot.md) for the
 bootrom-side NAND access primitives and register list. This document
@@ -28,47 +26,53 @@ exists at `0x2002A100+`; EBOOT uses it, the bootrom does not.
 
 ### DMA Control Register (0x2002B000)
 
-EBOOT forms the DMA control register value for a chunk read as:
+For the normal data-read path, EBOOT programs:
 
 ```
 dma_ctrl = (byte_count << 7) | 0x100018
 ```
 
-The bits encoded in the `0x100018` base:
+Reading OOB/ECC instead of data uses `0x10001C`.
 
-- bit 3 and bit 4: transfer configuration / direction `[partial]`
-- bit 20: mode selector `[partial]`
-- bit 6 (not in the base): transfer-done flag, write-1-to-clear
+The page-program path in `nand_program_page` uses:
 
-Reading OOB instead of data uses `0x10001C` (bit 2 set) and a different
-sequencer micro-op. Writing uses a different base altogether; see the
-`nand_program_page` section below.
+```
+((528 - MEMORY[0x801076F8]) << 7) | 0x0C100012 | (MEMORY[0x801076E8] << 22) | 8
+```
 
-The exact per-bit semantics of `0x100018` are not fully characterized and
-are marked `[partial]`.
+Another write-like path at `0x8006B28C` uses the same form with base
+`0x0C100015`.
+
+Observed status bits:
+
+- bit 6 (`0x40`): transfer done, polled and then cleared by writing `1`
+- bit 24 (`0x01000000`): additionally checked by `nand_program_page`
+- bit 23 (`0x00800000`): additionally checked by the `0x0C100015` path
+
+The exact meanings of the remaining bits are still unresolved.
 
 ### Sequencer Micro-Op Encoding
 
 Each 32-bit word written to a sequencer slot `NF_SEQ_WORDn` encodes one
-micro-op in the low 11 bits, with per-op arguments in bits `[21:11]`:
+micro-op in the low 11 bits, with per-op arguments in bits `[21:11]`.
+The opcodes directly confirmed in EBOOT are:
 
 | Low 11 bits | Meaning                                       |
 | ----------- | --------------------------------------------- |
 | 0x62        | Output address byte, value in bits [21:11]    |
 | 0x64        | Output command byte, value in bits [21:11]    |
-| 0x119       | Read data, byte count in bits [21:11]         |
-| 0x129       | Read OOB, byte count in bits [21:11]          |
+| 0x119       | DMA transfer, byte count in bits [21:11]      |
+| 0x129       | OOB/ECC transfer, byte count in bits [21:11]  |
 | 0x401       | Wait / delay, tick count in bits [21:11]      |
 
-The last four are distinct opcodes in the same encoding space. Writes to
-the NAND buffer use yet another opcode whose exact bit pattern is embedded
-in `nand_program_page` but not separately listed.
+This list is partial. Helper sequences also use additional opcodes such as
+`0x59` and `0x201`, but their exact names are not yet decoded.
 
-## Physical Page Layout: 4 x 528 Interleaved
+## Physical Page Layout: 528-Byte Chunks
 
-The NAND parts AIPC ships with use a 2 KB data page with 64 bytes of
-spare area, organized as **four interleaved data-plus-ECC chunks rather
-than as 2048 data bytes followed by 64 spare bytes**:
+In 2 KB-page mode, EBOOT treats the physical page as **four interleaved
+data-plus-ECC chunks rather than as 2048 data bytes followed by 64 spare
+bytes**:
 
 ```
 offset  0 .. 511    data chunk 0    (512 bytes)
@@ -85,7 +89,8 @@ total                               2112 bytes per page
 
 Each chunk is 528 bytes physical. The "logical" 2048-byte data area the
 user cares about is the concatenation of the four 512-byte data regions,
-with the ECC regions elided.
+with the ECC regions elided. In 4 KB-page mode, the same `512 + 16`
+chunking scales to eight chunks per page.
 
 This layout is non-standard. Most NAND parts store the spare area as a
 contiguous 64-byte region at the end of each page. The AK7802 NAND
@@ -134,9 +139,11 @@ data chunk 2 last 32 bytes +  ECC 2 + first 464 bytes of data chunk 3
 
 ...with the last 48 bytes of data chunk 3 never read at all.
 
-The bootrom's `nf_read_chunk_to_buf` uses continuous-stream mode. It
-works for loading nboot (which fits entirely in data chunk 0 of each
-page) but cannot read a full 2 KB page correctly.
+The bootrom's `nf_read_chunk_to_buf` uses continuous-stream mode. From
+the EBOOT-side assembly, what is directly established is only that the
+bootrom and EBOOT use **different** read patterns; the exact mechanism
+that lets the bootrom reconstruct its own image is outside the scope of
+this document and should not be inferred from EBOOT alone.
 
 **This difference is not documented anywhere in the bootrom material and
 must be respected by any new code that talks to the NAND controller
@@ -144,98 +151,155 @@ directly.**
 
 ## Chip Database
 
-EBOOT detects the installed NAND chip via Read ID and looks the resulting
-device ID up in a hardcoded chip database. Each database record is 36
-bytes and includes the chip's geometry (column byte count, row byte count,
-pages per block, page size, spare size, etc.). The database contains
-entries for chips from multiple manufacturers including ST, Hynix,
-Samsung, Toshiba, and Micron. All entries share the same driver logic;
-only the geometry parameters differ.
+`nand_detect_device` matches a 32-bit ID word against a hardcoded table at
+`0x8003F5A0`. Each record is 36 bytes. The matched record feeds the rest of
+the driver's runtime geometry, including page mode, chunks per page,
+pages per block, column-byte count, row-byte count, and a packed timing
+field at `+0x1C`.
 
-The two AIPC units available for analysis both use Hynix NAND parts.
-The exact Hynix model has not been cross-referenced against the Read ID
-bytes on a live unit.
-
-On a successful chip-database match, EBOOT stores the chip's column and
-row byte counts in global variables that the address-byte helper uses to
-emit the correct NAND address sequence. This is the source of the
-per-chip address-cycle count: small 512 W parts need 3 or 4 bytes, larger
-parts need 5.
+The address-byte helper later emits exactly `record[0x0F]` column bytes
+followed by `record[0x11]` row bytes.
 
 ## Driver Function Layer
 
 ### `nand_detect_device`
 
-Top-level chip identification. Calls Read ID, walks the chip database,
-stores the matching record's pointer to a global, and copies the chip's
-column/row byte counts to the addressing-helper globals. Sets three
-indirect function pointers that later helpers call through - one for
-command issue, one for address emission, and one for data copy from the
-L2 buffer.
+Top-level device bring-up. It first installs a caller-supplied I/O vector
+into globals at `0x80103F4C..0x80103F64`, then does three fixed setup
+steps:
 
-This function also initializes the NF timing registers
-`0x2002A15C` and `0x2002A160` with default values and writes `0x10000`
-to the DMA control register `0x2002B000`.
+- `pal_ioctl(0x01012020, {0x2000, 1}, 8, ...)`
+- `pal_ioctl(0x010120EC, 44, 4, ...)`
+- `0xA802A15C = 0x000F5AD1`, `0xA802A160 = 0x000F5C5C`,
+  `0xA802B000 = 0x00010000`
+
+It then probes up to two chip selects. If the caller requested reset, it
+calls `nand_reset(cs)` first; it then calls `nand_init_chip(cs)`, compares
+the returned 32-bit ID word against the 36-byte database, and accepts only
+chips that match the same record.
+
+On success it publishes the matched record, page mode
+(`0/1/2` = `512/2048/4096` bytes), chunk count per page (`1/4/8`),
+column-byte count, row-byte count, and additional device-derived
+parameters used by the read/write paths. It also calls `sub_8006934C` on
+the record's packed timing field at `+0x1C`.
 
 ### `nand_read_page(chip, row, col, dst, byte_count)`
 
 Reads up to 512 bytes from logical offset `col` within page `row`.
-`byte_count > 0x200` returns an error. Every call issues a fresh NAND
-READ command sequence, so `col` is treated as a logical data offset
-(0..2047 for a 2 KB page), not a physical offset.
+`byte_count > 0x200` returns error `3`. Every call issues a fresh NAND
+READ sequence, so `col` is treated as a logical data offset within the
+page, not as a raw physical offset inside the 528-byte-interleaved stream.
 
-The function chooses among `cmd 0x00`, `cmd 0x01`, or `cmd 0x50` for the
-starting command byte depending on the column range, to support both
-small-page and large-page chips. For large-page chips, `cmd 0x30` is
-appended after the address bytes as the second command, triggering the
-NAND's internal page-register load.
+In small-page mode (`MEMORY[0x801076A0] == 0`), the first command word is:
+
+- `0x00000064` for `col < 0x100`
+- `0x00000864` for `0x100 <= col < 0x200`
+- `0x00028064` for `col >= 0x200`
+
+In large-page modes, the sequence starts with `0x00000064`, emits the
+column and row address bytes, then appends `0x00018464` (`cmd 0x30`).
+The actual transfer is then driven by:
+
+```
+0xA802B000 = (byte_count << 7) | 0x100018
+0xA802A100 = ((byte_count - 1) << 11) | 0x119
+```
 
 ### `nand_read_oob_or_ecc(chip, row, col, dst, byte_count)`
 
-Analogous to `nand_read_page` but targets the OOB/ECC region. Uses
-sequencer micro-op `0x129` and DMA base `0x10001C` instead of `0x119`/
-`0x100018`. The caller passes the column address with the `528 * N + 512`
-formula to address the ECC region of chunk `N`.
+Analogous to `nand_read_page` but targets the OOB/ECC path. It seeds the
+sequence with `0x00040064`, sets bit 0 on the immediately preceding
+sequencer word, then performs:
+
+```
+0xA802B000 = (byte_count << 7) | 0x10001C
+0xA802A100 = ((byte_count - 1) << 11) | 0x129
+```
+
+`nand_verify_ecc_match` uses `col = 528 * N + 512` to read the per-chunk
+OOB/ECC bytes back.
 
 ### `nand_program_page(chip, row, data, oob)`
 
-Writes a full page by looping over the chunk count stored in the chip
-record. Each loop iteration writes `528 - spare_count` bytes of data
-followed by the ECC bytes that the controller hardware generates. The
-DMA control value for writing is:
+Programs one logical page by looping over the runtime chunk count
+(`MEMORY[0x801076A4]`). For each chunk it:
+
+- programs
+
+  ```
+  0xA802B000 =
+      ((528 - MEMORY[0x801076F8]) << 7)
+    | 0x0C100012
+    | (MEMORY[0x801076E8] << 22)
+    | 8
+  ```
+
+- writes `0xA802A100 = 0x00107919`
+- copies `512` bytes from `data + chunk * 512`
+- copies `MEMORY[0x801076F4]` bytes from the caller-supplied `oob` pointer
+
+`0x00107919` is still a `0x119` transfer opcode:
 
 ```
-((528 - spare_count) << 7) | 0xC100012 | (oob_toggle << 22) | 8
+0x00107919 = ((528 - 1) << 11) | 0x119
 ```
 
-The low nibble differs from the read path's `0x100018` and enables the
-hardware ECC generator.
+The remaining bytes in each 528-byte physical chunk are controller-
+generated. This is the other direct confirmation of the `512 + 16`
+interleaving.
 
 ### `nand_read_id`, `nand_reset`, `nand_read_status`, `nand_cmd_sub`
 
-Straightforward wrappers that build short sequencer programs for the
-corresponding single-byte NAND commands (Read ID `0x90`, Reset `0xFF`,
-Read Status `0x70`, etc.).
+These helpers are low-level controller wrappers, but the current function
+names are not all accurate:
+
+- `nand_reset` issues `cmd 0xFF` via `0x0007F864`, then waits with
+  `0x00032401`
+- `nand_read_id` is misnamed: it issues `cmd 0x70` via `0x00038064` and
+  returns the low status byte from `0xA802A150`
+- `nand_read_status` only does `0xA802A158 = (old & 0x7FFFF3FF) | value`
+- `nand_cmd_sub` polls `0xA802A158[31]` until ready and calls the optional
+  callback at `0x80103F4C` while waiting
 
 ### `nand_init_chip`
 
-Per-chip bring-up: issues Reset, then Read ID, then populates chip
-state. Called by `nand_detect_device` for each chip select (the driver
-supports up to two chips).
+This is the actual Read ID helper used by `nand_detect_device`. It issues
+`cmd 0x90` via `0x00048064`, emits one address byte `0x00` via `0x62`,
+waits, performs a fixed-length readback, and returns the 32-bit value from
+`0xA802A150`. `nand_detect_device` uses this return value as the chip-table
+lookup key.
 
-## NAND Boot Path: `LoadNandBoot`
+## NAND Boot Image Loader: `LoadNandBoot`
 
-The function that loads the NK kernel image from NAND into DDR iterates
-over source pages and calls `nand_read_page` four times per page with
-`col = 0, 512, 1024, 1536` for a 2 KB-page chip (or more column steps
-for 4 KB-page chips). Each call delivers a clean 512-byte chunk because
-the fresh-READ-per-chunk pattern is applied consistently.
+`LoadNandBoot` is the raw boot-image reader used by the boot-block
+upgrade / verify helper `sub_80066564`. It is a general NAND boot-image
+loader, not the normal flash `NK` boot path described in
+[boot-flow.md](boot-flow.md).
+
+`LoadNandBoot(dst, len)` first ORs `dst` with `0xA0000000`, reads
+`row = 0, col = 0, len = 0x200`, then zero-fills the next `0x600` bytes.
+It then continues from `row = 1`.
+
+The remaining rows are read in 512-byte chunks according to the detected
+page mode:
+
+- mode `0`: one chunk per row at `col = 0`
+- mode `1`: four chunks per row at `col = 0, 0x200, 0x400, 0x600`
+- mode `2`: eight chunks per row at `col = 0 .. 0xE00` in `0x200` steps
+
+Each chunk is fetched by a separate `nand_read_page` call. There is no
+continuous-stream read in this loader.
 
 Pseudo-code for the 2 KB-page variant:
 
 ```
-for (page = start_page; page < end_page; page++) {
-    for (col = 0; col < page_size; col += 512) {
+nand_read_page(chip=0, row=0, col=0, dst=out, 0x200);
+memset(out + 0x200, 0, 0x600);
+out += 0x800;
+
+for (page = 1; more_to_load; page++) {
+    for (col = 0; col < 0x800; col += 0x200) {
         nand_read_page(chip=0, row=page, col=col, dst=out, 0x200);
         out += 512;
     }
@@ -249,28 +313,33 @@ this pattern.
 
 ## Bad Block Handling
 
-Bad block detection reads the OOB byte at page offset 1 of each block's
-first page and declares the block bad if the byte is not `0xFF`. The
-`nand_read_oob_or_ecc` path is used for this. This matches the
-convention nboot uses (documented in `docs/nboot/boot-flow.md`).
+Block status is handled by the FMD layer, not by `LoadNandBoot`.
+`fmd_get_block_status`, `sub_8006C0F0`, `sub_8006C284`, and
+`sub_8006C630` build and access a per-device status layout derived at
+runtime by `sub_8006B7C4`.
 
-EBOOT skips bad blocks when loading NK and prints the skipped block
-index to UART (when UART is available). The maximum consecutive read
-errors tolerated before aborting is hardcoded.
+What is directly verified:
+
+- `LoadNandBoot` itself contains no bad-block-skip logic
+- small-page and large-page devices use different block-status paths
+- the small-page status probe performs repeated 1-byte reads through both
+  `nand_read_oob_or_ecc` and `nand_read_page`
 
 ## Unresolved
 
-- Exact bit meanings of the `0x100018` / `0x10001C` / `0xC100012` DMA
-  control bases: not fully characterized.
+- Exact bit meanings of the `0x100018` / `0x10001C` / `0x0C100012` /
+  `0x0C100015` DMA control bases and of the writable fields in
+  `0xA802A158`: not fully characterized.
 - The second sequencer register block at `0x2002A100+`: used by EBOOT
   (the address-byte helper writes through it) but not independently
   documented.
+- The complete sequencer opcode set is still only partially decoded.
+  `0x62`, `0x64`, `0x119`, `0x129`, and `0x401` are confirmed; `0x59`
+  and `0x201` are still unnamed.
 - Hardware ECC strength: whether the 16-byte spare region per chunk
   implements 4-bit or 8-bit ECC, and how many bits are pure ECC vs
   metadata, is not determined.
-- Exact chip identification for AIPC: the two test units use Hynix
-  NAND, but the specific model and Read ID bytes have not been
-  recorded.
-- `nand_program_page` uses indirect function pointers set by
-  `nand_detect_device` that were not independently traced; the OOB
-  write sub-path is partially decompiled only.
+- The packed timing field passed to `sub_8006934C` and expanded into
+  `0x800F2408..0x800F241C` is not yet decoded at the bit level.
+- The exact byte-level FMD block-status layout for small-page and
+  large-page devices is not yet decoded.

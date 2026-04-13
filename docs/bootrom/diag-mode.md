@@ -59,7 +59,7 @@ and read back correctly.
    (switch all sharepins to GPIO mode).
 2. Set I/O control: SYSCTRL+0xD4 |= 0x3FFFC (bits [17:2]) and
    SYSCTRL+0xD4 |= 0xC000000 (bits [27:26]).
-3. Clear all secondary sharepin: SYSCTRL+0x7C = 0.
+3. Set GPIO1 direction register to 0: SYSCTRL+0x7C = 0.
 
 ### Drive All-Ones Test
 

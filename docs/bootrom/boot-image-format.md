@@ -5,16 +5,17 @@ This document describes the shared format elements.
 
 ## Header Prefix
 
-The first 0x10 bytes of the boot image (at flash offset 0) serve as the
-header prefix. Within the L2 buffer after a read, this occupies
-0x48000200..0x4800020F.
+The first 0x0C bytes of the boot image (at flash offset 0) are the common
+prefix. Within the L2 buffer after a read, this occupies
+0x48000200..0x4800020B.
 
 ```
 Offset  Size  Field
 0x00    4     (header word 0) [unverified - possibly flags or version]
 0x04    8     Signature: ASCII "ANYKA382" stored as two little-endian u32 words
-0x0C    4     (header word 3) [unverified]
 ```
+
+Data from offset 0x0C onward is boot-medium-specific.
 
 The signature bytes in memory appear as:
 
@@ -39,13 +40,8 @@ Key fields within the tail structure:
 | --------------- | ---- | ------------ | ------------------------------------------------------------------------------------------------------------------------- |
 | +0x00           | 4    | payload_size | Byte count of the payload at flash offset 0x200. Must be > 0x20. If not 4-byte aligned, rounded up to next multiple of 4. |
 | +0x04           | 4    | spi_cfg      | Low byte = SPI controller configuration byte (used to reconfigure the SPI clock/mode after the initial probe read)        |
-| +0x??           | 4    | image_type   | 6 = DDR target, 8 = L2 target                                                                                             |
-| +0x??           | 256  | init_script  | Register init table (used only for type 6)                                                                                |
-
-The exact offsets of `image_type` and `init_script` within the tail structure
-depend on the internal layout. The decompiler copies 0x43 dwords (268 bytes)
-starting from the offset, so these fields are within that range [unverified -
-hardware validation needed for precise offsets].
+| +0x08           | 4    | image_type   | 6 = DDR target, 8 = L2 target                                                                                             |
+| +0x0C           | 256  | init_script  | Register init table (used only for type 6)                                                                                |
 
 ## NAND Boot Header Tail
 
@@ -62,9 +58,9 @@ Key fields:
 | +0x08           | 4    | load_desc.timing_cfg0     | NF timing override 0 (0 = keep default)                     |
 | +0x0C           | 4    | load_desc.timing_cfg1     | NF timing override 1 (0 = keep default)                     |
 | +0x10           | 2    | load_desc.pre_delay_ticks | Delay before data read                                      |
-| +0x12           | 2    | (extra config)            | [unverified]                                                |
-| +0x??           | 4    | image_type                | 6 = DDR target, 8 = L2 target                               |
-| +0x??           | 256  | init_script               | Register init table (type 6 only)                           |
+| +0x12           | 2    | load_desc.seq_delay_ticks | Sequencer wait ticks                                        |
+| +0x14           | 4    | image_type                | 6 = DDR target, 8 = L2 target                               |
+| +0x18           | 256  | init_script               | Register init table (type 6 only)                           |
 
 ## Image Types
 
@@ -100,15 +96,12 @@ For each entry:
 | 0x88888888  | **End**: stop processing the script and return                      |
 | (any other) | **Write**: write `value` to the memory-mapped address `addr_or_tag` |
 
-### Typical Usage
-
-A register init script for a DDR image would contain entries like:
+### Example
 
 ```
-{ 0x08000018, <PLL config value> }     - configure system clock PLL
-{ 0x66668888, <tick count> }           - delay for PLL lock
-{ 0x2000E000, <DDR timing value> }     - configure DDR controller timing
-{ 0x2000E004, <DDR config value> }     - configure DDR mode register
+{ <mmio_addr>, <value> }               - write register
+{ 0x66668888, <tick_count> }           - delay
+{ <mmio_addr>, <value> }               - write register
 ...
 { 0x88888888, 0x00000000 }             - end of script
 ```

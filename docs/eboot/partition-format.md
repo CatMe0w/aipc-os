@@ -1,299 +1,184 @@
 # Partition Format
 
-The AIPC NAND does not use a standard WinCE `B000FF` NK image. Instead it
-uses a vendor-specific partition table block called `PTB`, which sits in a
-fixed location near the end of NAND and describes how the rest of the
-device is carved up into labeled partitions. EBOOT reads the `PTB` to
-locate the NK image (and everything else); nboot is unaware of it.
+EBOOT keeps a partition table blob called `PTB` in RAM at `0x80106EA0`
+and persists snapshots of it inside the `CFG` partition. The layout is
+fixed-offset: EBOOT does not search for entry tags or parse alternate
+header variants.
 
 This document describes:
 
-1. The on-NAND `PTB` block layout, including its page-level redundancy
-2. The per-entry partition record format
-3. The eight standard partition tags and their defaults
-4. The `ECEC` sub-image container inside the `NK` partition
+1. How EBOOT stores and reloads the `PTB`
+2. The raw `PTB` record layout
+3. The default partition layout built by EBOOT
+4. The `ECEC`-headed kernel image that the `NK` path expects
 
-## PTB Block
+## PTB Storage
 
-A `PTB` block is **4 KB (one full two-page unit) stored at a NAND block
-boundary**. On test units, the block sits near the end of NAND in the
-second-to-last useful block (observed as NAND blocks 4086 and 4090 across
-different machines - the block number is not fixed across devices).
+EBOOT treats the `PTB` as a `0x7F4`-byte payload.
 
-A complete `PTB` block is a pair of independent `PTB` records, one per
-2 KB NAND page, written by the factory programming tool for redundancy:
+- `sub_80065118` reloads it by starting at the **last CFG block**, then
+  scanning sectors **forward within that block**. It then moves to the
+  previous CFG block and repeats, skipping bad blocks and remembering the
+  last sector whose first word is `PTB\0`.
+- `sub_80066958` saves it by writing the current `0x7F4`-byte snapshot
+  into successive sectors starting at sector `0` of the **last CFG
+  block**, then advancing within the block before moving to the previous
+  block. When the partition runs out of clean slots, EBOOT reformats
+  `CFG` and restarts from the last block.
 
-```
-page 1 (offset 0x000 .. 0x7FF)     first PTB record
-page 2 (offset 0x800 .. 0xFFF)     second PTB record, nearly identical
-```
+On the stock layout built by EBOOT, `CFG` occupies the three blocks
+immediately before the four-block `END` tail entry. The current saved
+sector number is also recorded in the `PTB` header itself.
 
-Each 2 KB half contains its own magic, header, padding, and entry table.
-The two copies share the same entry data but carry different `record_num`
-values (`1` and `2`) and different `page_num` values (the NAND page each
-was physically programmed at). The two copies are almost byte-identical
-aside from those self-identification fields.
+### PTB Header
 
-The redundancy is page-level, not block-level: if the NAND block holding
-the `PTB` goes bad, both copies are lost together. Cross-block redundancy
-is not implemented.
+| Offset | Size | Field | Meaning / default |
+| ------ | ---- | ----- | ----------------- |
+| `+0x00` | 4 | magic | `"PTB\0"` |
+| `+0x04` | 4 | version | `"01\0\0"` |
+| `+0x08` | 4 | `save_sector` | sector number of the last saved snapshot; default `0xFFFFFFFF` |
+| `+0x0C` | 4 | `save_count` | incremented by `sub_80066958`; default `0` |
+| `+0x10` | 4 | IP address | default `0x0B00A8C0` (LE `192.168.0.11`) |
+| `+0x14` | 4 | subnet mask | default `0x00FFFFFF` (LE `255.255.255.0`) |
+| `+0x18` | 4 | reserved | default `0` |
+| `+0x1C` | 2 | reserved | default `0` |
+| `+0x1E` | 1 | boot delay | default `0`; editable in the base-options menu |
+| `+0x1F` | 1 | reserved | default `0` |
+| `+0x20` | 4 | boot flags | default `0`; bit `1` is the DHCP toggle |
+| `+0x24` | 4 | default boot target | default `4` (`NK`); menu also uses `9` = menu, `10` = KITL |
+| `+0x28` | 4 | KITL transport | default `0` (`AKUSB`); `1` selects `ENC28J60` |
+| `+0x2C..+0x66F` | .. | opaque region | preserved by the builder; not decoded by current EBOOT analysis |
 
-### PTB Header (first 64 bytes of each 2 KB half)
+`ptb_load_default_network_config` writes the factory-default values for
+`+0x10..+0x28`. The base-options menu edits the same in-RAM fields and
+`Save Change` persists them by calling the PTB save path above.
 
-| Offset | Size | Field          | Value on test units                |
-| ------ | ---- | -------------- | ---------------------------------- |
-| +0x00  | 4    | magic          | `"PTB\0"`                          |
-| +0x04  | 4    | version string | `"01\0\0"`                         |
-| +0x08  | 4    | page_num (u32) | NAND page number of this copy      |
-| +0x0C  | 4    | record_num     | `1` for first copy, `2` for second |
-| +0x10  | 4    | device IP      | `0x0B00A8C0` (LE = 192.168.0.11)   |
-| +0x14  | 4    | subnet mask    | `0x00FFFFFF` (LE = 255.255.255.0)  |
-| +0x18  | 4    | gateway IP     | `0` (disabled)                     |
-| +0x1C  | 4    | padding        | `0`                                |
-| +0x20  | 4    | unknown        | `0` `[partial]`                    |
-| +0x24  | 4    | unknown        | `4` `[partial]`                    |
-| +0x28  | 8    | unknown        | `0, 0` `[partial]`                 |
-| +0x30  | 4    | unknown        | `0x000002C4` `[partial]`           |
-| +0x34  | 4    | unknown        | `0x00000510` `[partial]`           |
-| +0x38  | 8    | padding        | `0`                                |
+## PTB Entry Layout
 
-The network configuration fields at `+0x10..+0x18` are the runtime source
-of the active IP and subnet when EBOOT initiates a TFTP download. Those
-values are **factory defaults baked into EBOOT** (see
-[ethernet-driver.md](ethernet-driver.md) for the code path that writes
-them), not user-configured data, although the on-NAND image reflects them
-because the factory programming tool copies EBOOT's in-RAM default into
-the NAND.
+The entry table starts at fixed offset `0x670`. There are eight raw
+records, each `0x30` bytes wide.
 
-### Entry Table Placement
+| Raw Offset | Size | Field |
+| ---------- | ---- | ----- |
+| `+0x00` | 4 | opaque word |
+| `+0x04` | 4 | tag (ASCII, NUL-padded) |
+| `+0x08` | 16 | filename (ASCII, NUL-terminated) |
+| `+0x18` | 4 | reserved |
+| `+0x1C` | 4 | flags |
+| `+0x20` | 4 | `start_block` |
+| `+0x24` | 4 | `block_count` |
+| `+0x28` | 4 | `load_addr` |
+| `+0x2C` | 4 | reserved |
 
-The entry table does not start at a fixed offset within the 2 KB half.
-Observed values include `0x240` (576) and `0x6A0` (1696), and the offset
-is allowed to change between firmware revisions and between factory
-programming runs. A partition-extracting tool must locate the table by
-scanning for the `"NBT\0"` tag (the `NBT` entry is always first) and then
-parsing backward by 4 to recover the entry boundary.
+EBOOT helper `sub_80064B40(index)` returns `entry + 4`, so most code sees
+the record starting at the tag field rather than at the raw base.
 
-Entry table layout:
+## Default Layout Built by EBOOT
 
-```
-entry[0]   NBT (nboot)           48 bytes
-entry[1]   IPL (eboot)           48 bytes
-entry[2]   BAK (eboot backup)    48 bytes
-entry[3]   UDR (update record)   48 bytes
-entry[4]   NK  (WinCE kernel)    48 bytes
-entry[5]   DSK (filesystem)      48 bytes
-entry[6]   CFG (config.txt)      48 bytes
-entry[7]   END (sentinel)        48 bytes
-```
+`ptb_build_default_in_ram` emits these eight entries in order:
 
-The tag of the last entry is always `"END\0"`, and a parser should treat
-that entry as a stop marker rather than as a real partition. Its
-non-tag fields are not meaningful for extraction.
+1. `NBT`
+2. `IPL`
+3. `BAK`
+4. `UDR`
+5. `NK`
+6. `DSK`
+7. `CFG`
+8. `END`
 
-### Crossing the Page Boundary
-
-If the table_offset is large enough that 8 * 48 = 384 bytes would run
-off the end of the 2 KB half, the tail of the entry table spills over
-into the second 2 KB half. When this happens, the tail bytes physically
-overlap with the start of the second `PTB` header (the second page's
-`"PTB\0"` magic and header fields). The first-half entry's tail is
-therefore not independently interpretable - any parser that tries to
-read the END entry's full 48-byte record will pick up the page 2
-header data. The `END` tag itself still appears in the first-half copy
-because the 4-byte tag field fits within page 1, so `find(..., "END\0")`
-still lands correctly.
-
-The second `PTB` copy is a full and independent record as long as its
-own table_offset is not also large enough to overflow. If both copies
-are usable, the second copy's entry table can be used as a cross-check
-for the first.
-
-## PTB Entry Record
-
-Every entry is exactly `0x30 = 48` bytes:
-
-| Offset | Size | Field                                                         |
-| ------ | ---- | ------------------------------------------------------------- |
-| +0x00  | 4    | `unk0` (u32) - typically 0; `NBT` sometimes holds 1 or 2      |
-| +0x04  | 4    | tag (4 bytes ASCII, NUL-padded)                               |
-| +0x08  | 16   | filename (ASCII, NUL-terminated)                              |
-| +0x18  | 4    | padding (zero on all observed entries)                        |
-| +0x1C  | 4    | flags (u32)                                                   |
-| +0x20  | 4    | start_block (u32, NAND block index)                           |
-| +0x24  | 4    | block_count (u32, block count)                                |
-| +0x28  | 4    | load_addr (u32, physical load address, `0xFFFFFFFF` = none)   |
-| +0x2C  | 4    | padding                                                       |
-
-The exact meaning of `unk0` and of the `flags` bits is partially
-understood; see the `Unresolved` section.
-
-### Partition Tags
-
-| Tag   | Typical filename | Meaning                                           |
-| ----- | ---------------- | ------------------------------------------------- |
-| `NBT` | `nboot.bin`      | First-stage bootloader (nboot)                    |
-| `IPL` | `eboot.nb0`      | Second-stage bootloader (EBOOT itself)            |
-| `BAK` | `eboot.bak`      | Backup copy of EBOOT                              |
-| `UDR` | `nk.nb0`         | Update recovery / NK header stub `[partial]`      |
-| `NK`  | `nk.nb0`         | Full WinCE NK image (as an `ECEC` container)      |
-| `DSK` | `disk.img`       | Filesystem partition                              |
-| `CFG` | `config.txt`     | Configuration text partition                      |
-| `END` | `end.txt`        | Sentinel; marks end of table                      |
-
-The `UDR` partition is always small (one block on observed units) and
-shares the filename and load address with `NK`. Its exact role is
-partial: plausibly a small recovery descriptor or a backup NK header,
-but not independently verified.
-
-### Default Layout on AIPC
-
-A representative `PTB` from a v1.88 test unit:
-
-| Tag | start_block | block_count | size      | load_addr   |
-| --- | ----------- | ----------- | --------- | ----------- |
-| NBT | 0           | 2           | 256 KB    | 0x00000000  |
-| IPL | 2           | 8           | 1 MB      | 0x80038000  |
-| BAK | 10          | 8           | 1 MB      | 0x80038000  |
-| UDR | 18          | 1           | 128 KB    | 0x80200000  |
-| NK  | 19          | 480         | 60 MB     | 0x80200000  |
-| DSK | 499         | 1542        | 192.75 MB | 0xFFFFFFFF  |
-| CFG | 2041        | 3           | 384 KB    | 0xFFFFFFFF  |
-| END | -           | -           | -         | -           |
-
-Block size is 128 KB. `load_addr = 0xFFFFFFFF` means the partition is
-not loaded to memory; the partition is a file-system region read on
-demand.
-
-EBOOT itself loads at virtual `0x80038000` (physical `0x30038000`), and
-the `IPL` and `BAK` entries match. The NK kernel loads at virtual
-`0x80200000` (physical `0x30200000`).
-
-## Default `PTB` Built by EBOOT
-
-EBOOT includes a function that constructs the full default `PTB`
-structure in RAM when no valid `PTB` is present on NAND. The
-construction writes compile-time constants directly into the RAM copy,
-and the resulting image is byte-identical (in the meaningful fields) to
-what the factory programming tool writes to NAND on a fresh unit.
-
-The network configuration fields inside the default `PTB` header are
-filled in by a separate function that writes the factory-default IP and
-mask literally - see `ptb_load_default_network_config` referenced from
-[ethernet-driver.md](ethernet-driver.md). The `0xC0A8000B` / `0x00FFFFFF`
-bytes observed in dumped `PTB` headers are compiled-in values, not data
-that was stored independently in flash.
-
-## WinCE Partition Types
-
-Separate from the PTB tag system, the Flash Memory Device (FMD) layer
-inside EBOOT uses a numeric partition type enum. A configuration string
-in EBOOT lists the supported types:
+The builder uses runtime NAND geometry:
 
 ```
-1.extended; 2.DOS32; 3.BINFS; 4.XIP; 5.IMGFS;
+block_size   = sectors_per_block * bytes_per_sector
+total_blocks = nand_block_count
 ```
 
-| Type | Name     | Description                                  |
-| ---- | -------- | -------------------------------------------- |
-| 1    | extended | Logical partition container                  |
-| 2    | DOS32    | FAT filesystem                               |
-| 3    | BINFS    | WinCE native binary filesystem               |
-| 4    | XIP      | Execute-In-Place (kernel image partition)     |
-| 5    | IMGFS    | WinCE Image FileSystem (secondary storage)   |
+and fills the table as follows:
 
-The mapping between FMD partition types and PTB entry tags:
+| Tag | Filename | Flags | Start / Count / Load |
+| --- | -------- | ----- | -------------------- |
+| `NBT` | `nboot.bin` | `0x0000000F` | `start=0`, `count=2`, `load=0x00000000` |
+| `IPL` | `eboot.nb0` | `0x00000007` | `start=2`, `count=0x00200000 / block_size`, `load=0x80038000` |
+| `BAK` | `eboot.bak` | `0x00000007` | `start=IPL.end`, `count=IPL.count`, `load=0x80038000` |
+| `UDR` | `nk.nb0` | `0x00001006` | `start=BAK.end`, `count=0x00040000 / block_size`, `load=0x80200000` |
+| `NK` | `nk.nb0` | `0x000B3004` | `start=UDR.end`, `count=0x07800000 / block_size`, `load=0x80200000` |
+| `DSK` | `disk.img` | `0x000B1000` | `start=NK.end`, `count=CFG.start - NK.end`, `load=0xFFFFFFFF` |
+| `CFG` | `config.txt` | `0x00000003` | `start=total_blocks - 7`, `count=3`, `load=0xFFFFFFFF` |
+| `END` | `end.txt` | `0x00000013` | `start=total_blocks - 4`, `count=4`, `load=0xFFFFFFFF` |
 
-| FMD type | PTB tag | Role on AIPC                       |
-| -------- | ------- | ---------------------------------- |
-| 1 (boot) | NBT+IPL | Nand boot partition (NBOOT+EBOOT)  |
-| 4 (XIP)  | NK      | WinCE kernel image                 |
-| 5 (IMGFS)| DSK     | Filesystem / secondary storage     |
+On the common AIPC NAND geometry reflected by current dumps
+(`block_size = 0x40000`, `total_blocks = 2048`), that becomes:
 
-The "XIP" name is a legacy from NOR flash WinCE devices where the kernel
-could execute directly from flash without being copied to RAM. On
-NAND-based systems like AIPC, the kernel is loaded into DDR before
-execution, but the partition type name persists. The maintenance menu's
-"Format XIP disk" and "Update XIP" items operate on the NK partition
-through this type mapping.
+| Tag | start_block | block_count | size | load_addr |
+| --- | ----------- | ----------- | ---- | --------- |
+| `NBT` | `0` | `2` | `512 KiB` | `0x00000000` |
+| `IPL` | `2` | `8` | `2 MiB` | `0x80038000` |
+| `BAK` | `10` | `8` | `2 MiB` | `0x80038000` |
+| `UDR` | `18` | `1` | `256 KiB` | `0x80200000` |
+| `NK` | `19` | `480` | `120 MiB` | `0x80200000` |
+| `DSK` | `499` | `1542` | `385.5 MiB` | `0xFFFFFFFF` |
+| `CFG` | `2041` | `3` | `768 KiB` | `0xFFFFFFFF` |
+| `END` | `2044` | `4` | `1 MiB` | `0xFFFFFFFF` |
 
-See [maintenance-mode.md](maintenance-mode.md) for the menu items that
-exercise these partition types.
+`END` is not an empty stop marker in EBOOT's own table. The builder gives
+it a real `start_block`, `block_count`, `flags`, and filename, and keeps
+the final four blocks reserved behind it.
 
-## NK Container Format: `ECEC` Sub-Images
+## Runtime Use
 
-The `NK` partition contents are **not** a standard WinCE `NK.bin`. There
-is no `B000FF` magic. Instead the partition stores one or more `ECEC`
-sub-images, each aligned to a 2 KB page boundary, followed by an optional
-`@chain information` descriptor that ties them together.
+EBOOT's config and maintenance paths use small numeric partition ids that
+line up with the PTB entry order:
 
-### ECEC Sub-Image Header
+- `1` targets `IPL`
+- `3` targets `UDR` on the boot-menu `[u]` path
+- `4` targets `NK`
+- `5` targets `DSK`
 
-Each sub-image begins with 64 bytes of pre-header data (boot stub or
-module table header) followed by the `ECEC` signature and a short
-header:
+The base-options menu stores the default boot target in PTB header field
+`+0x24`. `fmd_mount` interprets the key values as:
 
-| Offset | Size | Field                                                      |
-| ------ | ---- | ---------------------------------------------------------- |
-| +0x00  | 64   | pre-header (boot stub / module table header, image-dependent) |
-| +0x40  | 4    | magic `"ECEC"`                                             |
-| +0x44  | 4    | end_address (u32): last byte address + 1                   |
-| +0x48  | 4    | end_offset (u32): bytes from `load_base` to end            |
-| +0x4C  | ..   | payload                                                    |
+- `4`: boot `NK`
+- `9`: enter the boot/config menu
+- `10`: leave control to the KITL / network-download path
 
-The load base of the sub-image is computed as:
+The stock default is `4`.
 
-```
-load_base = end_address - end_offset
-```
+The PTB header's transport field at `+0x28` is copied into BOOTARGS
+`0xA0020844` by `oal_bootargs_init`. `fmd_read_partition_table` then
+selects the Ethernet backend from that value:
 
-A valid header requires `end_address > end_offset`.
+- `0`: Bulverde RNDIS / `AKUSB`
+- nonzero: `ENC28J60`
 
-### Chain Information
+## NK Image Format
 
-When a single NK image is split into multiple `ECEC` sub-images (for
-example when the kernel is larger than one contiguous region can hold),
-the first sub-image includes a `"@chain information"` ASCII tag
-somewhere in its payload. Close to that tag (within roughly 0x200 bytes
-in either direction), there are 32-byte chain records that describe each
-sub-image as pairs of (selector, load_base, span_size, flags).
+The flash boot path does not treat `NK` as a plain `B000FF` stream.
+`sub_80065F54` reads the first `68` bytes of the kernel image into RAM,
+requires `*(base + 0x40) == 'ECEC'`, and then continues loading the rest
+of the image.
 
-A parser can discover each sub-image's span size by locating the chain
-records and matching their `load_base` fields against the load bases
-derived from the `ECEC` headers. Sub-images whose load base does not
-appear in any chain record are treated as standalone images whose size
-extends to the next sub-image header or to the end of the partition.
+`sub_8005B3E8` performs a second check on the same image:
 
-Typical AIPC NK containers hold two `ECEC` sub-images: a small header
-image and a large companion image. Observed sizes from a test unit are
-approximately 1.5 MB for the first and 56 MB for the second.
+- it again requires `ECEC` at `+0x40`
+- it follows the dword at `+0x44` through the current `rom_offset`
+- it walks a 32-byte record array and accepts the image only if one
+  record resolves to `nk.exe`
 
-### Contents of the Sub-Images
-
-Each sub-image contains standard WinCE ROM artifacts (ARM entry branch,
-`APIS` table, kernel banner `"Windows CE Kernel for ARM"` in UTF-16,
-`NK.EXE`, `COREDLL.dll`, module table markers, etc.). The details of
-the WinCE ROM format itself are not specific to AIPC and are not
-documented here.
+EBOOT also contains a generic image parser (`nk_partition_load`) that
+reads from the SimpleTFTP download stream, understands `N000FF` and
+`B000FF` records, and explicitly rejects the old `X000FF` multi-bin
+manifest. Despite its current database name, this function is **not**
+the flash `NK` partition loader.
 
 ## Unresolved
 
-- The full meaning of header fields at `+0x20..+0x3F` inside the `PTB`
-  header: values on test units are stable but their semantics are not
-  determined. Candidate meanings include write count / generation,
-  checksum, and boot-menu timeout.
-- `PTB` entry `flags` field: bit meanings not determined. The bits
-  plausibly encode partition type (boot / filesystem / config), ECC
-  mode, and read-only status.
-- `UDR` partition role: small (one block) and shares NK's filename and
-  load address, but its function beyond "not the main NK" is not
-  determined.
-- `unk0` field at entry `+0x00`: observed to be 0 for most entries and
-  1 or 2 for `NBT`. Possibly a per-entry version or retry counter.
-- The `0xC0A8000B` `+0x10` field in the `PTB` header: a device IP on
-  test units, but no evidence that factory tooling ever writes a
-  different value. The field is readable but its editability in the
-  field tooling is not verified.
-- Second sequencer block at `0x2002A100+` is used when building entries;
-  the interaction between the two sequencer blocks is outside this
-  document.
+- The exact meaning of the raw entry word at `+0x00`.
+- The per-bit meaning of the entry `flags` fields.
+- The exact image format expected inside `UDR` beyond the verified facts
+  that `fmd_mount`'s `[u]` path selects tag `UDR`, `sub_80065B70`
+  validates an `IMG` wrapper there, and the reboot helper launches it
+  from the PTB entry's `load_addr`.
+- The full meaning of the opaque header/body region at `+0x2C..+0x66F`,
+  which EBOOT preserves but does not decode in the paths audited here.
+- The detailed structure behind the `ECEC` offset at `+0x44` and the
+  32-byte record array walked by `sub_8005B3E8`.

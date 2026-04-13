@@ -33,29 +33,34 @@ a C `main()` function. The high-level sequence inside `eboot_main`:
    from the image's read-only region into `.data`'s runtime
    addresses. Zeroes BSS. This is the step that populates the
    alt-function dispatch table at `0x800F0140`, the input-filter
-   lookup table at `0x8010011C`, and all the other compile-time
+   lookup table at `0x800F011C`, and all the other compile-time
    tables referenced from across the driver layer.
 
-2. **`oem_early_init`.** Installs the WinCE OEMAddressTable so that
-   subsequent `OALPAtoVA` calls can translate physical to virtual
-   addresses. Sets up the SYSCTRL virtual base pointer that the GPIO
-   driver and everything else reads from. Configures the CPU clock
-   if needed.
+2. **`oem_early_init`.** Installs two OEM callback pointers and runs
+   the early platform setup helper. After this point the rest of EBOOT
+   freely uses `OALPAtoVA`, but the address-table plumbing is not
+   materialized as a single obvious "install OEMAddressTable here"
+   block inside `oem_early_init` itself.
 
 3. **`oem_platform_init`.** Runs the full hardware init sequence
-   described in the next section. Returns when the hardware is ready
-   and the maintenance menu has either been skipped or completed.
+   described in the next section. On the common flash-boot path, the
+   later `fmd_mount` boot menu can load and launch NK without ever
+   returning to `eboot_main`.
 
-4. **Load NK.** If the maintenance menu did not redirect the boot
-   path (e.g. by selecting a TFTP download), EBOOT locates the `NK`
-   partition in the PTB, calls the NAND load path to copy it into
-   DDR at virtual `0x80200000`, and then transfers control to the
-   loaded image.
+4. **KITL / download continuation.** Only on paths where `fmd_mount`
+   returns control to `eboot_main`, EBOOT prints
+   `"System ready!\r\nPreparing for download...\r\n"` and calls
+   `check_update_eboot_request()`. That helper performs the network-side
+   BOOTME / TFTP / EDBG setup described later in this document.
 
-5. **Never returns.** The jump into NK is final. EBOOT's code and
-   data regions remain in DDR but are no longer referenced by
-   running code; NK allocates its own working memory starting from
-   its load address.
+5. **Image handoff.** If a SimpleTFTP image stream has been opened,
+   `nk_partition_load` parses `N000FF` / `B000FF` records from that
+   stream. If the launch address is still zero at handoff time,
+   `jump_to_nk_kernel` falls back to loading the flash-resident NK
+   image via `sub_80065F54(0x80200000, 0x400000)`.
+
+6. **Never returns.** The final handoff to NK is terminal from EBOOT's
+   point of view.
 
 ## `oem_platform_init`
 
@@ -66,25 +71,39 @@ enters the interactive menu loop. The top-level structure:
 ```
 oem_platform_init():
     hw_phase1_init()
-    hw_phase1_step2()
-    hw_phase1_step3()
-    <additional driver init: NAND, LCD, SPI/CH374, Ethernet, ...>
-    CheckPowerOnReason()
-    display EBOOT banner and version string
+    power_on_reason_init()
+    gpio_set_value(get_lcd_panel_reset_pin(), 0)   // pin 69 on v1.88
+    gpio_set_value(get_lcd_panel_power_pin(), 0)   // pin 4 on v1.88
+    lcd_init()
+    fb_clear_5mb()
+    console_init_fb_params(0x87B00000)
+    display EBOOT banner and version strings
+    touchpad_init_1()
+    touchpad_get_keycode()
+    touchpad_init_3()
+    memset(0xA0020800, 0, 0x74)
+    delay_ms_alt(0x55)
     gpio_enable_alt(20)                 // PWM pad routing for backlight
     pwm_set(1000, 70)                   // 1 kHz, 70% duty backlight
-    menu_return = <maintenance menu entry>
+    menu_return = maintenance_menu_entry()
     select display mode based on menu_return (LCD vs TV Out)
-    <touchpad init>
-    return to eboot_main
+    fb_clear_5mb()
+    print boot banner spacing and final init message
+    fmd_init()
+    fmd_get_partition_info(0, 0xFFFFFFFF)
+    boot_path = fmd_mount()             // countdown, default boot target, config/KITL menus
+    if boot_path returns:
+        fmd_read_partition_table()
+        return to eboot_main
 ```
 
-The menu entry wrapper zeros a few bytes of menu state
-(`0x801045F0..0x801045F6`) and then calls the maintenance menu
-function. The maintenance menu is the function that handles the
+The menu entry wrapper zeroes four specific bytes of menu state
+(`0x801045F0`, `0x801045F1`, `0x801045F2`, `0x801045F6`) and then calls
+the maintenance menu function. The maintenance menu is the function that handles the
 "press F1 + type password + get the menu" flow. Its return code is
-additionally used to select the display output: a specific return
-value (5) switches EBOOT to TV Out instead of the on-board LCD.
+additionally tested by `oem_platform_init`: if it were `5`, the caller
+would switch to TV Out. In the current build no visible
+`maintenance_menu` path returns `5`, so observed boots remain on LCD.
 
 The password authentication and the maintenance menu's full behavior
 (menu items, format/update handlers, partition type mapping) are
@@ -130,38 +149,36 @@ hardware that feeds characters to this menu.
    [gpio-driver.md](gpio-driver.md).
 
 Driver-specific alt functions (such as ID `20` for the backlight PWM
-pad and ID `51`/`52` re-enabled by `lcd_init`) are enabled later by
+pad and ID `51` re-enabled by `lcd_init`) are enabled later by
 the respective drivers, not by `hw_phase1_init`.
 
 ## Driver Init Order
 
-After `hw_phase1_init` returns, `oem_platform_init` runs the
-driver-specific init functions in an order that respects the
-mandatory-alt-function prerequisites. Observed order:
+After `hw_phase1_init` returns, `oem_platform_init` performs:
 
-1. **NAND driver** (`nand_detect_device`). Probes the NAND chip via
-   Read ID, looks up the device in the chip database, and sets the
-   per-chip address byte counts. See [nand-driver.md](nand-driver.md).
-2. **SPI0 / CH374** (via the maintenance menu entry, not during
-   early init). EBOOT does not initialize CH374 unless it enters
-   the maintenance menu path. The default boot flow never touches
-   the HID keyboard.
-3. **UART** (if present). On the test unit, the UART pads are
-   damaged and the UART init completes but no characters are
-   observable. EBOOT's UART driver path runs regardless.
-4. **LCD** (`lcd_init`). Programs the LCD controller through the
-   full bring-up sequence. See [lcd-driver.md](lcd-driver.md).
-5. **Ethernet** (`eth_register_enc28j60`, which internally calls
-   `enc28j60_init`). See [ethernet-driver.md](ethernet-driver.md).
-   EBOOT also tries the Bulverde RNDIS USB Ethernet registration
-   path; that init fails on AIPC and is a no-op.
-6. **PTB load**. Reads the vendor partition table from NAND (or
-   falls back to the compiled-in default). See
-   [partition-format.md](partition-format.md).
-
-Each driver init returns success/failure to `oem_platform_init`.
-Failures in non-critical drivers (UART, Ethernet) do not stop the
-boot.
+1. **Power-on-reason setup** (`power_on_reason_init`). Reads the
+   power-on reason, configures the keep-power-on GPIO path, drives
+   GPIO pin `104` high, and stores the reason in bootargs.
+2. **Panel GPIO preset**. Looks up the panel reset pin and panel
+   power pin and drives them low. On v1.88 these helpers return pin
+   `69` and pin `4` respectively.
+3. **LCD bring-up** (`lcd_init`). Programs the LCD controller.
+4. **Framebuffer console setup**. Clears 5 MB at `0x87B00000`,
+   initializes console framebuffer parameters, and prints the
+   version/banner strings.
+5. **Touchpad init**. Calls `touchpad_init_1`, samples one keycode,
+   then calls `touchpad_init_3`.
+6. **Backlight enable**. Clears `0x74` bytes at `0xA0020800`,
+   delays `0x55` ms, enables alt ID `20`, and calls
+   `pwm_set(1000, 70)`.
+7. **Maintenance menu**. Calls `maintenance_menu_entry`; the caller
+   still checks for return value `5` as a TV-Out selector, but no
+   visible path in the current `maintenance_menu` implementation
+   returns that value.
+8. **FMD / boot configuration**. Initializes the flash layer, queries
+   partition info, enters `fmd_mount`'s boot countdown / config logic,
+   and only then returns to `eboot_main` on the subset of paths that
+   stay in EBOOT.
 
 ## Maintenance Menu Entry
 
@@ -187,31 +204,71 @@ The specific return codes are:
 
 | Return value | Meaning                                     |
 | ------------ | ------------------------------------------- |
-| 1            | F1 prompt timed out (user took no action)   |
-| 2            | User pressed Escape to exit the menu        |
+| 1            | F1 prompt timed out                         |
+| 2            | Escape pressed at the password prompt       |
 | 3            | Password entered incorrectly four times     |
-| 5            | Menu action requested TV Out display mode   |
-| other        | Menu action returning a generic value       |
+| 0x280E171D   | Escape pressed at the main menu             |
 
-Return value 5 is special: it causes `oem_platform_init` to set a
-display-mode flag that triggers the TV Out path instead of the
-on-board LCD. Other values fall through to the default LCD path.
-This side-channel behavior (menu return code -> display mode) is
-an unusual design choice and is noted so that a Linux port knows
-not to rely on the same menu for both purposes.
+`oem_platform_init` still compares the menu return value against `5`
+to select TV Out, but the current `maintenance_menu` implementation
+has no visible path that returns `5`. In the current build, all
+observed maintenance-menu returns fall through to the default LCD
+path.
 
-## Default Boot Path: Load NK from NAND
+## FMD Boot Menu and Default Target
 
-On a clean boot with no maintenance action, EBOOT:
+After the maintenance menu and framebuffer setup, `oem_platform_init`
+calls `fmd_mount()`. Despite the name, this is not a passive "mount and
+return" helper: it prints a boot menu, reads the PTB boot-delay byte
+(`+0x1E`) and default-boot field (`+0x24`), polls for user input during
+the countdown, and can either boot immediately, enter configuration
+menus, or return to `eboot_main` for KITL / download operation.
 
-1. Reads the PTB from NAND and locates the `NK` entry.
-2. Calls the `LoadNandBoot` loop with the `NK` partition's start
-   block and block count, reading pages into DDR via the
-   fresh-READ-per-chunk pattern (see
-   [nand-driver.md](nand-driver.md)).
-3. Loads the NK image to virtual `0x80200000` (physical
-   `0x30200000`).
-4. Jumps to the NK entry point. Control never returns to EBOOT.
+The verified user-visible boot menu is:
+
+```text
+==========Boot Menu==========
+[b]Boot Kernel.
+[u]Run Updata Loader.
+[Enter]Kitl boot.
+[Space]Config.
+```
+
+At the key-dispatch level, `fmd_mount` does the following:
+
+- `[b]` searches the PTB for tag `NK` and hands off through
+  `sub_80067120(...)`.
+- `[u]` searches the PTB for tag `UDR` and hands off through the same
+  helper; this is the actual control-flow behind the UI string
+  `"Run Updata Loader"`.
+- `[Enter]` returns immediately so `eboot_main` continues into
+  `check_update_eboot_request()`.
+- `[Space]` enters the config submenu and then returns to the caller,
+  again leaving `eboot_main` in control afterwards.
+
+The common default configuration is `boot target = 4`, which means
+`NK`. In that case, once the countdown expires, `fmd_mount` does not
+return to `eboot_main`: it resolves PTB entry index `4` and hands off
+through `sub_80067120(4)` instead.
+
+PTB default target `9` means "menu", and PTB default target `10` means
+"KITL". Those are the two cases that leave EBOOT in control and allow
+the later `check_update_eboot_request()` network path to run.
+
+## Flash Boot Path: PTB Target `NK`
+
+On the stock flash-boot path (`default boot target = 4`), EBOOT does
+**not** call `LoadNandBoot` from `eboot_main`. Instead:
+
+1. `fmd_mount` resolves PTB entry index `4` (`NK`) and calls
+   `sub_80067120(4)`.
+2. `sub_80067120(4)` invokes `sub_80065F54(0x80200000, 0x400000)`,
+   which opens the flash-backed kernel image through the WinCE partition
+   layer and reads it into RAM.
+3. `sub_80065F54` reads the first `68` bytes, requires `ECEC` at
+   offset `+0x40`, and then reads the remainder of the image.
+4. Control transfers through the reboot / launch helper using the
+   PTB entry's load address.
 
 The `NK` partition content is not a standard WinCE `NK.bin`; it is
 an `ECEC` container with one or more sub-images. EBOOT loads the
@@ -220,53 +277,52 @@ the first 64 bytes of the ECEC header) to set up whatever is needed
 before the kernel's own `WinMain`/`NKStartup` runs. See
 [partition-format.md](partition-format.md) for container details.
 
-## Fallback: TFTP Download
+`LoadNandBoot` is a different helper used for raw boot-image reads and
+upgrade verification; it is documented in [nand-driver.md](nand-driver.md)
+but it is **not** the normal `NK` flash-boot path.
 
-If the maintenance menu selects a "download via Ethernet" option
-(or if the NAND load fails), EBOOT enters the BOOTME/TFTP download
-state machine. The state machine is fully documented in
-[ethernet-driver.md](ethernet-driver.md). Summary:
+## KITL / TFTP Path
 
-1. EBOOT broadcasts BOOTME UDP packets on a fixed interval to
-   announce itself to a listening Platform Builder on the local
-   network.
-2. The host sends a TFTP read request on port `0xD403` to the
-   device IP (`192.168.0.11` by default).
-3. EBOOT accepts the TFTP transfer, writes the received image to
-   DDR.
-4. The host sends an `EDBG_CMD_JUMPIMG` command, and EBOOT jumps
-   to the loaded image.
+When `fmd_mount` returns to `eboot_main` in KITL / download mode,
+`eboot_main` calls `check_update_eboot_request()`. That helper:
 
-The downloaded image typically replaces the NK in memory but does
-not overwrite the NAND copy. To persist a downloaded NK, the
-maintenance menu must be used to write it to the `NK` partition
-separately.
+1. Copies either the static PTB IP/mask or the DHCP-zeroed placeholders
+   into the runtime network state, depending on PTB boot flag bit `1`.
+2. Registers the SimpleTFTP server on UDP port `0xD403`.
+3. Runs `EbootSendBootmeAndWaitForTftp`, which sends BOOTME packets and
+   waits for the host to open the TFTP transfer.
 
-## CheckPowerOnReason
+Once the host has opened the transfer, `check_update_eboot_request()`
+returns `0`, and `eboot_main` immediately calls `nk_partition_load`.
+Despite the historic name, this function is the **download-stream
+parser**: it reads from `sub_8005A4AC -> sub_8005BFBC` (the
+already-open SimpleTFTP source), understands `N000FF` / `B000FF`
+records, and explicitly rejects `X000FF`.
 
-`CheckPowerOnReason` runs early in `oem_platform_init`. It is the
-only EBOOT code path that reads GPIO **inputs** for a purpose other
-than default-state check. It:
+If an `EDBG_CMD_JUMPIMG` command has already populated the launch-state
+globals, `check_update_eboot_request()` returns `1` instead, and
+`eboot_main` skips `nk_partition_load` and goes straight to
+`jump_to_nk_kernel`.
 
-1. Reads the power button pin (identified via a per-platform lookup
-   table, not by a fixed constant) to distinguish a cold power-on
-   from a warm reset.
-2. Reads the charger-detect pin to determine whether external
-   power is present.
-3. Uses the results to decide whether to display a charging icon
-   on the LCD or to boot straight through.
+The BOOTME / TFTP / EDBG packet handling itself is documented in
+[ethernet-driver.md](ethernet-driver.md).
 
-The per-pin configuration goes through `gpio_bank_config_write`
-(setting the direction to input) followed by the GPIO aux writer
-and then a read. Which of the two aux-write helpers is chosen
-depends on a mode value from a per-platform configuration table,
-using mode `9` to pick the second helper. See
-[gpio-driver.md](gpio-driver.md) for the aux-write mechanism.
+## `power_on_reason_init`
 
-The exact pins used for power button and charger detect are looked
-up at runtime via indirect helpers and are not fixed constants in
-EBOOT. This means the same EBOOT image can in principle be used on
-multiple board variants.
+`power_on_reason_init` runs immediately after `hw_phase1_init`. From
+assembly:
+
+1. Read a power-on reason code from a helper path and print one of:
+   `REASON_PWRBTN`, `REASON_USB`, `REASON_CHARGER`, `REASON_ALARM`,
+   `REASON_NONE`, or a raw decimal reason value.
+2. Look up a board-specific "KeepPowerOn" pin. If present, configure
+   it through `gpio_bank_config_write`, one aux-config helper, and
+   `gpio_bank_data_write`.
+3. Drive GPIO pin `104` high unconditionally via `gpio_set_value(104, 1)`.
+4. Store the final power-on reason code to bootargs at `0xA002084C`.
+
+The keep-power-on GPIO is board-specific and looked up indirectly. The
+fixed pin `104` write is present in the verified v1.88 path.
 
 ## Version Differences
 
@@ -280,25 +336,17 @@ described here applies to both versions.
 
 ## Unresolved
 
-- The maintenance menu body (full list of menu items, each item's
-  handler, update paths to NAND, TFTP integration) is not
-  decompiled.
 - The precise division of work between `hw_phase1_init`,
   `hw_phase1_step2`, and `hw_phase1_step3` is not mapped; only the
   `hw_phase1_init` contents are known. Step 2 and step 3 run
   before the driver init phase but their individual register
   writes are not documented.
-- The exact order in which the driver inits run after
-  `hw_phase1_init` is inferred from code walk rather than directly
-  verified; minor reordering may exist.
-- `CheckPowerOnReason`'s power-button and charger-detect pin
-  lookup tables are per-platform and come from a helper path that
-  was not independently traced.
+- `power_on_reason_init`'s helper path for decoding the reason code
+  and looking up the keep-power-on GPIO is only partially traced.
+- The exact semantic naming of the KITL / download handoff globals
+  (`0x800F5110`, `0x800F36C0`, related launch-state fields) is still
+  incomplete, even though the control-flow around them is verified.
 - The TV Out display mode entered on maintenance menu return
   value 5 uses a different set of LCD-controller writes and a
   different framebuffer layout. Those writes are not documented in
   this directory.
-- The backlight PWM re-programming at `oem_platform_init` time uses
-  the same `pwm_set(1000, 70)` call as `lcd_init`. Whether
-  `lcd_init` also invokes it is consistent with both orderings and
-  is not independently verified.
