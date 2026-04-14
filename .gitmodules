@@ -1,3 +1,6 @@
 [submodule "doom/doomgeneric"]
 	path = doom/doomgeneric
 	url = https://github.com/ozkl/doomgeneric
+[submodule "kernel/linux"]
+	path = kernel/linux
+	url = https://github.com/torvalds/linux
