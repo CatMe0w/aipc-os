@@ -7,6 +7,12 @@ The long-term goal is a working Linux port.
 See [https://aipc-os.catme0w.org/](https://aipc-os.catme0w.org/) for the
 project homepage.
 
+## Showcase
+
+| Booting Linux 7.0-rc3 | Booting DOOM |
+| --- | --- |
+| ![Booting Linux 7.0-rc3](https://github.com/user-attachments/assets/9385af0d-8bfa-4284-a66e-5d4783e4fc9a) | ![Booting DOOM](https://github.com/user-attachments/assets/d2f49c3f-eb05-4561-8703-38333c41fbfc) |
+
 ## Content
 
 ### Documentation ([`docs/`](docs/))
