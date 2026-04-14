@@ -81,6 +81,12 @@ Prompts:
 - `"Input start addr(0x40000000):"`
 - `"Input end addr(0x40000000):"`
 
+Note: the start address prompt displays `0x40000000`, but the actual default
+value passed to the hex input parser is **0x30000000** (DDR base). If the user
+presses Enter without typing a value, the start address will be 0x30000000,
+not 0x40000000 as the prompt suggests. The end address default correctly
+matches its prompt at 0x40000000.
+
 Reads 32-bit words from the start address through the end address (inclusive)
 and prints them in a tabular format with 4 words per line:
 

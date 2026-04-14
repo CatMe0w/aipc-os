@@ -142,8 +142,15 @@ constant `9` to select `sub_80062BA4`, otherwise it uses
 pin allowlist; the two sets are not simply complementary, and they overlap
 on GPIO1 pins `16..27`.
 
-For both helpers, `value == 0` sets the selected aux bit and any non-zero
-value clears it.
+The two helpers have **opposite polarity**:
+
+- `sub_80062BA4`: `value == 0` sets the selected aux bit; any non-zero
+  value clears it.
+- `gpio_aux_config_write`: polarity depends on the pin range.
+  - Pins `16..27` (GPIO1): `value != 0` sets the bit; `value == 0` clears
+    it. This is the **inverse** of `sub_80062BA4`.
+  - Pins `28..31`, `14..15`, `12`, `1..3`: `value == 0` sets the bit;
+    `value != 0` clears it (same as `sub_80062BA4`).
 
 The aux registers themselves are `[partial]`: the single-bit-per-pin
 encoding is observed, but whether the bit controls pull-up, pull-down,

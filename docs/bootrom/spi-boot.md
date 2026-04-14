@@ -54,9 +54,13 @@ read from an external SPI NOR flash.
 3. Send `addr_byte_count` address bytes, MSB first:
    `flash_addr >> (8 * (count - 1))` down to `flash_addr >> 0`.
 4. Deassert the write path: SPI+0x00 &= ~0x02.
-5. Read `byte_len / 4` words via `spi_read_word()`:
-   - Set SPI+0x00 bit 0 (read enable), set transfer count = 4, poll
-     SPI+0x04 bit 8 for completion, clear read enable, return SPI+0x1C.
+5. Read data words in a loop: initialize `j = 0`, then while `j < byte_len`
+   read one word via `spi_read_word()` and increment `j` by 4. Each
+   `spi_read_word()` call sets SPI+0x00 bit 0 (read enable), sets transfer
+   count = 4, polls SPI+0x04 bit 8 for completion, clears read enable, and
+   returns SPI+0x1C. For `byte_len` values that are a multiple of 4 this is
+   equivalent to `byte_len / 4` iterations; for non-aligned values (not used
+   in practice) an extra word is read.
 6. Deassert chip select: SPI+0x00 &= ~0x20, then SPI+0x00 |= 0x02.
 
 ## SPI Boot Image Header Layout

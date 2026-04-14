@@ -36,7 +36,9 @@ NAND Flash (NF) sequencer hardware at 0x2002A000.
 
 3. On signature match:
    a. Copy 5 dwords from offset +0x0C of the L2 data into `nf_tail`.
-   b. Validate `chunks_per_page` (must be 1, 4, or 8).
+   b. Validate `chunks_per_page` (must be 1, 4, or 8). If invalid, the ROM
+   immediately returns 0 - it does **not** continue to the next parameter
+   set.
    c. If the header load descriptor includes non-zero timing overrides,
    apply them via `nf_set_boot_timings()`.
    d. Delay for `pre_delay_ticks` from the header.

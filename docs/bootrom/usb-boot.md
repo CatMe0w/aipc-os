@@ -101,7 +101,7 @@ On receiving a USB bus reset interrupt (INTRUSB bit 2):
 1. Clear FADDR to 0 (un-addressed state).
 2. Set POWER = 1 (resume from suspend).
 3. Enable interrupt masks: INTRUSBE = 0xF7, INTRTX1E = 0x05 (EP0 + EP2),
-   INTRRX1E = 0x0A (EP3).
+   INTRRX1E = 0x0A (EP1 + EP3).
 4. Configure EP2 IN with max packet = 512 and TX mode.
 5. Configure EP3 OUT with max packet = 512 and RX mode.
 6. Reset INDEX to 0.
@@ -153,9 +153,16 @@ Offset  Size  Field         Value / Description
 0x3E    2     tail_magic    0x1413 (little-endian)
 ```
 
-A received 64-byte packet is recognized as a command frame only when **both**
-magic values match **and** the first 28 bytes are all 0x60. Any packet that
-fails either check is treated as data (during an active download session).
+A received packet is recognized as a command frame only when **both** magic
+values match **and** the first 28 bytes (7 words) are all 0x60. Any packet
+that fails either check is treated as data (during an active download session).
+
+Note: the ROM does not explicitly verify that the received byte count
+(`RXCOUNT`) equals 64. The 64-byte frame size is a host-side protocol
+requirement; the ROM relies solely on the magic and sync-pad checks. A shorter
+packet whose copied words happen to satisfy both checks would still be parsed
+as a command, with opcode/address/arg fields populated from whatever data was
+already in the stack `cmd_pkt` buffer.
 
 ### Opcodes
 
@@ -173,10 +180,20 @@ Any unrecognized opcode resets the command state to idle (NONE).
 
 After a DOWNLOAD_BEGIN command, the device enters a download state. Each
 subsequent EP3 OUT packet that does not match the command frame signature is
-treated as raw payload data. The data bytes are written sequentially to
-`cmd_state.addr + cmd_state.progress`, and `progress` is incremented by the
-USB RX byte count of each packet. A DOWNLOAD_DONE command (or any new command
-frame) ends the session.
+treated as raw payload data. The data is written to
+`cmd_state.addr + cmd_state.progress` using 32-bit word stores (`STR`) in a
+loop that increments a byte index by 4 while it is less than `rx_count`. The
+`progress` counter is then incremented by the exact USB RX byte count.
+A DOWNLOAD_DONE command (or any new command frame) ends the session.
+
+**Alignment caveat**: because each iteration writes a full 32-bit word, a
+packet whose byte count is not a multiple of 4 causes the last store to
+overwrite up to 3 bytes beyond the received data. The extra bytes contain
+whatever was in the corresponding word of the stack `cmd_pkt` buffer. The
+`progress` counter still advances by the exact `rx_count`, so subsequent
+packets overwrite those extra bytes - unless it is the final packet before
+DOWNLOAD_DONE, in which case the 1-3 trailing bytes at the end of the
+downloaded region are stale `cmd_pkt` content.
 
 ### EP3 Receive Path and L2BUF_01
 
@@ -198,9 +215,17 @@ to avoid this corruption.
 
 After an UPLOAD_BEGIN command, the device begins streaming data from the
 specified memory address through EP2 IN. Data is sent in 64-byte chunks.
-The final chunk uses the exact remaining byte count. After the last chunk,
-a zero-length packet is sent if the `active` flag is still set, signaling
-transfer completion.
+The final chunk (remaining ≤ 64) sets `EP2_TX_COUNT` to the exact remaining
+byte count, but only stages `remaining >> 2` whole words into L2BUF_00. After
+the last chunk, a zero-length packet is sent if the `active` flag is still
+set, signaling transfer completion.
+
+**Alignment caveat**: if the total upload length is not a multiple of 4, the
+terminal packet's TX count includes the fractional bytes, but only
+`floor(remaining / 4)` words are actually copied from the source into the L2
+staging buffer. The `remaining & 3` tail bytes sent to the host are stale
+content already present in L2BUF_00 from a previous transfer, not data from
+the requested source address.
 
 ### State Structures
 
@@ -259,8 +284,9 @@ around 0x48000E70. The initial SP set at `bootrom_entry` is **0x48000FFC**
    writing to USB FIFO EP2 after each word. Set EP2_TX_COUNT = 64. Trigger
    pre-read. Set TXCSR1 bit 0 (TX ready). Decrement remaining by 64,
    increment offset by 64.
-4. If remaining <= 64 and nonzero: same as above but with exact remaining
-   count. Reset offset and remaining to 0 after send.
+4. If remaining <= 64 and nonzero: copy `remaining >> 2` whole words from
+   source to L2BUF_00 (word-granularity only). Set EP2_TX_COUNT to the exact
+   `remaining` value. Reset offset and remaining to 0 after send.
 5. If remaining = 0: send ZLP (TXCSR1 = 1 with no data). Reset state.
 
 The write-forbid register (USB+0x338) is toggled to gate L2 buffer writes
