@@ -1,0 +1,232 @@
+From b58dee2343f495f75dc37fc3c702dbbfec2d4efd Mon Sep 17 00:00:00 2001
+From: CatMe0w <CatMe0w@live.cn>
+Date: Wed, 15 Apr 2026 00:28:24 +0800
+Subject: [PATCH v1 3/6] clocksource: anyka: Add AK880x/AK7802 timer driver
+
+---
+ drivers/clocksource/Makefile      |   1 +
+ drivers/clocksource/timer-anyka.c | 200 ++++++++++++++++++++++++++++++
+ 2 files changed, 201 insertions(+)
+ create mode 100644 drivers/clocksource/timer-anyka.c
+
+diff --git a/drivers/clocksource/Makefile b/drivers/clocksource/Makefile
+index b46376af6b49..a0402f829d1f 100644
+--- a/drivers/clocksource/Makefile
++++ b/drivers/clocksource/Makefile
+@@ -16,6 +16,7 @@ obj-$(CONFIG_EM_TIMER_STI)	+= em_sti.o
+ obj-$(CONFIG_CLKBLD_I8253)	+= i8253.o
+ obj-$(CONFIG_CLKSRC_MMIO)	+= mmio.o
+ obj-$(CONFIG_DAVINCI_TIMER)	+= timer-davinci.o
++obj-$(CONFIG_ARCH_ANYKA)	+= timer-anyka.o
+ obj-$(CONFIG_DIGICOLOR_TIMER)	+= timer-digicolor.o
+ obj-$(CONFIG_ECONET_EN751221_TIMER)	+= timer-econet-en751221.o
+ obj-$(CONFIG_OMAP_DM_TIMER)	+= timer-ti-dm.o
+diff --git a/drivers/clocksource/timer-anyka.c b/drivers/clocksource/timer-anyka.c
+new file mode 100644
+index 000000000000..3a2444cd6cd5
+--- /dev/null
++++ b/drivers/clocksource/timer-anyka.c
+@@ -0,0 +1,200 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Anyka AK78/AK88/AK98 timer driver
++ * 
++ * Copyright (C) 2026 CatMe0w
++ * Based on vendor kernel code provided by:
++ * Copyright (C) 2001-2010 ANYKA LTD.
++ */
++
++#include <linux/clk.h>
++#include <linux/clockchips.h>
++#include <linux/clocksource.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/of_address.h>
++#include <linux/of_irq.h>
++#include <linux/sched_clock.h>
++#include <linux/seqlock.h>
++#include <linux/slab.h>
++
++#define ANYKA_TIMER1_CTRL		0x00
++#define ANYKA_TIMER2_CTRL		0x04
++
++#define ANYKA_TIMER_ENABLE		BIT(26)
++#define ANYKA_TIMER_LOAD		BIT(27)
++#define ANYKA_TIMER_INT_CLEAR		BIT(28)
++#define ANYKA_TIMER_INT_STATUS		BIT(29)
++#define ANYKA_TIMER_COUNT_MASK		GENMASK(25, 0)
++#define ANYKA_TIMER_WIDTH		26
++#define ANYKA_TIMER_MAX_COUNT		(BIT(ANYKA_TIMER_WIDTH) - 1)
++
++struct anyka_timer {
++	void __iomem *base;
++	unsigned long rate;
++	u32 period;
++	u32 overflows;
++	seqcount_t seq;
++	struct clock_event_device clkevt;
++	struct clocksource clksrc;
++};
++
++static struct anyka_timer *anyka_timer;
++
++static void anyka_timer_load(void __iomem *reg, u32 count)
++{
++	writel_relaxed(ANYKA_TIMER_INT_CLEAR, reg);
++	writel_relaxed(count & ANYKA_TIMER_COUNT_MASK, reg);
++	writel_relaxed(readl_relaxed(reg) | ANYKA_TIMER_LOAD | ANYKA_TIMER_ENABLE,
++		       reg);
++}
++
++static void anyka_timer_clear_interrupt(void __iomem *reg)
++{
++	writel_relaxed(readl_relaxed(reg) |
++		       ANYKA_TIMER_INT_CLEAR | ANYKA_TIMER_ENABLE, reg);
++}
++
++static irqreturn_t anyka_timer1_interrupt(int irq, void *dev_id)
++{
++	struct anyka_timer *at = dev_id;
++
++	anyka_timer_load(at->base + ANYKA_TIMER1_CTRL, at->period);
++	at->clkevt.event_handler(&at->clkevt);
++
++	return IRQ_HANDLED;
++}
++
++static irqreturn_t anyka_timer2_interrupt(int irq, void *dev_id)
++{
++	struct anyka_timer *at = dev_id;
++
++	write_seqcount_begin(&at->seq);
++	at->overflows++;
++	anyka_timer_load(at->base + ANYKA_TIMER2_CTRL, at->period);
++	write_seqcount_end(&at->seq);
++
++	return IRQ_HANDLED;
++}
++
++static int anyka_clkevt_shutdown(struct clock_event_device *evt)
++{
++	struct anyka_timer *at = container_of(evt, struct anyka_timer, clkevt);
++
++	writel_relaxed(ANYKA_TIMER_INT_CLEAR, at->base + ANYKA_TIMER1_CTRL);
++	return 0;
++}
++
++static int anyka_clkevt_set_periodic(struct clock_event_device *evt)
++{
++	struct anyka_timer *at = container_of(evt, struct anyka_timer, clkevt);
++
++	anyka_timer_load(at->base + ANYKA_TIMER1_CTRL, at->period);
++	return 0;
++}
++
++static u64 anyka_clocksource_read(struct clocksource *cs)
++{
++	struct anyka_timer *at = container_of(cs, struct anyka_timer, clksrc);
++	unsigned int seq;
++	u32 overflows;
++	u32 ctrl;
++
++	do {
++		seq = read_seqcount_begin(&at->seq);
++		overflows = at->overflows;
++		ctrl = readl_relaxed(at->base + ANYKA_TIMER2_CTRL);
++	} while (read_seqcount_retry(&at->seq, seq));
++
++	if (ctrl & ANYKA_TIMER_INT_STATUS)
++		overflows++;
++
++	return ((u64)overflows << ANYKA_TIMER_WIDTH) |
++	       (ANYKA_TIMER_MAX_COUNT - (ctrl & ANYKA_TIMER_COUNT_MASK));
++}
++
++static u64 notrace anyka_sched_clock_read(void)
++{
++	return anyka_clocksource_read(&anyka_timer->clksrc);
++}
++
++static int __init anyka_timer_init(struct device_node *node)
++{
++	struct anyka_timer *at;
++	struct clk *clk;
++	int irq_timer1;
++	int irq_timer2;
++	int ret;
++
++	at = kzalloc(sizeof(*at), GFP_KERNEL);
++	if (!at)
++		return -ENOMEM;
++
++	at->base = of_iomap(node, 0);
++	if (!at->base)
++		return -ENXIO;
++
++	irq_timer1 = irq_of_parse_and_map(node, 0);
++	irq_timer2 = irq_of_parse_and_map(node, 1);
++	if (irq_timer1 <= 0 || irq_timer2 <= 0)
++		return -EINVAL;
++
++	clk = of_clk_get(node, 0);
++	if (IS_ERR(clk))
++		return PTR_ERR(clk);
++
++	ret = clk_prepare_enable(clk);
++	if (ret)
++		return ret;
++
++	at->rate = clk_get_rate(clk);
++	if (!at->rate)
++		return -EINVAL;
++
++	at->period = DIV_ROUND_CLOSEST(at->rate, HZ);
++	if (!at->period || at->period > ANYKA_TIMER_MAX_COUNT)
++		return -EINVAL;
++
++	seqcount_init(&at->seq);
++
++	anyka_timer = at;
++	anyka_timer_load(at->base + ANYKA_TIMER1_CTRL, at->period);
++	anyka_timer_load(at->base + ANYKA_TIMER2_CTRL, ANYKA_TIMER_MAX_COUNT);
++
++	ret = request_irq(irq_timer1, anyka_timer1_interrupt, IRQF_TIMER,
++			  "ak880x-timer1", at);
++	if (ret)
++		return ret;
++
++	ret = request_irq(irq_timer2, anyka_timer2_interrupt, IRQF_TIMER,
++			  "ak880x-timer2", at);
++	if (ret)
++		return ret;
++
++	at->clkevt.name = "ak880x-timer1";
++	at->clkevt.features = CLOCK_EVT_FEAT_PERIODIC;
++	at->clkevt.rating = 250;
++	at->clkevt.set_state_shutdown = anyka_clkevt_shutdown;
++	at->clkevt.set_state_periodic = anyka_clkevt_set_periodic;
++	at->clkevt.tick_resume = anyka_clkevt_set_periodic;
++	at->clkevt.cpumask = cpumask_of(0);
++	at->clkevt.irq = irq_timer1;
++
++	clockevents_config_and_register(&at->clkevt, at->rate, 1,
++					ANYKA_TIMER_MAX_COUNT);
++
++	at->clksrc.name = "ak880x-timer2";
++	at->clksrc.rating = 300;
++	at->clksrc.read = anyka_clocksource_read;
++	at->clksrc.mask = CLOCKSOURCE_MASK(64);
++	at->clksrc.flags = CLOCK_SOURCE_IS_CONTINUOUS;
++
++	ret = clocksource_register_hz(&at->clksrc, at->rate);
++	if (ret)
++		return ret;
++
++	sched_clock_register(anyka_sched_clock_read, 64, at->rate);
++
++	return 0;
++}
++TIMER_OF_DECLARE(anyka_timer, "anyka,ak880x-timer", anyka_timer_init);
+-- 
+2.50.1 (Apple Git-155)
+

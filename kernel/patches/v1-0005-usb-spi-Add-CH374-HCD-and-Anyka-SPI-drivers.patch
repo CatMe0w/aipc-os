@@ -1,0 +1,5970 @@
+From 1e7e1c1b61b27cba1107eec263cee610d2aaa8da Mon Sep 17 00:00:00 2001
+From: CatMe0w <CatMe0w@live.cn>
+Date: Wed, 15 Apr 2026 00:28:26 +0800
+Subject: [PATCH v1 5/6] usb: spi: Add CH374 HCD and Anyka SPI drivers
+
+---
+ drivers/spi/Kconfig            |   14 +
+ drivers/spi/Makefile           |    2 +
+ drivers/spi/spi-ak88-test.c    |   59 +
+ drivers/spi/spi-ak88.c         |  333 ++++
+ drivers/usb/host/Kconfig       |   24 +
+ drivers/usb/host/Makefile      |    2 +
+ drivers/usb/host/ak98-fs-hcd.c | 1881 +++++++++++++++++++++++
+ drivers/usb/host/ak98-fs-hcd.h |  768 ++++++++++
+ drivers/usb/host/ch37x-hcd.c   | 2601 ++++++++++++++++++++++++++++++++
+ drivers/usb/host/ch37x.h       |  168 +++
+ 10 files changed, 5852 insertions(+)
+ create mode 100644 drivers/spi/spi-ak88-test.c
+ create mode 100644 drivers/spi/spi-ak88.c
+ create mode 100644 drivers/usb/host/ak98-fs-hcd.c
+ create mode 100644 drivers/usb/host/ak98-fs-hcd.h
+ create mode 100644 drivers/usb/host/ch37x-hcd.c
+ create mode 100644 drivers/usb/host/ch37x.h
+
+diff --git a/drivers/spi/Kconfig b/drivers/spi/Kconfig
+index c3b2f02f5912..c036b35b927b 100644
+--- a/drivers/spi/Kconfig
++++ b/drivers/spi/Kconfig
+@@ -60,6 +60,20 @@ config SPI_OFFLOAD
+ 
+ comment "SPI Master Controller Drivers"
+ 
++config SPI_AK88
++	bool "Anyka AK88/AK98 SPI controller"
++	depends on ARCH_ANYKA || COMPILE_TEST
++	default y if ARCH_ANYKA
++	help
++	  Minimal DT-only SPI master support for Anyka AK78/AK88/AK98
++	  controllers. The first implementation is polling-based and is
++	  primarily intended to reach board peripherals such as the CH374U.
++
++config SPI_AK88_KUNIT_TEST
++	tristate "KUnit tests for Anyka AK88 SPI controller" if !KUNIT_ALL_TESTS
++	depends on KUNIT && SPI_AK88
++	default KUNIT_ALL_TESTS
++
+ config SPI_AIROHA_SNFI
+ 	tristate "Airoha SPI NAND Flash Interface"
+ 	depends on ARCH_AIROHA || COMPILE_TEST
+diff --git a/drivers/spi/Makefile b/drivers/spi/Makefile
+index 9d36190a9884..cc9acf30a1f0 100644
+--- a/drivers/spi/Makefile
++++ b/drivers/spi/Makefile
+@@ -15,6 +15,8 @@ obj-$(CONFIG_SPI_SPIDEV)		+= spidev.o
+ obj-$(CONFIG_SPI_LOOPBACK_TEST)		+= spi-loopback-test.o
+ 
+ # SPI master controller drivers (bus)
++obj-$(CONFIG_SPI_AK88)			+= spi-ak88.o
++obj-$(CONFIG_SPI_AK88_KUNIT_TEST)	+= spi-ak88-test.o
+ obj-$(CONFIG_SPI_AIROHA_SNFI)		+= spi-airoha-snfi.o
+ obj-$(CONFIG_SPI_ALTERA)		+= spi-altera-platform.o
+ obj-$(CONFIG_SPI_ALTERA_CORE)		+= spi-altera-core.o
+diff --git a/drivers/spi/spi-ak88-test.c b/drivers/spi/spi-ak88-test.c
+new file mode 100644
+index 000000000000..d06f179f08ce
+--- /dev/null
++++ b/drivers/spi/spi-ak88-test.c
+@@ -0,0 +1,59 @@
++// SPDX-License-Identifier: GPL-2.0-only
++
++#include <kunit/test.h>
++#include <linux/bitops.h>
++#include <linux/spi/spi.h>
++
++#define AK88_SPICON_CS_FORCE	BIT(5)
++#define AK88_SPICON_CPHA	BIT(3)
++#define AK88_SPICON_CPOL	BIT(2)
++#define AK88_SPICON_ARRM	BIT(1)
++#define AK88_SPICON_TGDM	BIT(0)
++
++extern u32 ak88_spi_build_ctrl(u32 ctrl, u32 mode, bool tx, bool rx);
++
++static void ak88_spi_ctrl_preserves_cs_for_duplex(struct kunit *test)
++{
++	u32 ctrl = ak88_spi_build_ctrl(AK88_SPICON_CS_FORCE, 0, true, true);
++
++	KUNIT_EXPECT_TRUE(test, ctrl & AK88_SPICON_CS_FORCE);
++	KUNIT_EXPECT_FALSE(test, ctrl & AK88_SPICON_ARRM);
++	KUNIT_EXPECT_FALSE(test, ctrl & AK88_SPICON_TGDM);
++}
++
++static void ak88_spi_ctrl_selects_write_only_mode(struct kunit *test)
++{
++	u32 ctrl = ak88_spi_build_ctrl(0, SPI_CPOL, true, false);
++
++	KUNIT_EXPECT_TRUE(test, ctrl & AK88_SPICON_ARRM);
++	KUNIT_EXPECT_FALSE(test, ctrl & AK88_SPICON_TGDM);
++	KUNIT_EXPECT_TRUE(test, ctrl & AK88_SPICON_CPOL);
++	KUNIT_EXPECT_FALSE(test, ctrl & AK88_SPICON_CPHA);
++}
++
++static void ak88_spi_ctrl_selects_read_only_mode(struct kunit *test)
++{
++	u32 ctrl = ak88_spi_build_ctrl(0, SPI_CPHA, false, true);
++
++	KUNIT_EXPECT_FALSE(test, ctrl & AK88_SPICON_ARRM);
++	KUNIT_EXPECT_TRUE(test, ctrl & AK88_SPICON_TGDM);
++	KUNIT_EXPECT_TRUE(test, ctrl & AK88_SPICON_CPHA);
++	KUNIT_EXPECT_FALSE(test, ctrl & AK88_SPICON_CPOL);
++}
++
++static struct kunit_case ak88_spi_test_cases[] = {
++	KUNIT_CASE(ak88_spi_ctrl_preserves_cs_for_duplex),
++	KUNIT_CASE(ak88_spi_ctrl_selects_write_only_mode),
++	KUNIT_CASE(ak88_spi_ctrl_selects_read_only_mode),
++	{}
++};
++
++static struct kunit_suite ak88_spi_test_suite = {
++	.name = "spi-ak88-test",
++	.test_cases = ak88_spi_test_cases,
++};
++
++kunit_test_suite(ak88_spi_test_suite);
++
++MODULE_DESCRIPTION("KUnit tests for Anyka AK88 SPI controller");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/spi/spi-ak88.c b/drivers/spi/spi-ak88.c
+new file mode 100644
+index 000000000000..f79b1c2a919c
+--- /dev/null
++++ b/drivers/spi/spi-ak88.c
+@@ -0,0 +1,333 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Minimal SPI master support for Anyka AK78/AK88/AK98 SoCs.
++ *
++ * This first slice is intentionally small: polling only, 8-bit transfers
++ * only, and just enough controller support to reach the board's CH374U.
++ * 
++ * Copyright (C) 2026 CatMe0w
++ * Based on vendor kernel code provided by:
++ * Copyright (C) 2001-2010 ANYKA LTD.
++ */
++
++#include <linux/bitops.h>
++#include <linux/kernel.h>
++#include <linux/io.h>
++#include <linux/iopoll.h>
++#include <linux/mfd/syscon.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/of_device.h>
++#include <linux/platform_device.h>
++#include <linux/regmap.h>
++#include <linux/spi/spi.h>
++
++#define AK88_SPICON			0x00
++#define AK88_SPICON_EN			BIT(6)
++#define AK88_SPICON_CS_FORCE		BIT(5)
++#define AK88_SPICON_MS			BIT(4)
++#define AK88_SPICON_CPHA		BIT(3)
++#define AK88_SPICON_CPOL		BIT(2)
++#define AK88_SPICON_ARRM		BIT(1)
++#define AK88_SPICON_TGDM		BIT(0)
++
++#define AK88_SPISTA			0x04
++#define AK88_SPISTA_MPROC		BIT(9)
++#define AK88_SPISTA_TRANSF		BIT(8)
++#define AK88_SPISTA_TXHEMP		BIT(2)
++
++#define AK88_SPICNT			0x0c
++#define AK88_SPIOUT			0x18
++#define AK88_SPIIN			0x1c
++
++#define AK88_CLOCK_CTRL_REG		0x0c
++#define AK88_CLOCK_CTRL_SPI		BIT(2)
++#define AK88_SHAREPIN_CON1		0x78
++#define AK88_SHAREPIN_SPI0		BIT(30)
++#define AK88_PPU_PPD3			0xa4
++#define AK88_SPI0_GPIO_MASK		GENMASK(15, 12)
++
++#define AK88_SPI_INPUT_CLOCK_HZ		124000000
++#define AK88_DEFAULT_DIV		(0x7f << 8)
++#define AK88_XFER_TIMEOUT_US		10000
++
++struct ak88_spi {
++	void __iomem *base;
++	struct regmap *sysctrl;
++};
++
++static int ak88_spi_enable_clock(struct ak88_spi *hw)
++{
++	/*
++	 * The vendor 2.6 driver explicitly enables spi_clk, which clears
++	 * CLK_CON bit 2 on AK78/AK88/AK98 parts.
++	 */
++	return regmap_update_bits(hw->sysctrl, AK88_CLOCK_CTRL_REG,
++				  AK88_CLOCK_CTRL_SPI, 0);
++}
++
++static int ak88_spi_config_pins(struct ak88_spi *hw)
++{
++	int ret;
++
++	/*
++	 * AK7802 SPI pins are shared with GPIO[76:79] and require function mux.
++	 */
++	ret = regmap_update_bits(hw->sysctrl, AK88_SHAREPIN_CON1,
++				 AK88_SHAREPIN_SPI0, AK88_SHAREPIN_SPI0);
++	if (ret)
++		return ret;
++
++	/*
++	 * Datasheet default keeps pull-up/down enabled; disable it for SPI pins
++	 * so DIN is not biased low when the peripheral drives MISO.
++	 */
++	ret = regmap_update_bits(hw->sysctrl, AK88_PPU_PPD3,
++				 AK88_SPI0_GPIO_MASK, AK88_SPI0_GPIO_MASK);
++	if (ret)
++		return ret;
++
++	return 0;
++}
++
++static void ak88_spi_set_speed(struct ak88_spi *hw, u32 speed_hz)
++{
++	u32 ctrl;
++	u32 div;
++
++	if (!speed_hz)
++		return;
++
++	div = DIV_ROUND_UP(AK88_SPI_INPUT_CLOCK_HZ, speed_hz * 2);
++	if (!div)
++		div = 1;
++	if (div > 128)
++		div = 128;
++
++	ctrl = readl(hw->base + AK88_SPICON);
++	ctrl &= ~AK88_DEFAULT_DIV;
++	ctrl |= (div - 1) << 8;
++	writel(ctrl, hw->base + AK88_SPICON);
++}
++
++u32 ak88_spi_build_ctrl(u32 ctrl, u32 mode, bool tx, bool rx);
++
++u32 ak88_spi_build_ctrl(u32 ctrl, u32 mode, bool tx, bool rx)
++{
++	ctrl &= AK88_SPICON_CS_FORCE | AK88_DEFAULT_DIV;
++
++	ctrl |= AK88_SPICON_EN | AK88_SPICON_MS;
++
++	if (mode & SPI_CPHA)
++		ctrl |= AK88_SPICON_CPHA;
++	if (mode & SPI_CPOL)
++		ctrl |= AK88_SPICON_CPOL;
++
++	if (tx && !rx)
++		ctrl |= AK88_SPICON_ARRM;
++	else if (!tx && rx)
++		ctrl |= AK88_SPICON_TGDM;
++
++	return ctrl;
++}
++EXPORT_SYMBOL_GPL(ak88_spi_build_ctrl);
++
++static void ak88_spi_program_mode(struct ak88_spi *hw, u32 mode, bool tx, bool rx)
++{
++	u32 ctrl = readl(hw->base + AK88_SPICON);
++
++	ctrl = ak88_spi_build_ctrl(ctrl, mode, tx, rx);
++
++	writel(ctrl, hw->base + AK88_SPICON);
++}
++
++static int ak88_spi_wait_tx_empty(struct ak88_spi *hw)
++{
++	u32 val;
++
++	return readl_poll_timeout(hw->base + AK88_SPISTA, val,
++				  val & AK88_SPISTA_TXHEMP, 1,
++				  AK88_XFER_TIMEOUT_US);
++}
++
++static int ak88_spi_wait_done(struct ak88_spi *hw)
++{
++	u32 val;
++
++	return readl_poll_timeout(hw->base + AK88_SPISTA, val,
++				  !(val & AK88_SPISTA_MPROC), 1,
++				  AK88_XFER_TIMEOUT_US);
++}
++
++static int ak88_spi_xfer_byte(struct ak88_spi *hw, bool tx_en, bool rx_en,
++			      u8 tx, u8 *rx)
++{
++	int ret;
++
++	writel(1, hw->base + AK88_SPICNT);
++
++	ret = ak88_spi_wait_tx_empty(hw);
++	if (ret)
++		return ret;
++
++	writel(tx_en ? tx : 0xff, hw->base + AK88_SPIOUT);
++
++	ret = ak88_spi_wait_done(hw);
++	if (ret)
++		return ret;
++
++	if (rx_en && rx)
++		*rx = readl(hw->base + AK88_SPIIN);
++
++	return 0;
++}
++
++static int ak88_spi_transfer_one(struct spi_controller *ctlr,
++				 struct spi_device *spi,
++				 struct spi_transfer *xfer)
++{
++	struct ak88_spi *hw = spi_controller_get_devdata(ctlr);
++	const u8 *tx = xfer->tx_buf;
++	u8 *rx = xfer->rx_buf;
++	u32 speed_hz = xfer->speed_hz ? xfer->speed_hz : spi->max_speed_hz;
++	unsigned int i;
++	int ret;
++
++	if (xfer->bits_per_word && xfer->bits_per_word != 8)
++		return -EINVAL;
++
++	ak88_spi_set_speed(hw, speed_hz);
++	ak88_spi_program_mode(hw, spi->mode, !!tx, !!rx);
++
++	for (i = 0; i < xfer->len; i++) {
++		u8 value = tx ? tx[i] : 0xff;
++		u8 data;
++
++		ret = ak88_spi_xfer_byte(hw, !!tx, !!rx, value, &data);
++		if (ret) {
++			dev_err(&spi->dev,
++				"byte transfer timed out at offset %u\n", i);
++			return ret;
++		}
++
++		if (rx)
++			rx[i] = data;
++	}
++
++	return 0;
++}
++
++static void ak88_spi_set_cs(struct spi_device *spi, bool level)
++{
++	struct ak88_spi *hw = spi_controller_get_devdata(spi->controller);
++	u32 ctrl = readl(hw->base + AK88_SPICON);
++
++	/*
++	 * The SPI core passes the physical chip-select line level after
++	 * applying SPI_CS_HIGH policy. AK88 SPICON bit5 polarity differs across
++	 * vendor docs/ports; keep this mapping to drive requested line level.
++	 */
++	if (level)
++		ctrl |= AK88_SPICON_CS_FORCE;
++	else
++		ctrl &= ~AK88_SPICON_CS_FORCE;
++
++	writel(ctrl, hw->base + AK88_SPICON);
++}
++
++static int ak88_spi_setup(struct spi_device *spi)
++{
++	if (!spi->bits_per_word)
++		spi->bits_per_word = 8;
++
++	if (spi->bits_per_word != 8)
++		return -EINVAL;
++
++	if (spi->mode & ~(SPI_CPOL | SPI_CPHA | SPI_CS_HIGH))
++		return -EINVAL;
++
++	return 0;
++}
++
++static int ak88_spi_probe(struct platform_device *pdev)
++{
++	struct spi_controller *ctlr;
++	struct ak88_spi *hw;
++	bool keep_preinit_state;
++	u32 sharepin;
++	int ret;
++
++	ctlr = devm_spi_alloc_host(&pdev->dev, sizeof(*hw));
++	if (!ctlr)
++		return -ENOMEM;
++
++	hw = spi_controller_get_devdata(ctlr);
++
++	hw->base = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(hw->base))
++		return PTR_ERR(hw->base);
++
++	hw->sysctrl = syscon_regmap_lookup_by_phandle(pdev->dev.of_node, "syscon");
++	if (IS_ERR(hw->sysctrl))
++		return dev_err_probe(&pdev->dev, PTR_ERR(hw->sysctrl),
++				     "failed to map sysctrl\n");
++
++	keep_preinit_state = device_property_read_bool(&pdev->dev,
++						      "anyka,keep-preinit-state");
++
++	ret = ak88_spi_enable_clock(hw);
++	if (ret)
++		return dev_err_probe(&pdev->dev, ret,
++				     "failed to enable SPI clock\n");
++
++	if (!keep_preinit_state) {
++		ret = ak88_spi_config_pins(hw);
++		if (ret)
++			return dev_err_probe(&pdev->dev, ret,
++					     "failed to configure SPI pins\n");
++	} else {
++		dev_info(&pdev->dev,
++			 "keeping preinit pin state (HaRET/bootloader configured)\n");
++	}
++
++	ret = regmap_read(hw->sysctrl, AK88_SHAREPIN_CON1, &sharepin);
++	if (!ret)
++		dev_info(&pdev->dev,
++			 "sharepin_con1=0x%08x spi_mux_bit30=%u\n",
++			 sharepin, !!(sharepin & AK88_SHAREPIN_SPI0));
++
++	ctlr->mode_bits = SPI_CPOL | SPI_CPHA | SPI_CS_HIGH;
++	ctlr->bits_per_word_mask = SPI_BPW_MASK(8);
++	ctlr->num_chipselect = 1;
++	ctlr->setup = ak88_spi_setup;
++	ctlr->set_cs = ak88_spi_set_cs;
++	ctlr->transfer_one = ak88_spi_transfer_one;
++	ctlr->dev.of_node = pdev->dev.of_node;
++
++	platform_set_drvdata(pdev, ctlr);
++
++	ak88_spi_set_speed(hw, 1000000);
++	ak88_spi_program_mode(hw, 0, true, true);
++
++	dev_info(&pdev->dev, "Anyka SPI controller ready\n");
++
++	return devm_spi_register_controller(&pdev->dev, ctlr);
++}
++
++static const struct of_device_id ak88_spi_of_match[] = {
++	{ .compatible = "anyka,ak880x-spi" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, ak88_spi_of_match);
++
++static struct platform_driver ak88_spi_driver = {
++	.probe = ak88_spi_probe,
++	.driver = {
++		.name = "ak88-spi",
++		.of_match_table = ak88_spi_of_match,
++	},
++};
++module_platform_driver(ak88_spi_driver);
++
++MODULE_DESCRIPTION("Anyka AK88/98 minimal SPI master");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/usb/host/Kconfig b/drivers/usb/host/Kconfig
+index 0a277a07cf70..41354c9aba9b 100644
+--- a/drivers/usb/host/Kconfig
++++ b/drivers/usb/host/Kconfig
+@@ -4,6 +4,16 @@
+ #
+ comment "USB Host Controller Drivers"
+ 
++config USB_CH37X_HCD
++	tristate "WCH CH37x SPI USB host controller"
++	depends on USB && SPI
++	help
++	  This enables the WCH CH370/CH374 USB host controller driver over
++	  SPI. It registers as a Linux USB HCD.
++
++	  To compile this driver as a module, choose M here: the module will
++	  be called ch37x-hcd.
++
+ config USB_C67X00_HCD
+ 	tristate "Cypress C67x00 HCD support"
+ 	depends on HAS_IOMEM
+@@ -631,6 +641,20 @@ config USB_SL811_HCD
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called sl811-hcd.
+ 
++config USB_AK98_FS_HCD
++	tristate "Anyka AK98 full-speed HCD support"
++	depends on HAS_IOMEM && OF
++	depends on ARCH_ANYKA || COMPILE_TEST
++	select MFD_SYSCON
++	default y if ARCH_ANYKA
++	help
++	  The Anyka AK78/AK88/AK98 family contains a vendor-specific USB 1.1
++	  full-speed host controller. Enable this to support the built-in USB
++	  host on AK7802 systems.
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called ak98-fs-hcd.
++
+ config USB_SL811_HCD_ISO
+ 	bool "partial ISO support"
+ 	depends on USB_SL811_HCD
+diff --git a/drivers/usb/host/Makefile b/drivers/usb/host/Makefile
+index a07e7ba9cd53..4343001f83dc 100644
+--- a/drivers/usb/host/Makefile
++++ b/drivers/usb/host/Makefile
+@@ -37,6 +37,7 @@ ifneq ($(CONFIG_USB_XHCI_SIDEBAND),)
+ endif
+ 
+ obj-$(CONFIG_USB_PCI)	+= pci-quirks.o
++obj-$(CONFIG_USB_CH37X_HCD)	+= ch37x-hcd.o
+ 
+ obj-$(CONFIG_USB_EHCI_HCD)	+= ehci-hcd.o
+ obj-$(CONFIG_USB_EHCI_PCI)	+= ehci-pci.o
+@@ -88,3 +89,4 @@ obj-$(CONFIG_USB_HCD_BCMA)	+= bcma-hcd.o
+ obj-$(CONFIG_USB_HCD_SSB)	+= ssb-hcd.o
+ obj-$(CONFIG_USB_MAX3421_HCD)	+= max3421-hcd.o
+ obj-$(CONFIG_USB_XEN_HCD)	+= xen-hcd.o
++obj-$(CONFIG_USB_AK98_FS_HCD)	+= ak98-fs-hcd.o
+diff --git a/drivers/usb/host/ak98-fs-hcd.c b/drivers/usb/host/ak98-fs-hcd.c
+new file mode 100644
+index 000000000000..4c5160c74cfb
+--- /dev/null
++++ b/drivers/usb/host/ak98-fs-hcd.c
+@@ -0,0 +1,1881 @@
++/*
++ * AK98xx FS HCD (Full-Speed Host Controller Driver) for USB.
++ *
++ * Derived from the SL811 HCD, rewritten for AK98FS HCD.
++ * Copyright (C) 2010 ANYKA LTD.
++ *
++ * Periodic scheduling is based on Roman's OHCI code
++ * 	Copyright (C) 1999 Roman Weissgaerber
++ *
++ * The AK98FS Host controller handles host side USB. For Documentation,
++ * refer to chapter 22 USB Controllers of AK98xx Mobile Multimedia Application
++ * Processor Programmer's Guide.
++ *
++ */
++
++/*
++ * Status:  Enumeration of USB Optical Mouse, USB Keyboard, USB Flash Disk, Ralink 2070/3070 USB WiFi OK.
++ *          Pass basic test with USB Optical Mouse/USB Keyboard/USB Flash Disk.
++ *          Ralink 2070/3070 USB WiFI Scanning/WEP basic test OK. Full Functions TBD.
++ *
++ * TODO:
++ * - Use up to 6 active queues of FS HC(for now only 2 queues: EP0 & EPX(1-6))
++ * - USB Suspend/Resume support
++ * - Use urb->iso_frame_desc[] with ISO transfers
++ * - Optimize USB FIFO data transfer/receive(4B->2B->1B)
++ */
++
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/delay.h>
++#include <linux/ioport.h>
++#include <linux/mfd/syscon.h>
++#include <linux/of.h>
++#include <linux/of_device.h>
++#include <linux/prefetch.h>
++#include <linux/regmap.h>
++#include <linux/sched.h>
++#include <linux/slab.h>
++#include <linux/errno.h>
++#include <linux/gpio/consumer.h>
++#include <linux/timer.h>
++#include <linux/list.h>
++#include <linux/interrupt.h>
++#include <linux/unaligned.h>
++#include <linux/usb.h>
++#include <linux/usb/hcd.h>
++#include <linux/platform_device.h>
++
++#include <asm/io.h>
++#include <asm/irq.h>
++#include <asm/byteorder.h>
++#include "ak98-fs-hcd.h"
++
++#ifdef AK98FS_DEBUG
++const char *trans_desc[4] = { "ISO", "INT", "CNTL", "BULK"};
++const char *xfer_name[4] = { "CNTL", "ISO", "BULK", "INT" };
++#endif
++
++MODULE_DESCRIPTION("AK98HS USB Full Speed Host Controller Driver");
++MODULE_LICENSE("GPL");
++MODULE_ALIAS("platform:ak98-fs-hcd");
++
++#define DRIVER_VERSION	"16 Dec 2010"
++
++static const char hcd_name[] = "ak98-fs-hcd";
++
++/*
++ * AK7802 bring-up evidence shows the live host control registers at the
++ * resource base + 0x0, not at +0x800. Keep this minimal validation local to
++ * the driver until the hardware run confirms the correct window.
++ */
++#define AK98_USB_REGS_OFFSET		0x0
++#define AK98_CLK_CON2_REG		0x10
++#define AK98_RTCUSB_CON_REG		0x50
++#define AK98_MULFUN_CON1_REG		0x58
++#define AK98_SHAREPIN_CON1_REG		0x78
++#define AK98_CLK_CON2_GATE		BIT(1)
++#define AK98_CLK_CON2_RESET		BIT(17)
++#define AK7802_USB_REG_EN		BIT(1)
++#define AK7802_USB_SUS_EN		BIT(2)
++#define AK98_MULFUN_BUS_EN		BIT(3)
++#define AK98_MULFUN_PLL_BITS		GENMASK(7, 6)
++#define AK98_MULFUN_PLL_RESET		BIT(6)
++#define AK98_MULFUN_PLL_DISABLE		BIT(7)
++#define AK98_SHAREPIN_USB_OTG		BIT(3)
++
++void __iomem *ak98fs_base;
++static struct regmap *ak98fsh_syscon;
++
++static const struct of_device_id ak98fsh_of_match[] = {
++	{ .compatible = "anyka,ak98-fshc" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, ak98fsh_of_match);
++
++static u8 ep_fifos[] = { FIFO_EP0, FIFO_EP1, FIFO_EP2, FIFO_EP3, FIFO_EP4, FIFO_EP5, FIFO_EP6 };
++struct ak98fsh_epfifo_mapping ak98fsh_epfifo_mapping;
++static int period_epfifo;
++
++static void usbhost_reset(void);
++
++static int ak98fsh_enable_pins(struct device *dev)
++{
++	int ret;
++
++	ret = regmap_update_bits(ak98fsh_syscon, AK98_SHAREPIN_CON1_REG,
++				 AK98_SHAREPIN_USB_OTG,
++				 AK98_SHAREPIN_USB_OTG);
++	if (ret)
++		dev_err(dev, "failed to enable USB OTG sharepin: %d\n", ret);
++
++	return ret;
++}
++
++static unsigned int ak98fsh_read_syscon(u32 reg)
++{
++	unsigned int val = 0;
++
++	regmap_read(ak98fsh_syscon, reg, &val);
++	return val;
++}
++
++static void ak98fsh_set_vbus(struct ak98fsh *ak98fsh, int is_on)
++{
++	if (!ak98fsh->vbus_gpiod)
++		return;
++
++	gpiod_set_value(ak98fsh->vbus_gpiod, is_on);
++}
++
++
++static void port_power(struct ak98fsh *ak98fsh, int is_on)
++{
++	struct usb_hcd	*hcd = ak98fsh_to_hcd(ak98fsh);
++
++	/* hub is inactive unless the port is powered */
++	if (is_on) {
++		if (ak98fsh->port_status & (1 << USB_PORT_FEAT_POWER))
++			return;
++
++		ak98fsh->port_status = (1 << USB_PORT_FEAT_POWER);
++	} else {
++		ak98fsh->port_status = 0;
++		hcd->state = HC_STATE_HALT;
++	}
++
++	ak98fsh_set_vbus(ak98fsh, is_on);
++
++	/* Reset as thoroughly as we can. This host is self-powered. */
++	usbhost_reset();
++
++	// if !is_on, put into lowpower mode now
++
++}
++
++/*-------------------------------------------------------------------------*/
++
++/* This is a PIO-only HCD.  Queueing appends URBs to the endpoint's queue,
++ * and may start I/O.  Endpoint queues are scanned during completion irq
++ * handlers (one per packet: ACK, NAK, faults, etc) and urb cancellation.
++ *
++ * Using an external DMA engine to copy a packet at a time could work,
++ * though setup/teardown costs may be too big to make it worthwhile.
++ */
++
++/* SETUP starts a new control request.  Devices are not allowed to
++ * STALL or NAK these; they must cancel any pending control requests.
++ */
++static void setup_packet(
++	struct ak98fsh		*ak98fsh,
++	struct ak98fsh_ep	*ep,
++	struct urb		*urb
++)
++{
++	int	i;
++	unsigned int fifo_val;
++	u8	len;
++	unsigned char *buf = urb->setup_packet;
++
++	HDBG("Packet: Setup Packet (EP %d)\n", ep->epnum);
++
++	len = sizeof(struct usb_ctrlrequest);
++
++	fsh_index_writeb(0, 0, CTLSTS_EP_TXL);
++	fsh_writeb(usb_pipedevice(urb->pipe), UR_FUNADDR);
++	for (i = 0; i < len; i += 4) {
++		fifo_val = (*(buf+i) | ( *(buf+i+1)<<8 )
++				   | ( *(buf+i+2)<<16 ) | ( *(buf+i+3)<<24 ));
++		fsh_writel(fifo_val, FIFO_EP0);
++	}
++	fsh_index_writeb(0, 0x08 | 0x02, CTLSTS_EP_TXL);
++
++	ep->length = 0;
++}
++
++/* STATUS finishes control requests, often after IN or OUT data packets */
++static void status_packet(
++	struct ak98fsh		*ak98fsh,
++	struct ak98fsh_ep	*ep,
++	struct urb		*urb
++)
++{
++	int			do_out;
++	int			epfifo;
++
++	HDBG("Packet: Status Packet (EP %d)\n", ep->epnum);
++
++	do_out = urb->transfer_buffer_length && usb_pipein(urb->pipe);
++	if (!epnum_to_epfifo(&ak98fsh_epfifo_mapping, ep->epnum, !usb_pipein(urb->pipe), &epfifo))
++		BUG();	/* Impossible, USB Device Endpoint *MUST* have been mapped to EPFIFO */
++	
++	fsh_writeb(usb_pipedevice(urb->pipe), UR_FUNADDR);
++
++	if (do_out) {
++		fsh_index_writeb(epfifo, 0x42, CTLSTS_EP_TXL);
++	} else {
++		fsh_index_writeb(epfifo, 0x60, CTLSTS_EP_TXL);
++	}
++		
++	ep->length = 0;
++}
++
++/* IN packets can be used with any type of endpoint. here we just
++ * start the transfer, data from the peripheral may arrive later.
++ * urb->iso_frame_desc is currently ignored here...
++ */
++static void in_packet(
++	struct ak98fsh		*ak98fsh,
++	struct ak98fsh_ep	*ep,
++	struct urb		*urb
++)
++{
++	int			epfifo;
++	u8			len;
++	unsigned int		pipe = urb->pipe;
++
++	HDBG("Packet: IN Packet (EP %d), Length=%d,ep->maxpacket=%d\n",
++		ep->epnum, urb->transfer_buffer_length - urb->actual_length, ep->maxpacket);
++
++	/* avoid losing data on overflow */
++	len = ep->maxpacket;
++
++	fsh_writeb(usb_pipedevice(urb->pipe), UR_FUNADDR);
++	if (ep->epnum == 0) {
++		fsh_index_writeb(0, 1 << 5, CTLSTS_EP_TXL);
++	} else {
++		int eptype = 0;
++		if (!epnum_to_epfifo(&ak98fsh_epfifo_mapping, ep->epnum, 0, &epfifo))
++			BUG();	/* Impossible, USB Device Endpoint *MUST* have been mapped to EPFIFO */
++		if (usb_pipeisoc(pipe)) {
++			eptype = 1;
++		} else if (usb_pipeint(pipe)) {
++			eptype = 3;
++		} else if (usb_pipebulk(pipe)) {
++			eptype = 2;
++		} else BUG();
++#ifndef DYNAMIC_EPFIFO
++		set_epx_rx_type(epfifo, ep->epnum, eptype);
++		set_epx_rx_mode(epfifo);
++#endif
++		fsh_index_writeb(epfifo, 1 << 5, CTLSTS_EP_RXL);
++	}
++
++	ep->length = min_t(u32, len,
++			urb->transfer_buffer_length - urb->actual_length);
++}
++
++/* OUT packets can be used with any type of endpoint.
++ * urb->iso_frame_desc is currently ignored here...
++ */
++static void out_packet(
++	struct ak98fsh		*ak98fsh,
++	struct ak98fsh_ep	*ep,
++	struct urb		*urb
++)
++{
++	int i;
++	int			epfifo;
++	unsigned char		*buf;
++	u8			len;
++	unsigned int		pipe = urb->pipe;
++
++	HDBG("Packet: OUT Packet (EP %d), Length=%d\n", ep->epnum, urb->transfer_buffer_length - urb->actual_length);
++
++	buf = (unsigned char *)(urb->transfer_buffer + urb->actual_length);
++	prefetch(buf);
++
++	len = min_t(u32, ep->maxpacket,
++			urb->transfer_buffer_length - urb->actual_length);
++
++	if (!epnum_to_epfifo(&ak98fsh_epfifo_mapping, ep->epnum, 1, &epfifo))
++		BUG();	/* Impossible, USB Device Endpoint *MUST* have been mapped to EPFIFO */
++	fsh_index_writeb(epfifo, 0, CTLSTS_EP_TXL);
++	fsh_writeb(usb_pipedevice(pipe), UR_FUNADDR);
++	for (i = 0; i < len; i ++) {
++		fsh_writeb(buf[i], ep_fifos[epfifo]);
++	}
++	if (ep->epnum == 0) {
++		fsh_index_writeb(0, 0x02, CTLSTS_EP_TXL);
++	} else {
++#ifndef DYNAMIC_EPFIFO
++		int eptype = 0;
++
++		if (usb_pipeisoc(pipe)) {
++			eptype = 1;
++		} else if (usb_pipeint(pipe)) {
++			eptype = 3;
++		} else if (usb_pipebulk(pipe)) {
++			eptype = 2;
++		} else BUG();
++		set_epx_tx_type(epfifo, ep->epnum, eptype);
++		set_epx_tx_mode(epfifo);
++#endif
++		fsh_index_writeb(epfifo, 1 << 0, CTLSTS_EP_TXL);
++	}
++
++	ep->length = len;
++}
++
++/*-------------------------------------------------------------------------*/
++
++/* caller updates on-chip enables later */
++static inline void sofirq_on(struct ak98fsh *ak98fsh)
++{
++    unsigned int regval;
++
++    regval = fsh_readb(UR_INTECOM);
++    regval |= 1<<3;
++    fsh_writeb(regval, UR_INTECOM);
++}
++
++static inline void sofirq_off(struct ak98fsh *ak98fsh)
++{
++    unsigned int regval;
++
++    regval = fsh_readb(UR_INTECOM);
++    regval &= ~(1<<3);
++    fsh_writeb(regval, UR_INTECOM);
++}
++
++/*-------------------------------------------------------------------------*/
++
++static struct ak98fsh_ep *start_ep0(struct ak98fsh *ak98fsh)
++{
++	struct ak98fsh_ep	*ep;
++	struct urb		*urb;
++	
++	/* use endpoint at schedule head */
++	if (ak98fsh->next_async_ep0)
++		ep = ak98fsh->next_async_ep0;
++	else if (!list_empty(&ak98fsh->async_ep0)) {
++		ep = container_of(ak98fsh->async_ep0.next,
++				struct ak98fsh_ep, schedule);
++	} else {
++		/* could set up the first fullspeed periodic
++		 * transfer for the next frame ...
++		 */
++		return NULL;
++	}
++
++	if (ep->schedule.next == &ak98fsh->async_ep0)
++		ak98fsh->next_async_ep0 = NULL;
++	else
++		ak98fsh->next_async_ep0 = container_of(ep->schedule.next,
++			struct ak98fsh_ep, schedule);
++
++	if (unlikely(list_empty(&ep->hep->urb_list))) {
++		HDBG("empty %p queue?\n", ep);
++		return NULL;
++	}
++
++	urb = container_of(ep->hep->urb_list.next, struct urb, urb_list);
++
++	switch (ep->nextpid) {
++	case USB_PID_IN:
++		in_packet(ak98fsh, ep, urb);
++		break;
++	case USB_PID_OUT:
++		out_packet(ak98fsh, ep, urb);
++		break;
++	case USB_PID_SETUP:
++		setup_packet(ak98fsh, ep, urb);
++		break;
++	case USB_PID_ACK:		/* for control status */
++		status_packet(ak98fsh, ep, urb);
++		break;
++	default:
++		HDBG("bad ep%p pid %02x\n", ep, ep->nextpid);
++		ep = NULL;
++	}
++	return ep;
++}
++
++
++/* pick the next endpoint for a transaction, and issue it.
++ * frames start with periodic transfers (after whatever is pending
++ * from the previous frame), and the rest of the time is async
++ * transfers, scheduled round-robin.
++ */
++static struct ak98fsh_ep *start_epx(struct ak98fsh *ak98fsh, int epfifo)
++{
++	struct ak98fsh_ep	*ep;
++	struct urb		*urb;
++
++	
++	/* use endpoint at schedule head */
++	if (ak98fsh->next_periodic) {
++		ep = ak98fsh->next_periodic;
++		ak98fsh->next_periodic = ep->next;
++	} else {
++		if (ak98fsh->next_async_epx[epfifo-1])
++			ep = ak98fsh->next_async_epx[epfifo-1];
++		else if (!list_empty(&ak98fsh->async_epx[epfifo-1])) {
++			ep = container_of(ak98fsh->async_epx[epfifo-1].next,
++					struct ak98fsh_ep, schedule);
++
++		} else {
++			/* could set up the first fullspeed periodic
++			 * transfer for the next frame ...
++			 */
++			return NULL;
++		}
++
++		if (ep->schedule.next == &ak98fsh->async_epx[epfifo-1])
++			ak98fsh->next_async_epx[epfifo-1] = NULL;
++		else {
++			ak98fsh->next_async_epx[epfifo-1] = container_of(ep->schedule.next,
++					struct ak98fsh_ep, schedule);
++		}
++	}
++
++	if (unlikely(list_empty(&ep->hep->urb_list))) {
++		HDBG("empty %p queue?\n", ep);
++		return NULL;
++	}
++	urb = container_of(ep->hep->urb_list.next, struct urb, urb_list);
++	switch (ep->nextpid) {
++	case USB_PID_IN:
++		in_packet(ak98fsh, ep, urb);
++		break;
++	case USB_PID_OUT:
++		out_packet(ak98fsh, ep, urb);
++		break;
++	case USB_PID_SETUP:
++		setup_packet(ak98fsh, ep, urb);
++		break;
++	case USB_PID_ACK:		
++		status_packet(ak98fsh, ep, urb);
++		break;
++	default:
++		HDBG("bad ep%p pid %02x\n", ep, ep->nextpid);
++		ep = NULL;
++	}
++	return ep;
++}
++
++#define MIN_JIFFIES	((msecs_to_jiffies(2) > 1) ? msecs_to_jiffies(2) : 2)
++
++static inline void start_transfer_ep0(struct ak98fsh *ak98fsh)
++{
++	if (ak98fsh->port_status & (1 << USB_PORT_FEAT_SUSPEND))
++		return;
++	if (ak98fsh->active_ep0 == NULL) {
++		ak98fsh->active_ep0 = start_ep0(ak98fsh);
++		if (ak98fsh->active_ep0 != NULL)
++			ak98fsh->jiffies_ep0 = jiffies + MIN_JIFFIES;
++	}
++}
++
++static inline void start_transfer_epx(struct ak98fsh *ak98fsh, int epfifo)
++{
++	if (ak98fsh->port_status & (1 << USB_PORT_FEAT_SUSPEND))
++		return;
++	if (ak98fsh->active_epx[epfifo-1] == NULL) {
++		ak98fsh->active_epx[epfifo-1] = start_epx(ak98fsh, epfifo);
++		if (ak98fsh->active_epx[epfifo-1] != NULL)
++			ak98fsh->jiffies_epx[epfifo-1] = jiffies + MIN_JIFFIES;
++	}
++}
++
++static inline void start_transfer(struct ak98fsh *ak98fsh, int epfifo)
++{
++	if(epfifo == 0)
++		start_transfer_ep0(ak98fsh);
++	else
++		start_transfer_epx(ak98fsh, epfifo);
++}
++
++static void finish_request_ep0(
++	struct ak98fsh		*ak98fsh,
++	struct ak98fsh_ep	*ep,
++	struct urb		*urb,
++	int			status
++) __releases(ak98fsh->lock) __acquires(ak98fsh->lock)
++{
++	VDBG("Finishing EP0 URB Request...\n");
++
++	if (usb_pipecontrol(urb->pipe))
++		ep->nextpid = USB_PID_SETUP;
++
++	usb_hcd_unlink_urb_from_ep(ak98fsh_to_hcd(ak98fsh), urb);
++	spin_unlock(&ak98fsh->lock);
++	usb_hcd_giveback_urb(ak98fsh_to_hcd(ak98fsh), urb, status);
++	spin_lock(&ak98fsh->lock);
++
++	/* leave active endpoints in the schedule */
++	if (!list_empty(&ep->hep->urb_list))
++		return;
++
++	/* async deschedule? */
++	if (!list_empty(&ep->schedule)) {
++		list_del_init(&ep->schedule);
++		if (ep == ak98fsh->next_async_ep0)
++			ak98fsh->next_async_ep0 = NULL;
++		return;
++	}
++}
++
++
++static void finish_request_epx(
++	struct ak98fsh		*ak98fsh,
++	struct ak98fsh_ep	*ep,
++	struct urb		*urb,
++	int			status
++) __releases(ak98fsh->lock) __acquires(ak98fsh->lock)
++{
++	unsigned		i;
++	int		epfifo;
++	int is_out;
++	unsigned int		pipe = urb->pipe;
++
++	is_out = !usb_pipein(pipe);
++
++	VDBG("Finishing EPx URB Request...\n");
++
++	if (usb_pipecontrol(urb->pipe))
++		ep->nextpid = USB_PID_SETUP;
++
++	usb_hcd_unlink_urb_from_ep(ak98fsh_to_hcd(ak98fsh), urb);
++	spin_unlock(&ak98fsh->lock);
++	usb_hcd_giveback_urb(ak98fsh_to_hcd(ak98fsh), urb, status);
++	spin_lock(&ak98fsh->lock);
++
++	/* leave active endpoints in the schedule */
++	if (!list_empty(&ep->hep->urb_list))
++		return;
++
++	/* async deschedule? */
++	if(epnum_to_epfifo(&ak98fsh_epfifo_mapping, ep->epnum, is_out, &epfifo) && !list_empty(&ep->schedule)) {
++		list_del_init(&ep->schedule);
++		if (ep == ak98fsh->next_async_epx[epfifo-1]) {
++			ak98fsh->next_async_epx[epfifo-1] = NULL;
++			}
++		return;
++	}
++
++	/* periodic deschedule */
++	VDBG("deschedule qh%d/%p branch %d\n", ep->period, ep, ep->branch);
++	for (i = ep->branch; i < PERIODIC_SIZE; i += ep->period) {
++		struct ak98fsh_ep	*temp;
++		struct ak98fsh_ep	**prev = &ak98fsh->periodic[i];
++
++		while (*prev && ((temp = *prev) != ep))
++			prev = &temp->next;
++		if (*prev)
++			*prev = ep->next;
++		ak98fsh->load[i] -= ep->load;
++	}
++	ep->branch = PERIODIC_SIZE;
++	ak98fsh->periodic_count--;
++	ak98fsh_to_hcd(ak98fsh)->self.bandwidth_allocated
++		-= ep->load / ep->period;
++	if (ep == ak98fsh->next_periodic)
++		ak98fsh->next_periodic = ep->next;
++
++	/* we might turn SOFs back on again for the async schedule */
++	if (ak98fsh->periodic_count == 0)
++		sofirq_off(ak98fsh);
++}
++
++static void
++done(struct ak98fsh *ak98fsh, struct ak98fsh_ep *ep)
++{
++	int 			i;
++	int			err_occurred = 0;
++	int			epfifo;
++	u8			status;
++	struct urb		*urb;
++	unsigned int		pipe;
++	int			is_out;
++	int			urbstat = -EINPROGRESS;
++
++	if (unlikely(!ep)) {
++		return;
++	}
++
++	urb = container_of(ep->hep->urb_list.next, struct urb, urb_list);
++	pipe = urb->pipe;
++	is_out = !usb_pipein(pipe);
++	if (!epnum_to_epfifo(&ak98fsh_epfifo_mapping, ep->epnum, is_out, &epfifo))
++		BUG();	/* Impossible, USB Device Endpoint *MUST* have been mapped to EPFIFO */
++
++	status = fsh_index_readw(epfifo, CTLSTS_EP_TXL);
++
++	if (status & 0x80) {
++		if (!ep->period)
++			ep->nak_count++;
++		ep->error_count = 0;
++		err_occurred = 1;
++	}
++
++	if (((epfifo == 0) && (status & 0x04)) || ((epfifo != 0) && (status & 0x10))) {
++		ep->nak_count = ep->error_count = 0;
++		urbstat = -EPIPE;
++		err_occurred = 1;
++	}
++
++	if (((epfifo == 0) && (status & 0x10)) ||
++		((epfifo != 0) && (status & 0x04) && (usb_pipeint(pipe) || usb_pipebulk(pipe)))) {
++		urbstat = -EPROTO;
++		ep->error_count = 0;
++		err_occurred = 1;
++	}
++
++	if (err_occurred) {
++		if (epfifo == 0)
++			fsh_index_writew(0, 0, CTLSTS_EP_TXL);
++		else if (is_out)
++			fsh_index_writew(epfifo, 0, CTLSTS_EP_TXL);
++		else
++			fsh_index_writew(epfifo, 0, CTLSTS_EP_RXL);
++	} else {
++		struct usb_device	*udev = urb->dev;
++		int			len;
++		unsigned char		*buf;
++
++		/* urb->iso_frame_desc is currently ignored here... */
++
++		ep->nak_count = ep->error_count = 0;
++		switch (ep->nextpid) {
++		case USB_PID_OUT:
++			urb->actual_length += ep->length;
++			usb_dotoggle(udev, ep->epnum, 1);
++			if (urb->actual_length
++					== urb->transfer_buffer_length) {
++				if (usb_pipecontrol(urb->pipe)) {
++					VDBG("NEXT Packet: Status Packet.\n");
++					ep->nextpid = USB_PID_ACK;
++				}
++
++				/* some bulk protocols terminate OUT transfers
++				 * by a short packet, using ZLPs not padding.
++				 */
++				else if (ep->length < ep->maxpacket
++						|| !(urb->transfer_flags
++							& URB_ZERO_PACKET))
++					urbstat = 0;
++			}
++			break;
++		case USB_PID_IN:
++			buf = urb->transfer_buffer + urb->actual_length;
++			prefetchw(buf);
++			len = fsh_index_readw(epfifo, EP_COUNT);
++			if (len > ep->length) {
++				printk("   USB_PID_IN(OverFlow): len=%d, ep->length=%d\n",
++					len, ep->length);
++				len = ep->length;
++				urbstat = -EOVERFLOW;
++			}
++			urb->actual_length += len;
++			for (i = 0; i < len; i++)
++				*buf++ = fsh_readb(ep_fifos[epfifo]);
++			if (ep->epnum == 0) {
++				u8 regval = fsh_index_readb(epfifo, CTLSTS_EP_TXL);
++				regval &= ~(1 << 0);
++				fsh_index_writeb(epfifo, regval, CTLSTS_EP_TXL);
++			} else {
++				u8 regval = fsh_index_readb(epfifo, CTLSTS_EP_RXL);
++				regval &= ~(1 << 0);
++				fsh_index_writeb(epfifo, regval, CTLSTS_EP_RXL);
++			}
++				
++			usb_dotoggle(udev, ep->epnum, 0);
++			if (urbstat == -EINPROGRESS &&
++					(len < ep->maxpacket ||
++						urb->actual_length ==
++						urb->transfer_buffer_length)) {
++				if (usb_pipecontrol(urb->pipe)) {
++					VDBG("NEXT Packet: Status Packet.\n");
++					ep->nextpid = USB_PID_ACK;
++				}
++				else
++					urbstat = 0;
++			}
++			break;
++		case USB_PID_SETUP:
++			if (urb->transfer_buffer_length == urb->actual_length) {
++				VDBG("NEXT Packet: Status Packet.\n");
++				ep->nextpid = USB_PID_ACK;
++			}
++			else if (usb_pipeout(urb->pipe)) {
++				VDBG("NEXT Packet: OUT Packet.\n");
++				usb_settoggle(udev, 0, 1, 1);
++				ep->nextpid = USB_PID_OUT;
++			} else {
++				VDBG("NEXT Packet: IN Packet.\n");
++				usb_settoggle(udev, 0, 0, 1);
++				ep->nextpid = USB_PID_IN;
++			}
++			break;
++		case USB_PID_ACK:
++			if (!is_out) {
++				u8 regval = fsh_index_readb(epfifo, CTLSTS_EP_RXL);
++				regval &= ~(1 << 0);
++				fsh_index_writeb(epfifo, regval, CTLSTS_EP_RXL);
++			}
++			urbstat = 0;
++			break;
++		}
++
++	}
++
++	if (urbstat != -EINPROGRESS || urb->unlinked) {
++		if (ep->epnum == 0)
++			finish_request_ep0(ak98fsh, ep, urb, urbstat);
++		else
++			finish_request_epx(ak98fsh, ep, urb, urbstat);
++	}
++}
++
++static irqreturn_t ak98fsh_irq(struct usb_hcd *hcd)
++{
++	struct ak98fsh	*ak98fsh = hcd_to_ak98fsh(hcd);
++	irqreturn_t	ret = IRQ_NONE;
++	struct urb *urb;
++	unsigned int pipe;
++	int is_out;
++	struct ak98fsh_ep *ep;
++	int epnum[MAX_EP_NUM + 1] = { 0 };
++	int epfifo = 0;
++	int i;
++	unsigned index = 0;
++	
++	char rINTCOM;
++	unsigned short rINTTX, rINTRX;
++	
++	spin_lock(&ak98fsh->lock);
++	
++	/*Read & Clear all interrupt status.*/
++	rINTCOM = fsh_readb(UR_INTCOM);
++	rINTTX = fsh_readw(UR_INTTX);
++	rINTRX = fsh_readw(UR_INTRX);
++	
++	if (rINTTX & 0x1) {
++		epnum[0] = 1;
++		done(ak98fsh, ak98fsh->active_ep0);
++		ak98fsh->active_ep0 = NULL;
++		ak98fsh->stat_ep0++;
++	}
++	
++	for(i=0; i<MAX_EP_NUM; i++)
++		if((rINTTX & (1<<(i+1))) || (rINTRX & (1<<(i+1)))) {
++			epnum[i + 1] = 1;
++			done(ak98fsh, ak98fsh->active_epx[i]);
++			ak98fsh->active_epx[i] = NULL;
++			ak98fsh->stat_epx[i]++;
++	}
++
++	if (rINTCOM & INTR_SOF) { 
++		index = ak98fsh->frame++ & (PERIODIC_SIZE - 1);
++		ak98fsh->stat_sof++;
++
++		/* be graceful about almost-inevitable periodic schedule
++		 * overruns:  continue the previous frame's transfers iff
++		 * this one has nothing scheduled.
++		 */
++		if (ak98fsh->next_periodic) {
++			ak98fsh->stat_overrun++;
++		}
++		if (ak98fsh->periodic[index]) {
++			ak98fsh->next_periodic = ak98fsh->periodic[index];
++			}
++	}
++
++	/* manages debouncing and wakeup */
++	if(rINTCOM & (INTR_CONNECTED | INTR_DISCONNECTED)) {
++		if (rINTCOM & INTR_CONNECTED) {
++			//printk("USB: Device Connected!!\n");
++			ak98fsh->stat_insrmv = 1;
++		} else {
++			//printk("USB: Device Disconnected!!\n");
++			period_epfifo = 0;
++			ak98fsh->stat_insrmv = 0;
++		}
++
++		/* most stats are reset for each VBUS session */
++		ak98fsh->stat_wake = 0;
++		ak98fsh->stat_sof = 0;
++		ak98fsh->stat_ep0 = 0;
++		for(i=0; i<MAX_EP_NUM; i++)
++			ak98fsh->stat_epx[i] = 0;
++		ak98fsh->stat_lost = 0;
++
++		/* usbcore nukes other pending transactions on disconnect */
++		if (ak98fsh->active_ep0) {
++			VDBG("Finishing EP0 Active URBs...\n");
++			ep = ak98fsh->active_ep0;
++			urb = container_of(ep->hep->urb_list.next, struct urb, urb_list);
++			pipe = urb->pipe;
++			is_out = !usb_pipein(pipe);
++			epfifo = 0;
++			fsh_index_writeb(epfifo, 0, CTLSTS_EP_TXL);
++			fsh_index_writeb(epfifo, 1 << 0, CTLSTS_EP_TXH);
++
++			finish_request_ep0(ak98fsh, ak98fsh->active_ep0,
++				container_of(ak98fsh->active_ep0
++						->hep->urb_list.next,
++					struct urb, urb_list),
++				-ESHUTDOWN);
++			ak98fsh->active_ep0 = NULL;
++		}
++
++		for(i=0; i<MAX_EP_NUM; i++) 
++			if (ak98fsh->active_epx[i]) {
++				VDBG("Finishing EPx Active URBs...\n");
++				ep = ak98fsh->active_epx[i];
++				urb = container_of(ep->hep->urb_list.next, struct urb, urb_list);
++				pipe = urb->pipe;
++				is_out = !usb_pipein(pipe);
++				//epnum = ep->epnum;
++				if (!epnum_to_epfifo(&ak98fsh_epfifo_mapping, ep->epnum, is_out, &epfifo))
++					BUG();
++				if (is_out) {
++					fsh_index_writeb(epfifo, 1 << 3, CTLSTS_EP_TXL);
++				} else {
++					fsh_index_writeb(epfifo, 1 << 4, CTLSTS_EP_RXL);
++				}
++
++				finish_request_epx(ak98fsh, ak98fsh->active_epx[i],
++					container_of(ak98fsh->active_epx[i]
++							->hep->urb_list.next,
++						struct urb, urb_list),
++					-ESHUTDOWN);
++				ak98fsh->active_epx[i] = NULL;
++			}
++
++		/* port status seems weird until after reset, so
++		 * force the reset and make khubd clean up later.
++		 */
++		if (rINTCOM & INTR_CONNECTED) {
++			ak98fsh->port_status |= 1 << USB_PORT_FEAT_CONNECTION;
++			ak98fsh->port_status |= 1 << USB_PORT_FEAT_C_CONNECTION;
++		} else {
++			ak98fsh->port_status &= ~(1 << USB_PORT_FEAT_CONNECTION);
++			ak98fsh->port_status |= 1 << USB_PORT_FEAT_C_CONNECTION;
++			init_epfifo_mapping(&ak98fsh_epfifo_mapping);
++			reset_endpoints();
++		}
++	}
++
++	if (rINTCOM & INTR_RESUME) {
++		if (ak98fsh->port_status & (1 << USB_PORT_FEAT_SUSPEND)) {
++			HDBG("wakeup\n");
++			ak98fsh->port_status |= 1 << USB_PORT_FEAT_C_SUSPEND;
++			ak98fsh->stat_wake++;
++		}
++		rINTCOM &= ~(INTR_RESUME);
++	}
++
++	if (ak98fsh->port_status & (1 << USB_PORT_FEAT_ENABLE)) {
++		if (epnum[0]) {
++			start_transfer(ak98fsh, 0);
++			ret = IRQ_HANDLED;
++		}
++		if((rINTCOM & INTR_SOF) && ak98fsh->periodic[index] && period_epfifo){
++			start_transfer(ak98fsh, period_epfifo);
++			ret = IRQ_HANDLED;
++		}
++		for(i = 0; i < MAX_EP_NUM; i++) {
++			if(epnum[i + 1]) {
++				start_transfer(ak98fsh, i + 1);
++				ret = IRQ_HANDLED;
++			}
++		}
++	}
++
++	if(ak98fsh->periodic_count == 0 && list_empty(&ak98fsh->async_ep0)) {
++			for(i = 0; i < MAX_EP_NUM; i++) {
++					if(!list_empty(&ak98fsh->async_epx[i]))
++							break;
++			}
++			if(i == MAX_EP_NUM)
++					sofirq_off(ak98fsh);
++	}
++
++	spin_unlock(&ak98fsh->lock);
++	
++	return ret;
++}
++
++/*-------------------------------------------------------------------------*/
++
++/* usb 1.1 says max 90% of a frame is available for periodic transfers.
++ * this driver doesn't promise that much since it's got to handle an
++ * IRQ per packet; irq handling latencies also use up that time.
++ *
++ * NOTE:  the periodic schedule is a sparse tree, with the load for
++ * each branch minimized.  see fig 3.5 in the OHCI spec for example.
++ */
++#define	MAX_PERIODIC_LOAD	500	/* out of 1000 usec */
++
++static int balance(struct ak98fsh *ak98fsh, u16 period, u16 load)
++{
++	int	i, branch = -ENOSPC;
++
++	/* search for the least loaded schedule branch of that period
++	 * which has enough bandwidth left unreserved.
++	 */
++	for (i = 0; i < period ; i++) {
++		if (branch < 0 || ak98fsh->load[branch] > ak98fsh->load[i]) {
++			int	j;
++
++			for (j = i; j < PERIODIC_SIZE; j += period) {
++				if ((ak98fsh->load[j] + load)
++						> MAX_PERIODIC_LOAD)
++					break;
++			}
++			if (j < PERIODIC_SIZE)
++				continue;
++			branch = i;
++		}
++	}
++	return branch;
++}
++
++/*-------------------------------------------------------------------------*/
++
++static int ak98fsh_urb_enqueue(
++	struct usb_hcd		*hcd,
++	struct urb		*urb,
++	gfp_t			mem_flags
++) {
++	struct ak98fsh		*ak98fsh = hcd_to_ak98fsh(hcd);
++	struct usb_device	*udev = urb->dev;
++	unsigned int		pipe = urb->pipe;
++	int			is_out = !usb_pipein(pipe);
++	int			type = usb_pipetype(pipe);
++	int			epnum = usb_pipeendpoint(pipe);
++#ifdef DYNAMIC_EPFIFO
++	int			epfifo = 0;
++#endif
++	struct ak98fsh_ep	*ep = NULL;
++	unsigned long		flags;
++	int			i;
++	int			retval;
++	struct usb_host_endpoint	*hep = urb->ep;
++
++	VDBG("Enqueue: Direction=%s, Type=%s, EP Num=%d, urb=%p\n",
++		is_out ? "OUT" : "IN", trans_desc[type], epnum, urb);
++
++	if (type == PIPE_ISOCHRONOUS)
++		return -ENOSPC;
++
++#ifdef DYNAMIC_EPFIFO
++	spin_lock_irqsave(&ak98fsh_epfifo_mapping.lock,flags);
++	if (!__is_epnum_mapped(&ak98fsh_epfifo_mapping, epnum, is_out)) {
++		if (!__map_epnum_to_epfifo(&ak98fsh_epfifo_mapping, epnum, is_out, &epfifo)) {
++			spin_unlock_irqrestore(&ak98fsh_epfifo_mapping.lock, flags);
++			return -ENOSPC;
++		}
++		if (epnum != 0) {
++			int eptype = 0;
++
++			if (usb_pipeisoc(pipe)) {
++				eptype = 1;
++			} else if (usb_pipeint(pipe)) {
++				eptype = 3;
++			} else if (usb_pipebulk(pipe)) {
++				eptype = 2;
++			} else BUG();
++
++			if (is_out) {
++				disable_epx_tx_interrupt(epfifo);
++				set_epx_tx_type(epfifo, epnum, eptype);
++				fsh_index_writew(epfifo, hep->desc.wMaxPacketSize, MaxPackSz_TX);
++				fsh_index_writeb(epfifo, 0, NAK_TO_EP0);	/* Tx Interval */
++				clear_epx_tx_data_toggle(epfifo);
++				set_epx_tx_mode(epfifo);
++				flush_epx_tx_fifo(epfifo);
++				enable_epx_tx_interrupt(epfifo);
++			} else {
++				disable_epx_rx_interrupt(epfifo);
++				set_epx_rx_type(epfifo, epnum, eptype);
++				fsh_index_writew(epfifo, hep->desc.wMaxPacketSize, MaxPackSz_RX);
++				fsh_index_writeb(epfifo, 0, NAK_TO_EP0);	/* Tx Interval */
++				if (usb_endpoint_xfer_isoc(&hep->desc) || usb_endpoint_xfer_int(&hep->desc))
++					fsh_index_writeb(epfifo, hep->desc.bInterval, RX_INTVAL);
++				else
++					fsh_index_writeb(epfifo, 0, RX_INTVAL);
++				set_epx_rx_mode(epfifo);
++				clear_epx_rx_data_toggle(epfifo);
++				flush_epx_rx_fifo(epfifo);
++				enable_epx_rx_interrupt(epfifo);
++			}
++		}
++	} else {
++		if(!epnum_to_epfifo(&ak98fsh_epfifo_mapping, epnum, is_out, &epfifo))
++			BUG();
++	}
++
++	spin_unlock_irqrestore(&ak98fsh_epfifo_mapping.lock, flags);
++#endif
++
++	/* avoid all allocations within spinlocks */
++	if (!hep->hcpriv)
++		ep = kzalloc(sizeof *ep, mem_flags);
++
++	spin_lock_irqsave(&ak98fsh->lock, flags);
++
++	/* don't submit to a dead or disabled port */
++	if (!(ak98fsh->port_status & (1 << USB_PORT_FEAT_ENABLE))
++			|| !HC_IS_RUNNING(hcd->state)) {
++		retval = -ENODEV;
++		kfree(ep);
++		goto fail_not_linked;
++	}
++
++	retval = usb_hcd_link_urb_to_ep(hcd, urb);
++	if (retval) {
++		kfree(ep);
++		goto fail_not_linked;
++	}
++
++	if (hep->hcpriv) {
++		kfree(ep);
++		ep = hep->hcpriv;
++	} else if (!ep) {
++		retval = -ENOMEM;
++		goto fail;
++	} else {
++		INIT_LIST_HEAD(&ep->schedule);
++		ep->udev = udev;
++		ep->epnum = epnum;
++		ep->maxpacket = usb_maxpacket(udev, urb->pipe);
++		usb_settoggle(udev, epnum, is_out, 0);
++
++		if (type == PIPE_CONTROL)
++			ep->nextpid = USB_PID_SETUP;
++		else if (is_out)
++			ep->nextpid = USB_PID_OUT;
++		else
++			ep->nextpid = USB_PID_IN;
++
++		if (ep->maxpacket > H_MAXPACKET) {
++			/* iso packets up to 240 bytes could work... */
++			HDBG("dev %d ep%d maxpacket %d\n",
++				udev->devnum, epnum, ep->maxpacket);
++			retval = -EINVAL;
++			goto fail;
++		}
++
++		switch (type) {
++		case PIPE_ISOCHRONOUS:
++		case PIPE_INTERRUPT:
++			if (urb->interval > PERIODIC_SIZE)
++				urb->interval = PERIODIC_SIZE;
++			ep->period = urb->interval;
++			ep->branch = PERIODIC_SIZE;
++			ep->load = usb_calc_bus_time(udev->speed, !is_out,
++				(type == PIPE_ISOCHRONOUS),
++				usb_maxpacket(udev, pipe))
++					/ 1000;
++			period_epfifo = epfifo;
++			break;
++		}
++
++		ep->hep = hep;
++		hep->hcpriv = ep;
++	}
++
++	/* maybe put endpoint into schedule */
++	switch (type) {
++	case PIPE_CONTROL:
++	case PIPE_BULK:
++		if (list_empty(&ep->schedule)) {
++			if (epnum == 0) 
++				list_add_tail(&ep->schedule, &ak98fsh->async_ep0);
++			else 
++				list_add_tail(&ep->schedule, &ak98fsh->async_epx[epfifo-1]);
++		}
++		break;
++	case PIPE_ISOCHRONOUS:
++	case PIPE_INTERRUPT:
++		urb->interval = ep->period;
++		if (ep->branch < PERIODIC_SIZE) {
++			/* NOTE:  the phase is correct here, but the value
++			 * needs offsetting by the transfer queue depth.
++			 * All current drivers ignore start_frame, so this
++			 * is unlikely to ever matter...
++			 */
++			urb->start_frame = (ak98fsh->frame & (PERIODIC_SIZE - 1))
++						+ ep->branch;
++			break;
++		}
++
++		retval = balance(ak98fsh, ep->period, ep->load);
++		if (retval < 0)
++			goto fail;
++		ep->branch = retval;
++		retval = 0;
++		urb->start_frame = (ak98fsh->frame & (PERIODIC_SIZE - 1))
++					+ ep->branch;
++
++		/* sort each schedule branch by period (slow before fast)
++		 * to share the faster parts of the tree without needing
++		 * dummy/placeholder nodes
++		 */
++		VDBG("schedule qh%d/%p branch %d\n", ep->period, ep, ep->branch);
++		for (i = ep->branch; i < PERIODIC_SIZE; i += ep->period) {
++			struct ak98fsh_ep	**prev = &ak98fsh->periodic[i];
++			struct ak98fsh_ep	*here = *prev;
++
++			while (here && ep != here) {
++				if (ep->period > here->period)
++					break;
++				prev = &here->next;
++				here = *prev;
++			}
++			if (ep != here) {
++				ep->next = here;
++				*prev = ep;
++			}
++			ak98fsh->load[i] += ep->load;
++		}
++		ak98fsh->periodic_count++;
++		hcd->self.bandwidth_allocated += ep->load / ep->period;
++		sofirq_on(ak98fsh);
++	}
++
++
++	urb->hcpriv = hep;
++	start_transfer(ak98fsh, epfifo);
++
++fail:
++	if (retval)
++		usb_hcd_unlink_urb_from_ep(hcd, urb);
++fail_not_linked:
++	spin_unlock_irqrestore(&ak98fsh->lock, flags);
++	return retval;
++}
++
++static int ak98fsh_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
++{
++	struct ak98fsh		*ak98fsh = hcd_to_ak98fsh(hcd);
++	struct usb_host_endpoint *hep;
++	unsigned long		flags;
++	struct ak98fsh_ep	*ep;
++	int			retval, i;
++	unsigned int		pipe = urb->pipe;
++	int			is_out = !usb_pipein(pipe);
++	int			epfifo = 0;
++	
++	VDBG("Dequeue: Direction=%s, Type=%s, EP Num=%d, urb=%p\n",
++		is_out ? "OUT" : "IN", trans_desc[usb_pipetype(pipe)], usb_pipeendpoint(pipe), urb);
++
++	spin_lock_irqsave(&ak98fsh->lock, flags);
++
++	retval = usb_hcd_check_unlink_urb(hcd, urb, status);
++
++	if (retval) {
++		printk("Dequeue: check and unlink urb failed!\n");
++		goto fail;
++	}
++
++	hep = urb->hcpriv;
++	ep = hep->hcpriv;
++	if (ep) {
++		/* finish right away if this urb can't be active ...
++		 * note that some drivers wrongly expect delays
++		 */
++		if (ep->hep->urb_list.next != &urb->urb_list) {
++			/* not front of queue?  never active */
++
++		/* for active transfers, we expect an IRQ */
++		} else if (ak98fsh->active_ep0 == ep) {
++			if (time_before_eq(ak98fsh->jiffies_ep0, jiffies)) {
++				epfifo = 0;
++				fsh_index_writeb(epfifo, 0, CTLSTS_EP_TXL);
++				fsh_index_writeb(epfifo, 1 << 0, CTLSTS_EP_TXH);
++				ak98fsh->active_ep0 = NULL;
++			} else
++				urb = NULL;
++		} else {
++			for(i=0; i<MAX_EP_NUM; i++) {
++				if(ak98fsh->active_epx[i] == ep) {
++					if(time_before_eq(ak98fsh->jiffies_epx[i], jiffies)) {
++						if(!epnum_to_epfifo(&ak98fsh_epfifo_mapping, ep->epnum, is_out, &epfifo))
++							BUG();
++						if (is_out) {
++							fsh_index_writeb(epfifo, 1 << 3, CTLSTS_EP_TXL);
++						} else {
++							fsh_index_writeb(epfifo, 1 << 4, CTLSTS_EP_RXL);
++						}
++						ak98fsh->active_epx[i] = NULL;
++					} else
++						urb = NULL;
++				}
++			}
++			/* front of queue for inactive endpoint */
++		}
++
++		if (urb) {
++			if (ak98fsh->active_ep0 == ep)
++				finish_request_ep0(ak98fsh, ep, urb, 0);
++			else
++				finish_request_epx(ak98fsh, ep, urb, 0);
++		} else {
++			HDBG("dequeue, urb %p active ; wait4irq\n", urb);
++		}
++	} else
++		retval = -EINVAL;
++ fail:
++	spin_unlock_irqrestore(&ak98fsh->lock, flags);
++	return retval;
++}
++
++static void
++ak98fsh_endpoint_reset(struct usb_hcd *hcd, struct usb_host_endpoint *hep)
++{
++	struct ak98fsh		*ak98fsh = hcd_to_ak98fsh(hcd);
++	int			epnum = usb_endpoint_num(&hep->desc);
++	unsigned long		flags;
++
++	spin_lock_irqsave(&ak98fsh->lock, flags);
++
++	HDBG("Resetting EP %d, Type=%s, Dir=%s\n",
++		epnum, xfer_name[usb_endpoint_type(&hep->desc)], usb_endpoint_dir_out(&hep->desc)? "OUT" : "IN");
++
++	if (epnum == 0) {
++		fsh_index_writeb(0, 0, NAK_TO_EP0);
++		fsh_index_writew(0, 0, CTLSTS_EP_TXL);
++		flush_ep0_fifo();
++		enable_ep0_interrupt();
++	} else {
++#ifndef DYNAMIC_EPFIFO
++		int eptype = usb_endpoint_type(&hep->desc);
++		int is_out = usb_endpoint_dir_out(&hep->desc);
++		if (is_out) {
++			disable_epx_tx_interrupt(epnum);
++			set_epx_tx_type(epnum, epnum, eptype);
++			fsh_index_writew(epnum, hep->desc.wMaxPacketSize, MaxPackSz_TX);
++			fsh_index_writeb(epnum, 0, NAK_TO_EP0);	/* Tx Interval */
++			clear_epx_tx_data_toggle(epnum);
++			set_epx_tx_mode(epnum);
++			flush_epx_tx_fifo(epnum);
++			enable_epx_tx_interrupt(epnum);
++		} else {
++			disable_epx_rx_interrupt(epnum);
++			set_epx_rx_type(epnum, epnum, eptype);
++			fsh_index_writew(epnum, hep->desc.wMaxPacketSize, MaxPackSz_RX);
++			fsh_index_writeb(epnum, 0, NAK_TO_EP0);	/* Tx Interval */
++			if (usb_endpoint_xfer_isoc(&hep->desc) || usb_endpoint_xfer_int(&hep->desc))
++				fsh_index_writeb(epnum, hep->desc.bInterval, RX_INTVAL);
++			else
++				fsh_index_writeb(epnum, 0, RX_INTVAL);
++			set_epx_rx_mode(epnum);
++			clear_epx_rx_data_toggle(epnum);
++			flush_epx_rx_fifo(epnum);
++			enable_epx_rx_interrupt(epnum);
++		}
++#endif
++	}
++
++	spin_unlock_irqrestore(&ak98fsh->lock, flags);
++}
++
++static void
++ak98fsh_endpoint_disable(struct usb_hcd *hcd, struct usb_host_endpoint *hep)
++{
++	struct ak98fsh_ep	*ep = hep->hcpriv;
++#ifdef DYNAMIC_EPFIFO
++	int			epnum = usb_endpoint_num(&hep->desc);
++	int			is_out = usb_endpoint_dir_out(&hep->desc);
++#endif
++	int			epfifo = 0;
++
++
++	if (!ep) {
++		return;
++	}
++#ifdef DYNAMIC_EPFIFO
++	if (is_epnum_mapped(&ak98fsh_epfifo_mapping, epnum, is_out)) {
++#else
++	if (1) {
++#endif
++		disable_ep_interrupt(epfifo);
++		flush_ep_fifo(epfifo);
++	}
++	/* assume we'd just wait for the irq */
++	if (!list_empty(&hep->urb_list))
++		msleep(3);
++	if (!list_empty(&hep->urb_list))
++		HDBG("ep %p not empty?\n", ep);
++
++	kfree(ep);
++	hep->hcpriv = NULL;
++
++}
++
++static int
++ak98fsh_get_frame(struct usb_hcd *hcd)
++{
++	struct ak98fsh *ak98fsh = hcd_to_ak98fsh(hcd);
++
++	/* wrong except while periodic transfers are scheduled;
++	 * never matches the on-the-wire frame;
++	 * subject to overruns.
++	 */
++	return ak98fsh->frame;
++}
++
++
++/*-------------------------------------------------------------------------*/
++
++/* the virtual root hub timer IRQ checks for hub status */
++static int
++ak98fsh_hub_status_data(struct usb_hcd *hcd, char *buf)
++{
++	struct ak98fsh *ak98fsh = hcd_to_ak98fsh(hcd);
++	unsigned long flags;
++
++	/* non-SMP HACK: use root hub timer as i/o watchdog
++	 * this seems essential when SOF IRQs aren't in use...
++	 */
++	local_irq_save(flags);
++	if (!timer_pending(&ak98fsh->timer)) {
++		if (ak98fsh_irq( /* ~0, */ hcd) != IRQ_NONE)
++			ak98fsh->stat_lost++;
++	}
++	local_irq_restore(flags);
++
++	if (!(ak98fsh->port_status & (0xffff << 16))) {
++		return 0;
++	}
++
++	/* tell khubd port 1 changed */
++	*buf = (1 << 1);
++
++	return 1;
++}
++
++static void
++ak98fsh_hub_descriptor (
++	struct ak98fsh *ak98fsh,
++	struct usb_hub_descriptor	*desc
++) {
++	u16		temp = 0;
++
++	desc->bDescriptorType = 0x29;
++	desc->bHubContrCurrent = 0;
++
++	desc->bNbrPorts = 1;
++	desc->bDescLength = 9;
++
++	/* per-port power switching (gang of one!), or none */
++	desc->bPwrOn2PwrGood = 0;
++
++	/* no overcurrent errors detection/handling */
++	temp |= 0x0010; 
++
++	desc->wHubCharacteristics = cpu_to_le16(temp);
++
++	/* two bitmaps:  ports removable, and legacy PortPwrCtrlMask */
++	desc->u.hs.DeviceRemovable[0] = 0 << 1;
++	desc->u.hs.PortPwrCtrlMask[0] = ~0;
++}
++
++static void ak98fsh_timer(struct timer_list *t)
++{
++	struct ak98fsh *ak98fsh = timer_container_of(ak98fsh, t, timer);
++	unsigned long	flags;
++	const u32	mask = (1 << USB_PORT_FEAT_CONNECTION)
++				| (1 << USB_PORT_FEAT_ENABLE);
++
++	spin_lock_irqsave(&ak98fsh->lock, flags);
++
++	if (ak98fsh->port_status & USB_PORT_STAT_RESET) {
++		ak98fsh->port_status = (1 << USB_PORT_FEAT_C_RESET)
++				| (1 << USB_PORT_FEAT_POWER);
++		ak98fsh->port_status |= mask;
++		
++		if (ak98fsh->port_status & (1 << USB_PORT_FEAT_CONNECTION)) {
++			if (fsh_readb(DEV_CTL_REG) & (1 << 5))
++				ak98fsh->port_status |= (1 << USB_PORT_FEAT_LOWSPEED);
++			else if ((fsh_readb(DEV_CTL_REG) & (1 << 6))) {
++			} else {
++				/* Plug-in & plug-out quickly could lead to this... */
++				ak98fsh->port_status &= ~mask;
++			}
++		}
++	} else {
++		/* NOT IMPLEMENTED YET */
++		BUG();
++	}
++	
++	spin_unlock_irqrestore(&ak98fsh->lock, flags);
++
++}
++
++static int
++ak98fsh_hub_control(
++	struct usb_hcd	*hcd,
++	u16		typeReq,
++	u16		wValue,
++	u16		wIndex,
++	char		*buf,
++	u16		wLength
++) {
++	struct ak98fsh *ak98fsh = hcd_to_ak98fsh(hcd);
++	int		retval = 0;
++	unsigned long	flags;
++	char reg8val;
++
++	spin_lock_irqsave(&ak98fsh->lock, flags);
++	
++	switch (typeReq) {
++	case ClearHubFeature:
++	case SetHubFeature:
++		switch (wValue) {
++		case C_HUB_OVER_CURRENT:
++		case C_HUB_LOCAL_POWER:
++			break;
++		default:
++			goto error;
++		}
++		break;
++	case ClearPortFeature:
++		if (wIndex != 1 || wLength != 0)
++			goto error;
++		switch (wValue) {
++		case USB_PORT_FEAT_ENABLE:
++			HDBG("ClearPortFeature: USB_PORT_FEAT_ENABLE\n");
++			ak98fsh->port_status &= (1 << USB_PORT_FEAT_POWER);
++			break;
++		case USB_PORT_FEAT_SUSPEND:
++			HDBG("ClearPortFeature: USB_PORT_FEAT_SUSPEND\n");
++			if (!(ak98fsh->port_status & (1 << USB_PORT_FEAT_SUSPEND)))
++				break;
++
++			/* 20 msec of resume/K signaling, other irqs blocked */
++			HDBG("    start resume...\n");
++			fsh_writeb(0x0, UR_INTECOM); 
++			reg8val = fsh_readb(UR_PWM); 
++			reg8val |= 1<<2;
++			fsh_writeb(reg8val, UR_PWM);
++			
++			mod_timer(&ak98fsh->timer, jiffies
++					+ msecs_to_jiffies(20));
++			break;
++		case USB_PORT_FEAT_POWER:
++			port_power(ak98fsh, 0);
++			break;
++		case USB_PORT_FEAT_C_ENABLE:
++		case USB_PORT_FEAT_C_SUSPEND:
++		case USB_PORT_FEAT_C_CONNECTION:
++			break;
++		case USB_PORT_FEAT_C_OVER_CURRENT:
++		case USB_PORT_FEAT_C_RESET:
++			break;
++		default:
++			goto error;
++		}
++		ak98fsh->port_status &= ~(1 << wValue);
++		break;
++	case GetHubDescriptor:
++		ak98fsh_hub_descriptor(ak98fsh, (struct usb_hub_descriptor *) buf);
++		break;
++	case GetHubStatus:
++		put_unaligned_le32(0, buf);
++		break;
++	case GetPortStatus:
++		if (wIndex != 1)
++			goto error;
++		put_unaligned_le32(ak98fsh->port_status, buf);
++		break;
++	case SetPortFeature:
++		if (wIndex != 1 || wLength != 0)
++			goto error;
++		switch (wValue) {
++		case USB_PORT_FEAT_SUSPEND:
++			HDBG("    USB_PORT_FEAT_SUSPEND\n");
++			if (ak98fsh->port_status & (1 << USB_PORT_FEAT_RESET))
++				goto error;
++			if (!(ak98fsh->port_status & (1 << USB_PORT_FEAT_ENABLE)))
++				goto error;
++			/*to suspend the usb host controller.*/
++			reg8val = fsh_readb(UR_PWM);
++			reg8val |= 1<<1;
++			fsh_writeb(reg8val, UR_PWM);
++			break;
++		case USB_PORT_FEAT_POWER: 
++			HDBG("    USB_PORT_FEAT_POWER\n");
++			port_power(ak98fsh, 1);
++			break;
++		case USB_PORT_FEAT_RESET:
++			HDBG("    USB_PORT_FEAT_RESET, Port Status=0x%08X\n", ak98fsh->port_status);
++			if (ak98fsh->port_status & (1 << USB_PORT_FEAT_SUSPEND)) {
++				HDBG("    USB_PORT_FEAT_SUSPEND ....\n");
++				goto error;
++			}
++			if (!(ak98fsh->port_status & (1 << USB_PORT_FEAT_POWER))) {
++				HDBG("    USB_PORT_FEAT_POWER NOT SET.\n");
++				break;
++			}
++			clear_all_interrupts();
++
++			/* 50 msec of reset/SE0 signaling, irqs blocked */
++			/*reset device.*/
++			reg8val = fsh_readb(UR_PWM);
++			reg8val |= 0x08;
++			fsh_writeb(reg8val, UR_PWM);
++			mdelay(30);
++			reg8val &= ~(0x08);
++			fsh_writeb(reg8val, UR_PWM);
++
++			fsh_writeb(0xF7, UR_INTECOM);
++
++			ak98fsh->port_status |= (1 << USB_PORT_FEAT_RESET);
++			mod_timer(&ak98fsh->timer, jiffies + msecs_to_jiffies(50));
++			break;
++		default:
++			goto error;
++		}
++
++		ak98fsh->port_status |= 1 << wValue;
++		break;
++error:
++		/* "protocol stall" on error */
++		retval = -EPIPE;
++	}
++
++	spin_unlock_irqrestore(&ak98fsh->lock, flags);
++	return retval;
++}
++
++#ifdef	CONFIG_PM
++
++static int
++ak98fsh_bus_suspend(struct usb_hcd *hcd)
++{
++	u8 reg;
++	unsigned long flags;
++
++	msleep(10);
++	local_irq_save(flags);
++	reg = fsh_readb(UR_PWM);
++	reg |= (1 << 1);
++	fsh_writeb(reg, UR_PWM);
++	local_irq_restore(flags);
++	msleep(20);
++	return 0;
++}
++
++static int
++ak98fsh_bus_resume(struct usb_hcd *hcd)
++{
++	u8 reg;
++	unsigned long flags;
++
++	local_irq_save(flags);
++	reg = fsh_readb(UR_PWM);
++	reg |= (1 << 2);
++	fsh_writeb(reg, UR_PWM);
++	local_irq_restore(flags);
++	msleep(20);
++	local_irq_save(flags);
++	reg = fsh_readb(UR_PWM);
++	reg &= ~(1 << 2);
++	fsh_writeb(reg, UR_PWM);
++	local_irq_restore(flags);
++	msleep(100);
++	return 0;
++}
++
++#else
++
++#define	ak98fsh_bus_suspend	NULL
++#define	ak98fsh_bus_resume	NULL
++
++#endif
++
++/*-------------------------------------------------------------------------*/
++static void disable_clock(void)
++{
++	regmap_update_bits(ak98fsh_syscon, AK98_MULFUN_CON1_REG,
++			   AK7802_USB_SUS_EN, AK7802_USB_SUS_EN);
++	regmap_update_bits(ak98fsh_syscon, AK98_CLK_CON2_REG,
++			   AK98_CLK_CON2_GATE, AK98_CLK_CON2_GATE);
++	regmap_update_bits(ak98fsh_syscon, AK98_MULFUN_CON1_REG,
++			   AK98_MULFUN_PLL_DISABLE, AK98_MULFUN_PLL_DISABLE);
++}
++
++static void
++ak98fsh_stop(struct usb_hcd *hcd)
++{
++	struct ak98fsh *ak98fsh = hcd_to_ak98fsh(hcd);
++	unsigned long	flags;
++
++	timer_delete_sync(&ak98fsh->timer);
++	disable_clock();
++	
++	spin_lock_irqsave(&ak98fsh->lock, flags);
++	port_power(ak98fsh, 0);
++	spin_unlock_irqrestore(&ak98fsh->lock, flags);
++}
++
++static void enable_clock(void)
++{
++	regmap_update_bits(ak98fsh_syscon, AK98_MULFUN_CON1_REG,
++			   AK7802_USB_REG_EN | AK7802_USB_SUS_EN,
++			   AK7802_USB_REG_EN);
++	regmap_update_bits(ak98fsh_syscon, AK98_CLK_CON2_REG,
++			   AK98_CLK_CON2_GATE, 0);
++	regmap_update_bits(ak98fsh_syscon, AK98_MULFUN_CON1_REG,
++			   AK98_MULFUN_BUS_EN | AK98_MULFUN_PLL_BITS, 0);
++}
++
++static void usbhost_reset(void)
++{
++	regmap_update_bits(ak98fsh_syscon, AK98_CLK_CON2_REG,
++			   AK98_CLK_CON2_RESET, AK98_CLK_CON2_RESET);
++	mdelay(20);
++	regmap_update_bits(ak98fsh_syscon, AK98_CLK_CON2_REG,
++			   AK98_CLK_CON2_RESET, 0);
++
++	regmap_update_bits(ak98fsh_syscon, AK98_MULFUN_CON1_REG,
++			   AK98_MULFUN_PLL_RESET, AK98_MULFUN_PLL_RESET);
++	mdelay(20);
++	regmap_update_bits(ak98fsh_syscon, AK98_MULFUN_CON1_REG,
++			   AK98_MULFUN_PLL_RESET, 0);
++}
++
++
++static int
++ak98fsh_start(struct usb_hcd *hcd)
++{
++	struct ak98fsh *ak98fsh = hcd_to_ak98fsh(hcd);
++
++	/*after reset usbhc, set stat to running.*/
++	hcd->state = HC_STATE_RUNNING;
++	
++	/* chip has been reset, VBUS power is off */
++	port_power(ak98fsh, 1);
++	enable_clock();
++	
++	fsh_writeb(0x0, UR_INTECOM);
++	fsh_writew(0x0, UR_INTETX);
++	fsh_writew(0x0, UR_INTERX);
++
++	fsh_writeb(0x0, UR_INDEX);
++
++	/* enable the USB bus path after clocks and reset are ready */
++	regmap_update_bits(ak98fsh_syscon, AK98_MULFUN_CON1_REG,
++			   AK98_MULFUN_BUS_EN, 0);
++	msleep(1);
++		
++	/* start fs host session*/ 
++	fsh_writeb(0x1, DEV_CTL_REG);
++
++	clear_all_interrupts();
++	fsh_writeb(0x0, UR_FUNADDR);
++
++	reset_endpoints();
++	fsh_writeb(0xF7, UR_INTECOM);
++	dev_info(hcd->self.controller,
++		 "host regs DEV_CTL=0x%02x PWM=0x%02x INTECOM=0x%02x VBUS=%d USBCTL=0x%08x SHAREPIN1=0x%08x RTCUSB=0x%08x\n",
++		 fsh_readb(DEV_CTL_REG), fsh_readb(UR_PWM),
++		 fsh_readb(UR_INTECOM),
++		 ak98fsh->vbus_gpiod ? gpiod_get_value(ak98fsh->vbus_gpiod) : -1,
++		 ak98fsh_read_syscon(AK98_MULFUN_CON1_REG),
++		 ak98fsh_read_syscon(AK98_SHAREPIN_CON1_REG),
++		 ak98fsh_read_syscon(AK98_RTCUSB_CON_REG));
++	
++	return 0;
++}
++
++static struct hc_driver ak98fsh_hc_driver = {
++	.description		= hcd_name,
++	.product_desc 		= "Anyka AK98 USB Full Speed Host Controller",
++	.hcd_priv_size 		= sizeof(struct ak98fsh),
++
++	/*
++	 * generic hardware linkage
++	 */
++	.irq			= ak98fsh_irq,
++	.flags			= HCD_USB11 | HCD_MEMORY,
++
++	/* Basic lifecycle operations */
++	.start			= ak98fsh_start,
++	.stop			= ak98fsh_stop,
++
++	/*
++	 * managing i/o requests and associated device resources
++	 */
++	.urb_enqueue		= ak98fsh_urb_enqueue,
++	.urb_dequeue		= ak98fsh_urb_dequeue,
++	.endpoint_reset		= ak98fsh_endpoint_reset,
++	.endpoint_disable	= ak98fsh_endpoint_disable,
++
++	/*
++	 * periodic schedule support
++	 */
++	.get_frame_number	= ak98fsh_get_frame,
++
++	/*
++	 * root hub support
++	 */
++	.hub_status_data	= ak98fsh_hub_status_data,
++	.hub_control		= ak98fsh_hub_control,
++	.bus_suspend		= ak98fsh_bus_suspend,
++	.bus_resume		= ak98fsh_bus_resume,
++};
++
++/*-------------------------------------------------------------------------*/
++
++static void ak98fsh_remove(struct platform_device *pdev)
++{
++	struct usb_hcd *hcd = platform_get_drvdata(pdev);
++	struct ak98fsh *ak98fsh = hcd_to_ak98fsh(hcd);
++
++	timer_delete_sync(&ak98fsh->timer);
++	usb_remove_hcd(hcd);
++	usb_put_hcd(hcd);
++}
++
++static int ak98fsh_probe(struct platform_device *pdev)
++{
++	struct usb_hcd *hcd;
++	struct ak98fsh *ak98fsh;
++	struct resource *res;
++	void __iomem *base;
++	int			irq;
++	int			retval;
++	unsigned long		irqflags;
++	int i, j;
++
++	irq = platform_get_irq(pdev, 0);
++	if (irq <= 0) {
++		dev_err(&pdev->dev, "Found HC with no IRQ\n");
++		return -ENODEV;
++	}
++
++	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++	base = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(base))
++		return PTR_ERR(base);
++
++	ak98fsh_syscon = syscon_regmap_lookup_by_phandle(pdev->dev.of_node,
++							 "syscon");
++	if (IS_ERR(ak98fsh_syscon))
++		return PTR_ERR(ak98fsh_syscon);
++
++	retval = ak98fsh_enable_pins(&pdev->dev);
++	if (retval)
++		return retval;
++
++	ak98fs_base = base + AK98_USB_REGS_OFFSET;
++
++	/* allocate and initialize hcd */
++	hcd = usb_create_hcd(&ak98fsh_hc_driver, &pdev->dev, dev_name(&pdev->dev));
++	if (!hcd)
++		return -ENOMEM;
++
++	hcd->rsrc_start = res->start;
++	hcd->rsrc_len = resource_size(res);
++	ak98fsh = hcd_to_ak98fsh(hcd);
++
++	ak98fsh->vbus_gpiod = devm_gpiod_get_optional(&pdev->dev, "vbus",
++						       GPIOD_OUT_LOW);
++	if (IS_ERR(ak98fsh->vbus_gpiod)) {
++		retval = PTR_ERR(ak98fsh->vbus_gpiod);
++		goto err_put_hcd;
++	}
++
++	if (ak98fsh->vbus_gpiod && gpiod_cansleep(ak98fsh->vbus_gpiod)) {
++		dev_err(&pdev->dev,
++			"sleeping vbus-gpios are not supported in this bring-up slice\n");
++		retval = -EINVAL;
++		goto err_put_hcd;
++	}
++
++	spin_lock_init(&ak98fsh->lock);
++	INIT_LIST_HEAD(&ak98fsh->async_ep0);
++	for (i = 0; i < MAX_EP_NUM; i++)
++		INIT_LIST_HEAD(&ak98fsh->async_epx[i]);
++
++	timer_setup(&ak98fsh->timer, ak98fsh_timer, 0);
++	ak98fsh->active_ep0 = NULL;
++	for (j = 0; j < MAX_EP_NUM; j++)
++		ak98fsh->active_epx[j] = NULL;
++	spin_lock_irq(&ak98fsh->lock);
++	port_power(ak98fsh, 0);
++	spin_unlock_irq(&ak98fsh->lock);
++	msleep(200);
++
++	/* The chip's IRQ is level triggered, active high.  A requirement
++	 * for platform device setup is to cope with things like signal
++	 * inverters (e.g. CF is active low) or working only with edge
++	 * triggers (e.g. most ARM CPUs).  Initial driver stress testing
++	 * was on a system with single edge triggering, so most sorts of
++	 * triggering arrangement should work.
++	 *
++	 * Use resource IRQ flags if set by platform device setup.
++	 */
++	irqflags = IRQF_SHARED;
++	retval = usb_add_hcd(hcd, irq, irqflags);
++	if (retval)
++		goto err_put_hcd;
++
++	init_epfifo_mapping(&ak98fsh_epfifo_mapping);
++	platform_set_drvdata(pdev, hcd);
++
++	dev_info(&pdev->dev, "AK98 USB FS Controller Driver initialized\n");
++
++	return 0;
++
++err_put_hcd:
++	usb_put_hcd(hcd);
++	return retval;
++}
++
++#ifdef	CONFIG_PM
++
++/* for this device there's no useful distinction between the controller
++ * and its root hub, except that the root hub only gets direct PM calls
++ * when CONFIG_USB_SUSPEND is enabled.
++ */
++
++static int
++ak98fsh_suspend(struct platform_device *dev, pm_message_t state)
++{
++	int		retval = 0;
++
++	switch (state.event) {
++	case PM_EVENT_FREEZE:
++		break;
++	case PM_EVENT_SUSPEND:
++	case PM_EVENT_HIBERNATE:
++	case PM_EVENT_PRETHAW:		/* explicitly discard hw state */
++		break;
++	}
++	return retval;
++}
++
++static int
++ak98fsh_resume(struct platform_device *dev)
++{
++	return 0;
++}
++
++#else
++
++#define	ak98fsh_suspend	NULL
++#define	ak98fsh_resume	NULL
++
++#endif
++
++
++struct platform_driver ak98fsh_driver = {
++	.probe =	ak98fsh_probe,
++	.remove =	ak98fsh_remove,
++
++	.suspend =	ak98fsh_suspend,
++	.resume =	ak98fsh_resume,
++	.driver = {
++		.name =	hcd_name,
++		.of_match_table = ak98fsh_of_match,
++	},
++};
++
++module_platform_driver(ak98fsh_driver);
+diff --git a/drivers/usb/host/ak98-fs-hcd.h b/drivers/usb/host/ak98-fs-hcd.h
+new file mode 100644
+index 000000000000..5df4f647288f
+--- /dev/null
++++ b/drivers/usb/host/ak98-fs-hcd.h
+@@ -0,0 +1,768 @@
++/*
++ * AK98HS register declarations and HCD data structures
++ */
++
++#ifndef __AK98_FS_HCD_H
++#define __AK98_FS_HCD_H
++
++#include <linux/io.h>
++#include <linux/list.h>
++#include <linux/spinlock.h>
++#include <linux/timer.h>
++#include <linux/usb.h>
++#include <linux/usb/hcd.h>
++
++//#define AK98FS_DEBUG
++#define AK98FS_VERBOSE_DEBUG
++
++/*
++ * Enable DYNAMIC_EPFIFO when you want dynamic endpoint fifo to be allocated to USB device.
++ * For example, if a USB Flash disk has EP 1 + Bulk In / Bulk Out, using DYNAMIC_EPFIFO will
++ * cause EPFIFO 1 <--> Flash Disk EP 1/Bulk In, EPFIFO 2 <--> Flash Disk EP 1/Bulk Out, else
++ * only EPFIFO 1 <--> Flash Disk EP 1 + Bulk In / Bulk Out (Tx/Rx mode will be set on
++ * in_packet() and out_packet())
++ */
++#define DYNAMIC_EPFIFO
++
++extern void __iomem *ak98fs_base;
++
++/* Control registers. */
++#define UR_FUNADDR	0x00		/*Function address register. ---8bit*/
++#define UR_PWM 		0x01 		/* Usb power control register .---8bit*/
++#define UR_INTTX 	0x02		/*Usb TX ep interrupt control register.---16bit */
++#define UR_INTRX 	0x04		/*Usb RX ep interrupt control register.--16bit */
++#define UR_INTETX 	0x06		/*To enable the TX ep interrupt register.--16bit */
++#define UR_INTERX 	0x08		/*To enable the RX ep interrupt register.--16bit */
++#define UR_INTCOM 	0x0a		/*Common usb interrupt register. ---8bit*/
++#define UR_INTECOM	0x0b		/*To enable the common usb interrupt register. --8bit*/
++#define UR_FRMNUM	0x0c		/*Frame number register. ---16bit*/
++#define UR_INDEX	0x0e		/*Index the selected ep control/status register.--8bit */
++#define UR_TESTM	0x0f		/*Test mode enbale for usb2.0 register. --8bit*/
++	 
++	 /*Endpoint Contrl/Status Registers.*/
++#define MaxPackSz_TX	0x10	/*Max packet size for TX EPx.  --16bit*/
++#define CTLSTS_EP_TXL	0x12	/*Contrl & status for TX EPx.--8bit*/
++#define CTLSTS_EP_TXH	0x13	/*Contrl & status for TX EPx.--8bit*/
++#define MaxPackSz_RX	0x14	/*Max packet size for RX EPx.---16bit*/
++#define CTLSTS_EP_RXL	0x16	/*Contrl & status for RX EPx.  --8bit*/
++#define CTLSTS_EP_RXH	0x17	/*Contrl & status for RX EPx.  --8bit*/
++
++#define EP_COUNT		0x18	/*Number of bytes in endpoint X FIFO.--16bit*/
++#define TX_EP_TYPE		0x1a	/*endpoint type for TX endpoint.--8bit*/
++#define NAK_TO_EP0		0x1b	/*NAK response timeout on EP0.--8bit*/
++#define RX_EP_TYPE		0x1c	/*endpoint type for RX endpoint.---8bit*/
++#define RX_INTVAL		0x1d	/*polling interal for RX endpoint.---8bit*/
++#define CFG_FIFO_SZ		0x1f	/*core configuration & FIFO size.---8bit*/
++	 
++	 /*FIFO 32bit registers.Can read write 8bit, 16bit, 32bit.*/
++#define FIFO_EP0		0x20	/*FIFO for EP0.*/
++#define FIFO_EP1		0x24	/*FIFO for EP1.*/
++#define FIFO_EP2		0x28	/*FIFO for EP2.*/
++#define FIFO_EP3		0x2c	/*FIFO for EP3.*/
++#define FIFO_EP4		0x30	/*FIFO for EP4.*/
++#define FIFO_EP5		0x34	/*FIFO for EP5.*/
++#define FIFO_EP6		0x38	/*FIFO for EP6.*/
++
++/* DMA controller registers. */
++#define DMA_INTR_STAT	0x0		/*DMA interrupt status.*/
++#define DMA_CTRL_REG1	0x04	/*DMA channel 1 control.*/
++#define DMA_CTRL_REG2	0x14	/*DMA channel 2 control.*/
++#define DMA_CTRL_REG3	0x24	/*DMA channel 3 control.*/
++#define DMA_CTRL_REG4	0x34	/*DMA channel 4 control.*/
++#define DMA_CTRL_REG5	0x44	/*DMA channel 5 control.*/
++#define DMA_CTRL_REG6	0x54	/*DMA channel 6 control.*/
++	 
++#define DMA_ADDR_REG1	0x08	/*DMA channel 1 AHB memory address.*/
++#define DMA_ADDR_REG2	0x18	/*DMA channel 2 AHB memory address.*/
++#define DMA_ADDR_REG3	0x28	/*DMA channel 3 AHB memory address.*/
++#define DMA_ADDR_REG4	0x38	/*DMA channel 4 AHB memory address.*/
++#define DMA_ADDR_REG5	0x48	/*DMA channel 5 AHB memory address.*/
++#define DMA_ADDR_REG6	0x58	/*DMA channel 6 AHB memory address.*/
++	 
++#define DMA_CUNT_REG1	0x0c	/*DMA channel 1 byte count.*/
++#define DMA_CUNT_REG2	0x1c	/*DMA channel 2 byte count.*/
++#define DMA_CUNT_REG3	0x2c	/*DMA channel 3 byte count.*/
++#define DMA_CUNT_REG4	0x3c	/*DMA channel 4 byte count.*/
++#define DMA_CUNT_REG5	0x4c	/*DMA channel 5 byte count.*/
++#define DMA_CUNT_REG6	0x5c	/*DMA channel 6 byte count.*/
++	 
++#define DEV_CTL_REG		0x60	/*Device control register.*/
++	 
++	 /*Interrupt types.*/
++#define INTR_CONNECTED	0x10	/*Connected interrupt .*/
++#define INTR_DISCONNECTED	0x20	/*Connected interrupt .*/
++#define INTR_SESION_RQ		0x40    /*Session interrupt.*/
++#define INTR_RESUME		0x02	/* Resume interrupt */
++#define INTR_SOF		0x08    /*Session interrupt.*/
++
++/*====================================*/
++#define H_MAXPACKET	64		/* bytes in fifo */
++
++#define MAX_EP_NUM	(6)
++
++/*-------------------------------------------------------------------------*/
++
++#define	LOG2_PERIODIC_SIZE	5	/* arbitrary; this matches OHCI */
++#define	PERIODIC_SIZE		(1 << LOG2_PERIODIC_SIZE)
++
++struct gpio_desc;
++
++struct ak98fsh {
++	spinlock_t		lock;
++	struct gpio_desc	*vbus_gpiod;
++
++	unsigned long		stat_insrmv;
++	unsigned long		stat_wake;
++	unsigned long		stat_sof;
++	unsigned long		stat_ep0;
++	unsigned long		stat_epx[MAX_EP_NUM];
++	unsigned long		stat_lost;
++	unsigned long		stat_overrun;
++
++	/* sw model */
++	struct timer_list	timer;
++	struct ak98fsh_ep	*next_periodic;
++	struct ak98fsh_ep	*next_async_ep0;
++	struct ak98fsh_ep	*next_async_epx[MAX_EP_NUM];
++
++	struct ak98fsh_ep	*active_ep0;
++	struct ak98fsh_ep	*active_epx[MAX_EP_NUM];
++	unsigned long		jiffies_ep0;
++	unsigned long		jiffies_epx[MAX_EP_NUM];
++
++	u32			port_status;
++	u16			frame;
++
++	/* async schedule: control, bulk */
++	struct list_head	async_ep0;
++	struct list_head	async_epx[MAX_EP_NUM];
++
++	/* periodic schedule: interrupt, iso */
++	u16			load[PERIODIC_SIZE];
++	struct ak98fsh_ep	*periodic[PERIODIC_SIZE];
++	unsigned		periodic_count;
++};
++
++static inline struct ak98fsh *hcd_to_ak98fsh(struct usb_hcd *hcd)
++{
++	return (struct ak98fsh *) (hcd->hcd_priv);
++}
++
++static inline struct usb_hcd *ak98fsh_to_hcd(struct ak98fsh *ak98fsh)
++{
++	return container_of((void *) ak98fsh, struct usb_hcd, hcd_priv);
++}
++
++struct ak98fsh_ep {
++	struct usb_host_endpoint *hep;
++	struct usb_device	*udev;
++
++	u8			maxpacket;
++	u8			epnum;
++	u8			nextpid;
++
++	u16			error_count;
++	u16			nak_count;
++	u16			length;		/* of current packet */
++
++	/* periodic schedule */
++	u16			period;
++	u16			branch;
++	u16			load;
++	struct ak98fsh_ep	*next;
++
++	/* async schedule */
++	struct list_head	schedule;
++};
++
++/*-------------------------------------------------------------------------*/
++/*
++ * AK98 Full Speed Register Access Routines:
++ * Part I: Common Registers Access(Do NOT use INDEX register)
++ * Part II: Index Registers Access
++ */
++
++/*
++ * Part I: Common Registers Access - use the controller base established in probe
++ */
++#define fsh_readb(reg)		readb_relaxed(ak98fs_base + (reg))
++#define fsh_writeb(val, reg)	writeb_relaxed((val), ak98fs_base + (reg))
++
++#define fsh_readw(reg)		readw_relaxed(ak98fs_base + (reg))
++#define fsh_writew(val, reg)	writew_relaxed((val), ak98fs_base + (reg))
++
++#define fsh_readl(reg)		readl_relaxed(ak98fs_base + (reg))
++#define fsh_writel(val, reg)	writel_relaxed((val), ak98fs_base + (reg))
++
++/*
++ * Part II: Index Registers Access - Spinlock+IRQ protection
++ */
++static DEFINE_SPINLOCK(fsh_reg_lock);
++static inline unsigned char fsh_index_readb(int epindex, int reg)
++{
++	unsigned long flags;
++	unsigned char val;
++
++	spin_lock_irqsave(&fsh_reg_lock, flags);
++
++	fsh_writeb(epindex, UR_INDEX);
++	val = fsh_readb(reg);
++
++	spin_unlock_irqrestore(&fsh_reg_lock, flags);
++
++	return val;
++}
++
++static inline void fsh_index_writeb(int epindex, unsigned char val, int reg)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&fsh_reg_lock, flags);
++
++	fsh_writeb(epindex, UR_INDEX);
++	fsh_writeb(val, reg);
++
++	spin_unlock_irqrestore(&fsh_reg_lock, flags);
++}
++
++static inline unsigned short fsh_index_readw(int epindex, int reg)
++{
++	unsigned long flags;
++	unsigned short val;
++
++	spin_lock_irqsave(&fsh_reg_lock, flags);
++
++	fsh_writeb(epindex, UR_INDEX);
++	val = fsh_readw(reg);
++
++	spin_unlock_irqrestore(&fsh_reg_lock, flags);
++
++	return val;
++
++}
++
++static inline void fsh_index_writew(int epindex, unsigned short val, int reg)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&fsh_reg_lock, flags);
++
++	fsh_writeb(epindex, UR_INDEX);
++	fsh_writew(val, reg);
++
++	spin_unlock_irqrestore(&fsh_reg_lock, flags);
++}
++
++static inline unsigned long fsh_index_readl(int epindex, int reg)
++{
++	unsigned long flags;
++	unsigned long val;
++
++	spin_lock_irqsave(&fsh_reg_lock, flags);
++
++	fsh_writeb(epindex, UR_INDEX);
++	val = fsh_readl(reg);
++
++	spin_unlock_irqrestore(&fsh_reg_lock, flags);
++
++	return val;
++}
++
++static inline void fsh_index_writel(int epindex, unsigned long val, int reg)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&fsh_reg_lock, flags);
++
++	fsh_writeb(epindex, UR_INDEX);
++	fsh_writel(val, reg);
++
++	spin_unlock_irqrestore(&fsh_reg_lock, flags);
++
++}
++
++
++#ifdef AK98FS_DEBUG
++#define HDBG(stuff...) printk("USBFS: " stuff)
++#else
++#define HDBG(fmt, args...) do{}while(0)
++#endif 
++
++#ifdef AK98FS_VERBOSE_DEBUG
++#define VDBG	HDBG
++#else
++#define VDBG(fmt, args...) do{}while(0)
++#endif 
++
++#define ERR(stuff...) printk(KERN_ERR "USBFS: " stuff)
++
++#ifdef AK98FS_VERBOSE_DEBUG
++static inline void dump_registers(void)
++{
++	int i;
++
++	printk("USBFS: FADDR=%d, IntrTXE=%x, IntrRXE=%x, IntrUSBE=%x, DevCtl=%x\n",
++		fsh_readb(UR_FUNADDR), fsh_readw(UR_INTETX), fsh_readw(UR_INTERX),
++		fsh_readb(UR_INTECOM), fsh_readw(DEV_CTL_REG));
++	for (i = 0; i < MAX_EP_NUM + 1; i++) {
++		printk("  EP%d:",i );
++		printk(" NAK_TO_EP=%x, RX_TYPE=%x, TX_TYPE=%x, TXMAXP=%x, " \
++			"RXMAXP=%x, RXCSR=%x, TXCSR=%x, RXINTERVAL=%x\n",
++			fsh_index_readb(i, NAK_TO_EP0), fsh_index_readb(i, RX_EP_TYPE), fsh_index_readb(i, TX_EP_TYPE),
++			fsh_index_readw(i, MaxPackSz_TX), fsh_index_readw(i, MaxPackSz_RX),
++			fsh_index_readw(i, CTLSTS_EP_RXL), fsh_index_readw(i, CTLSTS_EP_TXL),
++			fsh_index_readw(i, RX_INTVAL));
++	}
++}
++#else
++static inline void dump_registers(void)
++{
++}
++#endif
++
++static inline void flush_ep0_fifo(void)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&fsh_reg_lock, flags);
++
++	fsh_writeb(0, UR_INDEX);
++	if (fsh_readb(CTLSTS_EP_TXL) & ((1 << 0) | (1 << 1)))
++		fsh_writeb(1 << 0, CTLSTS_EP_TXH);
++
++	spin_unlock_irqrestore(&fsh_reg_lock, flags);
++}
++
++static inline void flush_epx_tx_fifo(int i)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&fsh_reg_lock, flags);
++
++	fsh_writeb(i, UR_INDEX);
++	if (fsh_readb(CTLSTS_EP_TXL) & (1 << 0))
++		fsh_writeb(1 << 3, CTLSTS_EP_TXL);
++
++	spin_unlock_irqrestore(&fsh_reg_lock, flags);
++
++}
++
++static inline void flush_epx_rx_fifo(int i)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&fsh_reg_lock, flags);
++
++	fsh_writeb(i, UR_INDEX);
++	if (fsh_readb(CTLSTS_EP_RXL) & (1 << 0))
++		fsh_writeb(1 << 4, CTLSTS_EP_RXL);
++
++	spin_unlock_irqrestore(&fsh_reg_lock, flags);
++}
++
++static inline void flush_epx_fifo(int i)
++{
++	flush_epx_tx_fifo(i);
++	flush_epx_rx_fifo(i);
++}
++
++static inline void flush_ep_fifo(int i)
++{
++	if (i == 0)
++		flush_ep0_fifo();
++	else
++		flush_epx_fifo(i);
++}
++
++static inline void set_epx_rx_mode(int i)
++{
++	u8 regval;
++	unsigned long flags;
++
++	spin_lock_irqsave(&fsh_reg_lock, flags);
++
++	fsh_writeb(i, UR_INDEX);
++	regval = fsh_readb(CTLSTS_EP_TXH);
++	regval &= ~(1 << 5);
++	fsh_writeb(regval, CTLSTS_EP_TXH);
++
++	spin_unlock_irqrestore(&fsh_reg_lock, flags);
++}
++
++static inline void set_epx_tx_mode(int i)
++{
++	u8 regval;
++	unsigned long flags;
++
++	spin_lock_irqsave(&fsh_reg_lock, flags);
++
++	fsh_writeb(i, UR_INDEX);
++	regval = fsh_readb(CTLSTS_EP_TXH);
++	regval |= (1 << 5);
++	fsh_writeb(regval, CTLSTS_EP_TXH);
++
++	spin_unlock_irqrestore(&fsh_reg_lock, flags);
++}
++
++static inline void clear_epx_tx_data_toggle(int i)
++{
++	fsh_index_writeb(i, 1 << 6, CTLSTS_EP_TXL);
++}
++
++static inline void clear_epx_rx_data_toggle(int i)
++{
++	fsh_index_writeb(i, 1 << 7, CTLSTS_EP_RXL);
++}
++
++/*
++ * Valid types:
++ *   1 - Isochronous
++ *   2 - Bulk
++ *   3 - Interrupt
++ * Invalid type:
++ *   0 - Illegal
++ */
++static inline void set_epx_tx_type(int i, int epnum, int type)
++{
++	BUG_ON(i < 0 || i > MAX_EP_NUM);
++	BUG_ON(type < 0 || type > 3);
++
++	fsh_index_writeb(i, type << 4 | epnum, TX_EP_TYPE);
++}
++
++static inline void set_epx_rx_type(int i, int epnum, int type)
++{
++	BUG_ON(i < 0 || i > MAX_EP_NUM);
++	BUG_ON(type < 0 || type > 3);
++
++	fsh_index_writeb(i, type << 4 | epnum, RX_EP_TYPE);
++}
++
++static inline void enable_ep0_interrupt(void)
++{
++	u8 regval;
++	unsigned long flags;
++
++	local_irq_save(flags);
++
++	regval = fsh_readb(UR_INTETX);
++	regval |= (1 << 0);
++	fsh_writeb(regval, UR_INTETX);
++
++	local_irq_restore(flags);
++}
++
++static inline void enable_epx_tx_interrupt(int i)
++{
++	u8 regval;
++	unsigned long flags;
++
++	local_irq_save(flags);
++
++	regval = fsh_readb(UR_INTETX);
++	regval |= (1 << i);
++	fsh_writeb(regval, UR_INTETX);
++
++	local_irq_restore(flags);
++}
++
++static inline void enable_epx_rx_interrupt(int i)
++{
++	u8 regval;
++	unsigned long flags;
++
++	local_irq_save(flags);
++
++	regval = fsh_readb(UR_INTERX);
++	regval |= (1 << i);
++	fsh_writeb(regval, UR_INTERX);
++
++	local_irq_restore(flags);
++}
++
++static inline void disable_ep0_interrupt(void)
++{
++	u8 regval;
++	unsigned long flags;
++
++	local_irq_save(flags);
++
++	regval = fsh_readb(UR_INTETX);
++	regval &= ~(1 << 0);
++	fsh_writeb(regval, UR_INTETX);
++
++	local_irq_restore(flags);
++}
++
++static inline void disable_epx_tx_interrupt(int i)
++{
++	u8 regval;
++	unsigned long flags;
++
++	local_irq_save(flags);
++
++	regval = fsh_readb(UR_INTETX);
++	regval &= ~(1 << i);
++	fsh_writeb(regval, UR_INTETX);
++
++	local_irq_restore(flags);
++}
++
++static inline void disable_epx_rx_interrupt(int i)
++{
++	u8 regval;
++	unsigned long flags;
++
++	local_irq_save(flags);
++
++	regval = fsh_readb(UR_INTERX);
++	regval &= ~(1 << i);
++	fsh_writeb(regval, UR_INTERX);
++
++	local_irq_restore(flags);
++}
++
++static inline void disable_epx_interrupt(int i)
++{
++	disable_epx_tx_interrupt(i);
++	disable_epx_rx_interrupt(i);
++}
++
++static inline void disable_ep_interrupt(int i)
++{
++	BUG_ON(i < 0 || i > MAX_EP_NUM);
++
++	if (i == 0) {
++		disable_ep0_interrupt();
++	} else {
++		disable_epx_interrupt(i);
++	}
++}
++
++static inline void clear_all_interrupts(void)
++{
++	fsh_readb(UR_INTCOM);
++	fsh_readw(UR_INTTX);
++	fsh_readw(UR_INTRX);
++}
++
++static inline void reset_endpoint(int i)
++{
++	BUG_ON(i < 0 || i > MAX_EP_NUM);
++
++	disable_ep_interrupt(i);
++	if (i == 0) {
++		flush_ep0_fifo();
++	} else {
++		flush_epx_fifo(i);
++		set_epx_rx_type(i, 0, 0);
++		set_epx_tx_type(i, 0, 0);
++	}
++}
++
++static inline void reset_endpoints(void)
++{
++	int i;
++
++	for (i = 0; i < MAX_EP_NUM + 1; i++) {
++		reset_endpoint(i);
++	}
++}
++
++
++
++
++struct epfifo_mapping {
++	int	epfifo;		/* AK98 FSH HC EP FIFO number: 1 ~ 6 */
++	int	used;		/* 0 - Unused, 1 - used */
++	int	epnum;		/* USB Device endpoint number: 1 ~ 16 */
++	int	direction;	/* 0 - In, 1 - Out */
++};
++
++struct ak98fsh_epfifo_mapping {
++	spinlock_t lock;
++	struct epfifo_mapping mapping[MAX_EP_NUM];
++};
++
++static inline void dump_epfifo_mapping(struct ak98fsh_epfifo_mapping *ak98_mapping)
++{
++	int i;
++	struct epfifo_mapping *mapping;
++
++	for (i = 0; i < MAX_EP_NUM; i++) {
++		mapping = &ak98_mapping->mapping[i];
++		printk("EPFIFO %d: %s, Device EP NO. %d, Direction %s\n",
++			mapping->epfifo, mapping->used ? "Allocated" : "Free",
++			mapping->epnum, mapping->direction ? "OUT" : "IN");
++	}
++
++}
++
++static inline void init_epfifo_mapping(struct ak98fsh_epfifo_mapping *ak98_mapping)
++{
++	int i;
++	struct epfifo_mapping *mapping;
++
++	spin_lock_init(&ak98_mapping->lock);
++	
++	for (i = 0; i < MAX_EP_NUM; i++) {
++		mapping = &ak98_mapping->mapping[i];
++		mapping->epfifo = i + 1;	/* EPFIFO 1~6 is used by AK98 FS HCD */
++		mapping->used = 0;
++		mapping->epnum = 0;
++		mapping->direction = 0;
++	}
++}
++
++static inline bool __is_epnum_mapped(struct ak98fsh_epfifo_mapping *ak98_mapping,
++	int epnum, int direction)
++{
++	int i;
++	struct epfifo_mapping *mapping;
++
++	if(epnum == 0)
++		return true;
++
++	for (i = 0; i < MAX_EP_NUM; i++) {
++		mapping = &ak98_mapping->mapping[i];
++		if (mapping->used && (mapping->epnum == epnum) && (mapping->direction == direction)) {
++			return true;
++		}
++	}
++
++	return false;
++}
++
++static inline bool is_epnum_mapped(struct ak98fsh_epfifo_mapping *ak98_mapping,
++	int epnum, int direction)
++{
++	bool ret;
++	unsigned long flags;
++
++	BUG_ON(ak98_mapping == NULL);
++
++	if(epnum == 0)
++		return true;
++
++	spin_lock_irqsave(&ak98_mapping->lock, flags);
++
++	ret = __is_epnum_mapped(ak98_mapping, epnum, direction);
++
++	spin_unlock_irqrestore(&ak98_mapping->lock, flags);
++
++	return ret;
++
++}
++
++static inline bool __map_epnum_to_epfifo(struct ak98fsh_epfifo_mapping *ak98_mapping,
++	int epnum, int direction, int *epfifo)
++{
++	int i;
++	struct epfifo_mapping *mapping;
++
++	if (__is_epnum_mapped(ak98_mapping, epnum, direction))
++		return false;
++
++	for (i = 0; i < MAX_EP_NUM; i++) {
++		mapping = &ak98_mapping->mapping[i];
++		if (!mapping->used) {
++			mapping->used = 1;
++			mapping->epnum = epnum;
++			mapping->direction = direction;
++			*epfifo = mapping->epfifo;
++			return true;
++		}
++	}
++
++	return false;
++}
++
++static inline bool map_epnum_to_epfifo(struct ak98fsh_epfifo_mapping *ak98_mapping,
++	int epnum, int direction, int *epfifo)
++{
++	bool ret;
++	unsigned long flags;
++
++	BUG_ON(ak98_mapping == NULL);
++
++	if (is_epnum_mapped(ak98_mapping, epnum, direction))
++		return false;
++
++	spin_lock_irqsave(&ak98_mapping->lock, flags);
++	
++	ret = __map_epnum_to_epfifo(ak98_mapping, epnum, direction, epfifo);
++
++	spin_unlock_irqrestore(&ak98_mapping->lock, flags);
++
++	return ret;
++}
++
++#ifdef DYNAMIC_EPFIFO
++static inline bool epfifo_to_epnum(struct ak98fsh_epfifo_mapping *ak98_mapping, int epfifo, int *epnum, int *direction)
++{
++	int ret;
++	unsigned long flags;
++	struct epfifo_mapping *mapping;
++
++	ret = false;
++
++	spin_lock_irqsave(&ak98_mapping->lock, flags);
++
++	mapping = &ak98_mapping->mapping[epfifo];
++	if (mapping->used) {
++		*epnum = mapping->epnum;
++		*direction = mapping->direction;
++		ret = true;
++	} else {
++		*epnum = 0;
++		*direction = 0;
++		ret = false;
++	}
++
++	spin_unlock_irqrestore(&ak98_mapping->lock, flags);
++
++	return ret;
++}
++
++static inline bool epnum_to_epfifo(struct ak98fsh_epfifo_mapping *ak98_mapping, int epnum, int direction, int *epfifo)
++{
++	int i;
++	unsigned long flags;
++	struct epfifo_mapping *mapping;
++
++	if (epnum == 0) {
++		*epfifo = 0;
++		return true;
++	}
++
++	spin_lock_irqsave(&ak98_mapping->lock, flags);
++
++	for (i = 0; i < MAX_EP_NUM; i++) {
++		mapping = &ak98_mapping->mapping[i];
++		if (mapping->used && (mapping->epnum == epnum) && (mapping->direction == direction)) {
++			*epfifo = mapping->epfifo;
++			spin_unlock_irqrestore(&ak98_mapping->lock, flags);
++			return true;
++		}
++	}
++
++	spin_unlock_irqrestore(&ak98_mapping->lock, flags);
++
++	return false;
++}
++#else
++static inline bool epfifo_to_epnum(struct ak98fsh_epfifo_mapping *ak98_mapping, int epfifo, int *epnum, int *direction)
++{
++	*epnum = epfifo;
++	*direction  = 0;	/* Useless, since 1 EPFIFO could be mapped to 1 device ep/in + out */
++	return true;
++}
++
++static inline bool epnum_to_epfifo(struct ak98fsh_epfifo_mapping *ak98_mapping, int epnum, int direction, int *epfifo)
++{
++	*epfifo = epnum;
++	return true;
++}
++#endif
++
++#endif /* __AK98_FS_HCD_H */
+diff --git a/drivers/usb/host/ch37x-hcd.c b/drivers/usb/host/ch37x-hcd.c
+new file mode 100644
+index 000000000000..86f5fa91e00e
+--- /dev/null
++++ b/drivers/usb/host/ch37x-hcd.c
+@@ -0,0 +1,2601 @@
++/*
++ * USB host controller driver for SPI to USB chip ch370/ch374.
++ *
++ * Copyright (C) 2024 Nanjing Qinheng Microelectronics Co., Ltd.
++ * Web:      http://wch.cn
++ * Author:   WCH <tech@wch.cn>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ */
++
++#include <linux/moduleparam.h>
++#include <linux/delay.h>
++#include <linux/sched.h>
++#include <linux/errno.h>
++#include <linux/init.h>
++#include <linux/timer.h>
++#include <linux/list.h>
++#include <linux/interrupt.h>
++#include <linux/workqueue.h>
++#include <linux/mutex.h>
++#include <asm/irq.h>
++#include <asm/byteorder.h>
++#include <linux/of.h>
++#include <linux/of_gpio.h>
++#include <linux/jiffies.h>
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/ioport.h>
++#include <linux/slab.h>
++#include <linux/init.h>
++#include <linux/spi/spi.h>
++#include <linux/usb.h>
++#include <linux/usb/hcd.h>
++#include <linux/list.h>
++#include <linux/uaccess.h>
++#include <linux/version.h>
++#ifdef CONFIG_DEBUG_FS
++#include <linux/debugfs.h>
++#endif
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/interrupt.h>
++#include <linux/input.h>
++#include <linux/device.h>
++#include <linux/platform_device.h>
++#include <linux/gpio/consumer.h>
++#include <linux/gpio.h>
++#include <linux/slab.h>
++#include <linux/of.h>
++#include <linux/of_platform.h>
++#include <linux/of_gpio.h>
++#include <linux/delay.h>
++
++#include <asm/io.h>
++#include <asm/irq.h>
++#include <linux/platform_device.h>
++#include <linux/kthread.h>
++#include "ch37x.h"
++
++#define DRIVER_AUTHOR "WCH"
++#define DRIVER_DESC   "CH370/CH374 USB Host-Controller Driver"
++#define VERSION_DESC  "V1.7 On 2024.01"
++
++//#define USE_IRQ_FROM_DTS
++#define GPIO_NUMBER 0
++
++#define DEBUG_FLAG_LEVEL 0
++
++/* 11-bit counter that wraps around (USB 2.0 Section 8.3.3): */
++#define USB_MAX_FRAME_NUMBER 0x7ff
++#define USB_MAX_RETRIES	     3 /* # of retries before error is reported */
++
++/*
++ * Max. # of times we're willing to retransmit a request immediately in
++ * resposne to a NAK.  Afterwards, we fall back on trying once a frame.
++ */
++#define NAK_MAX_FAST_RETRANSMITS 5
++
++#define POWER_BUDGET 500
++
++#define RH_PORT_STATUS_STAYED  0
++#define RH_PORT_STATUS_CHANGED 1
++
++#define CMD_SPI_374READ	 0xC0
++#define CMD_SPI_374WRITE 0x80
++
++#define ERR_USB_UNKNOWN 0xFA
++#ifndef USB_INT_SUCCESS
++#define USB_INT_SUCCESS	   0x14
++#define USB_INT_CONNECT	   0x15
++#define USB_INT_DISCONNECT 0x16
++#define USB_INT_BUF_OVER   0x17
++#define USB_INT_DISK_ERR   0x1F
++#endif
++/* ======================================= */
++#define DEF_USB_PID_NULL  0x00
++#define DEF_USB_PID_SOF	  0x05
++#define DEF_USB_PID_SETUP 0x0D
++#define DEF_USB_PID_IN	  0x09
++#define DEF_USB_PID_OUT	  0x01
++#define DEF_USB_PID_ACK	  0x02
++#define DEF_USB_PID_NAK	  0x0A
++#define DEF_USB_PID_STALL 0x0E
++#define DEF_USB_PID_DATA0 0x03
++#define DEF_USB_PID_DATA1 0x0B
++#define DEF_USB_PID_PRE	  0x0C
++
++#define CH374_TOKEN_SETUP	 M_MK_HOST_PID_ENDP(DEF_USB_PID_SETUP, 0)
++#define CH374_TOKEN_BULK_IN(ep)	 M_MK_HOST_PID_ENDP(DEF_USB_PID_IN, ep)
++#define CH374_TOKEN_BULK_OUT(ep) M_MK_HOST_PID_ENDP(DEF_USB_PID_OUT, ep)
++
++#define MAX_FIFO_SIZE 64
++#define NUM_PORTS     3
++/* Port-change mask: */
++#define PORT_C_MASK                                                                                                    \
++	(USB_PORT_STAT_C_CONNECTION | USB_PORT_STAT_C_ENABLE | USB_PORT_STAT_C_SUSPEND | USB_PORT_STAT_C_OVERCURRENT | \
++	 USB_PORT_STAT_C_RESET)
++
++enum pkt_state {
++	PKT_STATE_NONE = 0,
++	PKT_STATE_SETUP,    /* waiting to send setup packet to ctrl pipe */
++	PKT_STATE_TRANSFER, /* waiting to xfer transfer_buffer */
++	PKT_STATE_TERMINATE
++};
++
++enum ch37x_rh_state {
++	CH374_RH_RESET = 0,
++	CH374_RH_SUSPENDED,
++	CH374_RH_RUNNING
++};
++
++enum ch37x_pid_state {
++	CH374_DEF_USB_PID_SETUP = 0,
++	CH374_DEF_USB_PID_OUT,
++	CH374_DEF_USB_PID_IN
++};
++
++enum {
++	ENABLE_IRQ = 0,
++	RESET_HCD,
++	RESET_PORT,
++	CHECK_CONNECT,
++	CHECK_UNLINK
++};
++
++enum {
++	UNINTERRUPT = 0,
++	INTERRUPT
++};
++
++struct ch37x_chip_data {
++	atomic_t flag_low_speed; //if usb 1.0 then set 1
++	//int flag_device_status;
++	unsigned char endp_num; //num of hid such as key or mouse
++	unsigned char endp_in_addr;
++	unsigned char endp_out_addr;
++	unsigned char hid_dest_len;
++	unsigned char UsbDevEndpSize;
++	unsigned char FlagDeviceStatus;
++};
++
++struct xgold_spi_chip {
++	u8 poll_mode; /* 0 for contoller polling mode */
++	u8 type;      /* SPI/SSP/Micrwire */
++	u8 enable_dma;
++	int hcd_irq;
++	void (*cs_control)(u32 command);
++};
++
++struct ch37x_dma_buf {
++	u8 data[3];
++};
++
++enum usb_dev_sta {
++	USB_UNLINK = 0,
++	USB_RESET,
++	USB_NOADDR,
++	USB_ADDR
++};
++
++struct ch37x_port {
++	u8 bus_addr;
++	u8 bus_addr_backup;
++	bool controltog; /*setup packet tog*/
++	bool transferintog[4];
++	bool transferouttog[4];
++	unsigned long todoport;
++	/* lower 16 bits contain port status, upper 16 bits the change mask: */
++	struct usb_port_status port_status;
++	unsigned short wPortTrigger;
++	enum usb_dev_sta usbsta;
++	bool todosuspend;
++
++	unsigned int ch37x_usb_flag;
++};
++
++struct ch37x_hcd_data {
++	wait_queue_head_t wthread; /* for thread */
++	bool kthread_running;
++	spinlock_t lock;
++	struct kthread_worker spi_worker;
++	struct task_struct *spi_thread;
++	struct kthread_work spi_work;
++
++	struct ch37x_hcd_data *next;
++
++	enum ch37x_rh_state rh_state;
++	enum ch37x_pid_state pid_state;
++
++	unsigned active : 1;
++
++	struct list_head ep_list; /* list of EP's with work */
++	u16 frame_number;
++	int olddevnum;
++
++	int conn_port; /* Port that is currently connecting, -1 if none.*/
++	struct ch37x_port ports[NUM_PORTS + 1];
++
++	/*
++	 * kmalloc'd buffers guaranteed to be in separate (DMA)
++	 * cache-lines:
++	 */
++	struct ch37x_dma_buf *tx;
++	struct ch37x_dma_buf *rx;
++
++	/*
++	 * URB we're currently processing.  Must not be reset to NULL
++	 */
++	struct urb *curr_urb;
++	struct urb *unlink_urb;
++	int unlink_status;
++
++	bool isLastSetup; /*last setup packet finished flag*/
++	int urb_done;	  /* > 0 -> no errors, < 0: errno */
++	int interrupt;
++	size_t curr_len;
++	unsigned long todo;
++
++	struct device *dev;
++	struct spi_device *spi;
++	int irq;
++
++	struct mutex thread_mutex;
++	atomic_t suspend_flag;
++	struct delayed_work delaywork;
++	int addr;
++	atomic_t debug_flag;
++	atomic_t urb_process;
++#ifdef CONFIG_DEBUG_FS
++	struct dentry *debugfs;
++	struct dentry *debugfile;
++#endif
++};
++
++struct ch37x_ep {
++	struct usb_host_endpoint *ep;
++	struct list_head ep_list;
++	u32 naks;
++	u8 retransmit; /* packet needs retransmission */
++	enum pkt_state pkt_state;
++	enum pkt_state curr_pkt;
++};
++
++void ch37x_hcd_dbg(struct ch37x_hcd_data *hcd, const char *format, ...)
++{
++	va_list args;
++
++	if (atomic_read(&hcd->debug_flag) >= 1) {
++		va_start(args, format);
++		vprintk(format, args);
++		va_end(args);
++	}
++}
++
++void ch37x_hcd_dbg_data(struct ch37x_hcd_data *hcd, const char *format, ...)
++{
++	va_list args;
++
++	if (atomic_read(&hcd->debug_flag) >= 2) {
++		va_start(args, format);
++		vprintk(format, args);
++		va_end(args);
++	}
++}
++
++static struct ch37x_hcd_data *ch37x_hcd_list;
++static spinlock_t spilock;
++
++static inline s16 frame_diff(u16 left, u16 right)
++{
++	return ((unsigned)(left - right)) % (USB_MAX_FRAME_NUMBER + 1);
++}
++
++static inline struct ch37x_hcd_data *hcd_to_ch37x(struct usb_hcd *hcd)
++{
++	return (struct ch37x_hcd_data *)hcd->hcd_priv;
++}
++
++static inline struct usb_hcd *ch37x_to_hcd(struct ch37x_hcd_data *ch37x_hcd)
++{
++	return container_of((void *)ch37x_hcd, struct usb_hcd, hcd_priv);
++}
++
++static int ch37x_spi_header_then_data(struct spi_device *spi,
++				      const void *header, size_t header_len,
++				      const void *tx_data, void *rx_data,
++				      size_t data_len)
++{
++	struct spi_transfer xfers[2] = { };
++
++	xfers[0].tx_buf = header;
++	xfers[0].len = header_len;
++	xfers[1].tx_buf = tx_data;
++	xfers[1].rx_buf = rx_data;
++	xfers[1].len = data_len;
++
++	return spi_sync_transfer(spi, xfers, ARRAY_SIZE(xfers));
++}
++
++static void ch37x_setpid(struct usb_hcd *hcd, struct urb *urb, bool tog);
++
++static bool change_hub_port_speed(struct usb_hcd *hcd, int index);
++
++static int ch37x_get_port_from_addr(struct ch37x_hcd_data *ch37x_hcd, u8 bus_addr);
++
++static int ch37x_get_port_from_addr_backup(struct ch37x_hcd_data *ch37x_hcd, u8 bus_addr);
++
++static int Write374Byte(struct usb_hcd *hcd, unsigned char mAddr, unsigned char mData)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	struct spi_device *spi = to_spi_device(hcd->self.controller);
++
++	unsigned char header[2];
++	unsigned char txbuf[1];
++	int ret;
++	header[0] = mAddr;
++	header[1] = CMD_SPI_374WRITE;
++	txbuf[0] = mData;
++
++	ret = ch37x_spi_header_then_data(spi, header, ARRAY_SIZE(header),
++					 txbuf, NULL, ARRAY_SIZE(txbuf));
++	ch37x_hcd_dbg_data(ch37x_hcd, "%s:tx:0x%02x,0x%02x,0x%02x\n",
++			   __func__, header[0], header[1], txbuf[0]);
++	if (ret)
++		dev_err(&spi->dev, "%s: reg 0x%02x write 0x%02x failed: %d\n", __func__, mAddr, mData, ret);
++
++	return ret;
++}
++
++static unsigned char Read374Byte(struct usb_hcd *hcd, unsigned char mAddr)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	struct spi_device *spi = to_spi_device(hcd->self.controller);
++
++	unsigned char header[2];
++	unsigned char rxbuf[1] = { 0 };
++	int ret;
++
++	header[0] = mAddr;
++	header[1] = CMD_SPI_374READ;
++
++	ret = ch37x_spi_header_then_data(spi, header, ARRAY_SIZE(header),
++					 NULL, rxbuf, ARRAY_SIZE(rxbuf));
++	if (ret)
++		dev_err(&spi->dev, "%s: reg 0x%02x read failed: %d\n", __func__, mAddr, ret);
++
++	ch37x_hcd_dbg_data(ch37x_hcd, "%s:tx:0x%02x,0x%02x, rx:0x%02x\n",
++			   __func__, header[0], header[1], rxbuf[0]);
++
++	return rxbuf[0];
++}
++
++void Read374Block(struct usb_hcd *hcd, unsigned char mAddr, unsigned char mLen, unsigned char *mBuf)
++{
++	int ret = 0;
++	int i = 0;
++
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	struct spi_device *spi = to_spi_device(hcd->self.controller);
++	unsigned char header[2];
++
++	header[0] = mAddr;
++	header[1] = CMD_SPI_374READ;
++
++	ret = ch37x_spi_header_then_data(spi, header, ARRAY_SIZE(header),
++					 NULL, mBuf, mLen);
++	if (ret)
++		return;
++
++	ch37x_hcd_dbg_data(ch37x_hcd, "%s:mAddr=0x%02x, mLen=%d , ret = %d \n", __func__, mAddr, mLen, ret);
++
++	for (i = 0; i < mLen; i++)
++		ch37x_hcd_dbg_data(ch37x_hcd, "0x%02x,", mBuf[i]);
++
++	ch37x_hcd_dbg_data(ch37x_hcd, "\n");
++}
++
++void Write374Block(struct usb_hcd *hcd, unsigned char mAddr, unsigned char mLen, unsigned char *mBuf)
++{
++	unsigned char txbuf[256];
++	int ret = 0;
++	int i = 0;
++
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	struct spi_device *spi = to_spi_device(hcd->self.controller);
++	unsigned char header[2];
++
++	header[0] = mAddr;
++	header[1] = CMD_SPI_374WRITE;
++	memcpy(txbuf, mBuf, mLen);
++
++	ret = ch37x_spi_header_then_data(spi, header, ARRAY_SIZE(header),
++					 txbuf, NULL, mLen);
++	if (ret)
++		return;
++
++	ch37x_hcd_dbg_data(ch37x_hcd, "%s:mAddr=0x%02x, mLen=%d\n", __func__, mAddr, mLen);
++
++	for (i = 0; i < mLen; i++)
++		ch37x_hcd_dbg_data(ch37x_hcd, "0x%02x,", mBuf[i]);
++
++	ch37x_hcd_dbg_data(ch37x_hcd, "\n");
++}
++
++#ifdef CONFIG_DEBUG_FS
++#define SPI_REGS_BUFSIZE 1024
++
++static ssize_t ch37x_write_proc_data(struct file *file, const char __user *buffer, size_t count, loff_t *data)
++{
++	struct ch37x_hcd_data *ch37x_hcd = NULL;
++	char *buf;
++	ssize_t ret;
++
++	ch37x_hcd = file->private_data;
++
++	buf = kzalloc(32, GFP_KERNEL);
++	if (!buf)
++		return 0;
++
++	ret = copy_from_user(buf, buffer, count);
++	if (ret) {
++		return ret;
++	}
++
++	if ((strstr(buf, "debug") != NULL) || (strstr(buf, "DEBUG") != NULL)) {
++		atomic_set(&ch37x_hcd->debug_flag, 1);
++		kfree(buf);
++		printk("%s:open debug\n", __func__);
++		return count;
++	} else if ((strstr(buf, "data") != NULL) || (strstr(buf, "DATA") != NULL)) {
++		atomic_set(&ch37x_hcd->debug_flag, 2);
++		printk("%s:open data debug\n", __func__);
++	} else if ((strstr(buf, "stop") != NULL) || (strstr(buf, "STOP") != NULL)) {
++		atomic_set(&ch37x_hcd->debug_flag, 0);
++		printk("%s:close debug\n", __func__);
++	} else {
++		printk("%s:invalid command\n", __func__);
++		kfree(buf);
++		return count;
++	}
++	kfree(buf);
++	return count;
++}
++
++static ssize_t ch37x_show_regs(struct file *file, char __user *user_buf, size_t count, loff_t *ppos)
++{
++	struct usb_hcd *hcd = NULL;
++	struct ch37x_hcd_data *ch37x_hcd = NULL;
++	char *buf;
++	u32 len = 0;
++	ssize_t ret;
++
++	ch37x_hcd = file->private_data;
++	hcd = ch37x_to_hcd(ch37x_hcd);
++
++	buf = kzalloc(SPI_REGS_BUFSIZE, GFP_KERNEL);
++	if (!buf)
++		return 0;
++
++	len += snprintf(buf + len, SPI_REGS_BUFSIZE - len, "ch37x usb registers:\n");
++	len += snprintf(buf + len, SPI_REGS_BUFSIZE - len, "=================================\n");
++	len += snprintf(buf + len, SPI_REGS_BUFSIZE - len, "REG_HUB_CTRL: \t\t0x%08x\n",
++			Read374Byte(hcd, REG_HUB_CTRL));
++	len += snprintf(buf + len, SPI_REGS_BUFSIZE - len, "REG_SYS_INFO: \t0x%08x\n", Read374Byte(hcd, REG_SYS_INFO));
++	len += snprintf(buf + len, SPI_REGS_BUFSIZE - len, "REG_SYS_CTRL: \t\t0x%08x\n",
++			Read374Byte(hcd, REG_SYS_CTRL));
++	len += snprintf(buf + len, SPI_REGS_BUFSIZE - len, "REG_USB_SETUP: \t\t0x%08x\n",
++			Read374Byte(hcd, REG_USB_SETUP));
++	len += snprintf(buf + len, SPI_REGS_BUFSIZE - len, "REG_INTER_EN: \t0x%08x\n", Read374Byte(hcd, REG_INTER_EN));
++	len += snprintf(buf + len, SPI_REGS_BUFSIZE - len, "REG_USB_ADDR: \t0x%08x\n", Read374Byte(hcd, REG_USB_ADDR));
++	len += snprintf(buf + len, SPI_REGS_BUFSIZE - len, "REG_INTER_FLAG: \t\t0x%08x\n",
++			Read374Byte(hcd, REG_INTER_FLAG));
++	len += snprintf(buf + len, SPI_REGS_BUFSIZE - len, "REG_USB_STATUS: \t\t0x%08x\n",
++			Read374Byte(hcd, REG_USB_STATUS));
++	len += snprintf(buf + len, SPI_REGS_BUFSIZE - len, "REG_USB_LENGTH: \t\t0x%08x\n",
++			Read374Byte(hcd, REG_USB_LENGTH));
++	len += snprintf(buf + len, SPI_REGS_BUFSIZE - len, "REG_USB_ENDP0: \t\t0x%08x\n",
++			Read374Byte(hcd, REG_USB_ENDP0));
++	len += snprintf(buf + len, SPI_REGS_BUFSIZE - len, "REG_USB_ENDP1: \t\t0x%08x\n",
++			Read374Byte(hcd, REG_USB_ENDP1));
++	len += snprintf(buf + len, SPI_REGS_BUFSIZE - len, "REG_USB_H_PID: \t\t0x%08x\n",
++			Read374Byte(hcd, REG_USB_H_PID));
++	len += snprintf(buf + len, SPI_REGS_BUFSIZE - len, "REG_USB_ENDP2: \t0x%08x\n",
++			Read374Byte(hcd, REG_USB_ENDP2));
++	len += snprintf(buf + len, SPI_REGS_BUFSIZE - len, "REG_USB_H_CTRL: \t0x%08x\n",
++			Read374Byte(hcd, REG_USB_H_CTRL));
++	len += snprintf(buf + len, SPI_REGS_BUFSIZE - len, "=================================\n");
++
++	ret = simple_read_from_buffer(user_buf, count, ppos, buf, len);
++
++	kfree(buf);
++	return ret;
++}
++
++static const struct file_operations ch37x_regs_ops = {
++	.owner = THIS_MODULE,
++	.open = simple_open,
++	.read = ch37x_show_regs,
++	.write = ch37x_write_proc_data,
++	.llseek = default_llseek,
++};
++
++static int ch37x_debugfs_init(struct usb_hcd *hcd)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++
++	ch37x_hcd->debugfs = debugfs_create_dir("ch37x", NULL);
++	if (!ch37x_hcd->debugfs)
++		return -ENOMEM;
++
++	ch37x_hcd->debugfile = debugfs_create_file("registers", S_IFREG | S_IRUGO, ch37x_hcd->debugfs,
++						   (void *)ch37x_hcd, &ch37x_regs_ops);
++	if (!ch37x_hcd->debugfile)
++		return -ENOMEM;
++
++	return 0;
++}
++
++static void ch37x_debugfs_exit(struct usb_hcd *hcd)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++
++	debugfs_remove(ch37x_hcd->debugfile);
++	debugfs_remove_recursive(ch37x_hcd->debugfs);
++}
++
++#else
++static inline int ch37x_debugfs_init(struct usb_hcd *hcd)
++{
++	return 0;
++}
++
++#endif /* CONFIG_DEBUG_FS */
++
++static void host_set_bus_free(struct usb_hcd *hcd)
++{
++	Write374Byte(hcd, REG_USB_SETUP, BIT_SETP_HOST_MODE | BIT_SETP_AUTO_SOF); // USB host mode, enable SOF
++	Write374Byte(hcd, REG_HUB_SETUP, 0x00); // clear BIT_HUB_DISABLE, allow internal ROOT-HUB
++	Write374Byte(hcd, REG_HUB_CTRL, 0x00);	// clear ROOT-HUB message
++}
++
++static void set_host_usb_addr(struct usb_hcd *hcd, unsigned char addr)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	Write374Byte(hcd, REG_USB_ADDR, addr);
++	if (addr)
++		ch37x_hcd->addr = addr;
++	ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d]\n", __func__, __LINE__);
++}
++
++static void host_reset_bus(struct usb_hcd *hcd, int index)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	u8 reghub = 0;
++	u8 bitpolar = 0;
++	u8 bitreset = 0;
++	u8 i = 0;
++
++	set_host_usb_addr(hcd, 0x00);
++	Write374Byte(hcd, REG_USB_H_CTRL, 0x00);
++
++	if (index == 0) {
++		reghub = REG_HUB_SETUP;
++		bitpolar = BIT_HUB0_POLAR;
++		bitreset = BIT_HUB0_RESET;
++	} else if (index == 1) {
++		reghub = REG_HUB_CTRL;
++		bitpolar = BIT_HUB1_POLAR;
++		bitreset = BIT_HUB1_RESET;
++	} else if (index == 2) {
++		reghub = REG_HUB_CTRL;
++		bitpolar = BIT_HUB2_POLAR;
++		bitreset = BIT_HUB2_RESET;
++	}
++
++	Write374Byte(hcd, reghub, (Read374Byte(hcd, reghub) & ~bitpolar) | bitreset);
++	mdelay(15);
++	Write374Byte(hcd, reghub, Read374Byte(hcd, reghub) & ~bitreset);
++	mdelay(1);
++	Write374Byte(hcd, REG_INTER_FLAG, BIT_IF_USB_PAUSE | BIT_IF_DEV_DETECT | BIT_IF_USB_SUSPEND);
++
++	/* check attach & speed & en */
++	for (i = 0; i < 100; i++) {			 // wait USB device re-connect when reset
++		if (change_hub_port_speed(hcd, index)) { // enable ROOT-HUB port
++			break;				 // already connected stably
++		}
++		mdelay(1);
++	}
++	mdelay(30);
++
++	ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d]\n", __func__, __LINE__);
++}
++
++static void check_hub_port_speed(struct usb_hcd *hcd, int index)
++{
++	u8 reghub = 0;
++	u8 regdxin = 0;
++	u8 bitpolar = 0;
++	u8 bitdxin = 0;
++	u8 bitattach = 0;
++	u8 biten = 0;
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++
++	ch37x_hcd_dbg(ch37x_hcd, "%s: index=%d, line[%d]\n", __func__, index, __LINE__);
++
++	if (index == 0) {
++		reghub = REG_HUB_SETUP;
++		regdxin = REG_INTER_FLAG;
++		bitpolar = BIT_HUB0_POLAR;
++		bitdxin = BIT_HUB0_DX_IN;
++		bitattach = BIT_HUB0_ATTACH;
++		biten = BIT_HUB0_EN;
++	} else if (index == 1) {
++		reghub = REG_HUB_CTRL;
++		regdxin = REG_HUB_SETUP;
++		bitpolar = BIT_HUB1_POLAR;
++		bitdxin = BIT_HUB1_DX_IN;
++		bitattach = BIT_HUB1_ATTACH;
++		biten = BIT_HUB1_EN;
++	} else if (index == 2) {
++		reghub = REG_HUB_CTRL;
++		regdxin = REG_HUB_SETUP;
++		bitpolar = BIT_HUB2_POLAR;
++		bitdxin = BIT_HUB2_DX_IN;
++		bitattach = BIT_HUB2_ATTACH;
++		biten = BIT_HUB2_EN;
++	}
++
++	/* If the speed does not match, set the polarity, because the default is full speed enumeration, if there is a mismatch, it is low speed */
++	if (!(Read374Byte(hcd, regdxin) & bitdxin)) {
++		ch37x_hcd->ports[index].port_status.wPortStatus |= USB_PORT_STAT_LOW_SPEED;
++		Write374Byte(hcd, reghub, Read374Byte(hcd, reghub) ^ bitpolar);
++		ch37x_hcd_dbg(ch37x_hcd, "%s: line[%d], lowspeed\n", __func__, __LINE__);
++	} else {
++		ch37x_hcd->ports[index].port_status.wPortStatus &= ~USB_PORT_STAT_LOW_SPEED;
++		ch37x_hcd_dbg(ch37x_hcd, "%s: line[%d], fullspeed\n", __func__, __LINE__);
++	}
++}
++
++static bool change_hub_port_speed(struct usb_hcd *hcd, int index)
++{
++	u8 reghub = 0;
++	u8 regdxin = 0;
++	u8 bitpolar = 0;
++	u8 bitdxin = 0;
++	u8 bitattach = 0;
++	u8 biten = 0;
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++
++	ch37x_hcd_dbg(ch37x_hcd, "%s: index=%d, line[%d]\n", __func__, index, __LINE__);
++
++	if (index == 0) {
++		reghub = REG_HUB_SETUP;
++		regdxin = REG_INTER_FLAG;
++		bitpolar = BIT_HUB0_POLAR;
++		bitdxin = BIT_HUB0_DX_IN;
++		bitattach = BIT_HUB0_ATTACH;
++		biten = BIT_HUB0_EN;
++	} else if (index == 1) {
++		reghub = REG_HUB_CTRL;
++		regdxin = REG_HUB_SETUP;
++		bitpolar = BIT_HUB1_POLAR;
++		bitdxin = BIT_HUB1_DX_IN;
++		bitattach = BIT_HUB1_ATTACH;
++		biten = BIT_HUB1_EN;
++	} else if (index == 2) {
++		reghub = REG_HUB_CTRL;
++		regdxin = REG_HUB_SETUP;
++		bitpolar = BIT_HUB2_POLAR;
++		bitdxin = BIT_HUB2_DX_IN;
++		bitattach = BIT_HUB2_ATTACH;
++		biten = BIT_HUB2_EN;
++	}
++
++	if (Read374Byte(hcd, reghub) & bitattach) {	   // device connected
++		if (!(Read374Byte(hcd, reghub) & biten)) { // not yet enabled
++			/* If the speed does not match, set the polarity, because the default is full speed enumeration, if there is a mismatch, it is low speed */
++			if (!(Read374Byte(hcd, regdxin) & bitdxin)) {
++				ch37x_hcd->ports[index].port_status.wPortStatus |= USB_PORT_STAT_LOW_SPEED;
++				Write374Byte(hcd, reghub, Read374Byte(hcd, reghub) ^ bitpolar);
++				ch37x_hcd_dbg(ch37x_hcd, "%s: line[%d], lowspeed\n", __func__, __LINE__);
++			} else {
++				ch37x_hcd->ports[index].port_status.wPortStatus &= ~USB_PORT_STAT_LOW_SPEED;
++				ch37x_hcd_dbg(ch37x_hcd, "%s: line[%d], fullspeed\n", __func__, __LINE__);
++			}
++		}
++		Write374Byte(hcd, reghub, Read374Byte(hcd, reghub) | biten);
++		ch37x_hcd->ports[index].usbsta = USB_NOADDR;
++
++		return true;
++	}
++	return false;
++}
++
++static void ch37x_manage_address(struct usb_hcd *hcd, struct usb_device *dev)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	int i;
++	bool newdev = true;
++
++	/* only handle nonzero device address */
++	if (dev->devnum != 0) {
++		for (i = 0; i < NUM_PORTS; i++) {
++			if (ch37x_hcd->ports[i].bus_addr == dev->devnum) {
++				newdev = false;
++				break;
++			}
++		}
++		if (newdev) {
++			for (i = 0; i < NUM_PORTS; i++) {
++				if (ch37x_hcd->ports[i].usbsta == USB_NOADDR) {
++					ch37x_hcd->ports[i].usbsta = USB_ADDR;
++					ch37x_hcd->ports[i].bus_addr = ch37x_hcd->ports[i].bus_addr_backup =
++						dev->devnum;
++					ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d], new device connect to ports[%d]\n",
++						      __func__, __LINE__, i);
++					break;
++				}
++			}
++		}
++	}
++}
++
++static void ch37x_set_address(struct usb_hcd *hcd, struct usb_device *dev, int epnum)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++
++	ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d], devnum:%d, %d\n", __func__, __LINE__, dev->devnum, ch37x_hcd->olddevnum);
++	if (dev->devnum != ch37x_hcd->olddevnum) {
++		ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d], devnum:%d, %d\n", __func__, __LINE__, dev->devnum,
++			      ch37x_hcd->olddevnum);
++		ch37x_hcd->olddevnum = dev->devnum;
++	}
++	set_host_usb_addr(hcd, dev->devnum);
++}
++
++static void ch37x_set_speed(struct usb_hcd *hcd, struct usb_device *dev)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	u8 reg_usbsetup;
++
++	reg_usbsetup = Read374Byte(hcd, REG_USB_SETUP);
++	if (dev->speed == USB_SPEED_LOW) {
++		ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d] lowspeed\n", __func__, __LINE__);
++		Write374Byte(hcd, REG_USB_SETUP,
++			     (reg_usbsetup & BIT_SETP_RAM_MODE) | BIT_SETP_HOST_MODE | BIT_SETP_AUTO_SOF |
++				     BIT_SETP_LOW_SPEED);
++	} else {
++		ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d] fullspeed\n", __func__, __LINE__);
++		Write374Byte(hcd, REG_USB_SETUP,
++			     (reg_usbsetup & BIT_SETP_RAM_MODE) | BIT_SETP_HOST_MODE | BIT_SETP_AUTO_SOF); // full-speed
++		Write374Byte(hcd, REG_HUB_SETUP, Read374Byte(hcd, REG_HUB_SETUP) & ~BIT_HUB_PRE_PID); // diable PRE PID
++	}
++}
++
++static void init_ch37x_host(struct usb_hcd *hcd)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	unsigned char val;
++
++	ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d]\n", __func__, __LINE__);
++
++	Write374Byte(hcd, REG_SYS_CTRL, 0x08);
++	msleep(50);
++	Write374Byte(hcd, REG_SYS_CTRL, 0x00);
++	msleep(50);
++	Write374Byte(hcd, REG_USB_SETUP, 0x00);
++	set_host_usb_addr(hcd, 0x00);
++	Write374Byte(hcd, REG_USB_H_CTRL, 0x00);
++	Write374Byte(hcd, REG_INTER_FLAG, BIT_IF_USB_PAUSE | BIT_IF_INTER_FLAG);
++	/* modified on 20220817 */
++	Write374Byte(hcd, REG_INTER_EN, 0x00);
++	Write374Byte(hcd, REG_INTER_EN, BIT_IE_TRANSFER | BIT_IE_DEV_DETECT);
++	Write374Byte(hcd, REG_SYS_CTRL, BIT_CTRL_OE_POLAR);
++	host_set_bus_free(hcd);
++
++	pr_info("%s: REG_INTER_EN:0x%x, REG_SYS_CTRL:0x%x, REG_USB_SETUP:0x%x, REG_HUB_SETUP:0x%x\n", __func__,
++		Read374Byte(hcd, REG_INTER_EN), Read374Byte(hcd, REG_SYS_CTRL), Read374Byte(hcd, REG_USB_SETUP),
++		Read374Byte(hcd, REG_HUB_SETUP));
++
++	Write374Byte(hcd, REG_USB_ADDR, 0x55);
++	val = Read374Byte(hcd, REG_USB_ADDR);
++	if (val != 0x55)
++		pr_err("SPI test error, write 0x55, read 0x%2x.\n", val);
++
++	Write374Byte(hcd, REG_USB_ADDR, 0xaa);
++	val = Read374Byte(hcd, REG_USB_ADDR);
++	if (val != 0xaa)
++		pr_err("SPI test error, write 0xaa, read 0x%2x.\n", val);
++}
++
++static void disable_hub_port(struct usb_hcd *hcd, int index)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++
++	ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d]\n", __func__, __LINE__);
++
++	ch37x_hcd->ports[index].port_status.wPortStatus &=
++		~(USB_PORT_STAT_CONNECTION | USB_PORT_STAT_ENABLE | USB_PORT_STAT_LOW_SPEED);
++	ch37x_hcd->ports[index].port_status.wPortChange |= USB_PORT_STAT_C_CONNECTION | USB_PORT_STAT_C_ENABLE;
++	ch37x_hcd->ports[index].wPortTrigger = RH_PORT_STATUS_CHANGED;
++	/* check if the current urb related to this device */
++	if (ch37x_hcd->curr_urb != NULL) {
++		/* modfied on 202307 */
++		if (ch37x_hcd->curr_urb->dev != NULL) {
++			if (ch37x_hcd->ports[index].bus_addr != 0x00) {
++				if (ch37x_hcd->ports[index].bus_addr == ch37x_hcd->curr_urb->dev->devnum) {
++					ch37x_hcd->curr_urb = NULL;
++					ch37x_hcd->curr_len = 0;
++					ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d] clear current urb here\n", __func__,
++						      __LINE__);
++				}
++			}
++		} else {
++			ch37x_hcd->curr_urb = NULL;
++			ch37x_hcd->curr_len = 0;
++		}
++	}
++	ch37x_hcd->ports[index].bus_addr = 0x00;
++	ch37x_hcd->ports[index].usbsta = USB_UNLINK;
++	if (index == 0) {
++		/* clear control data about HUB0, actually no need to clear it */
++		Write374Byte(hcd, REG_HUB_SETUP, Read374Byte(hcd, REG_HUB_SETUP) & 0xF0);
++	} else if (index == 1) {
++		/* clear control data about HUB1, actually no need to clear it */
++		Write374Byte(hcd, REG_HUB_CTRL, Read374Byte(hcd, REG_HUB_CTRL) & 0xF0);
++	} else if (index == 2) {
++		/* clear control data about HUB2, actually no need to clear it */
++		Write374Byte(hcd, REG_HUB_CTRL, Read374Byte(hcd, REG_HUB_CTRL) & 0x0F);
++	}
++}
++
++static int ch37x_ctrl_setup(struct usb_hcd *hcd, struct urb *urb)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++
++	ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d], first:0x%x 0x%x\n", __func__, __LINE__,
++		      *((unsigned char *)urb->setup_packet), *((unsigned char *)urb->setup_packet + 1));
++
++	Write374Block(hcd, RAM_HOST_TRAN, 8, urb->setup_packet);
++	Write374Byte(hcd, REG_USB_LENGTH, 8);
++	return CH374_TOKEN_SETUP;
++}
++
++static int ch37x_transfer_in(struct usb_hcd *hcd, struct urb *urb)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	int epnum = usb_pipeendpoint(urb->pipe);
++
++	ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d],epnum=%d\n", __func__, __LINE__, epnum);
++
++	ch37x_hcd->curr_len = 0;
++
++	return CH374_TOKEN_BULK_IN(epnum);
++}
++
++static int ch37x_transfer_out(struct usb_hcd *hcd, struct urb *urb)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	int epnum = usb_pipeendpoint(urb->pipe);
++	u32 max_packet;
++	void *src;
++
++	src = urb->transfer_buffer + urb->actual_length;
++
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0))
++	max_packet = usb_maxpacket(urb->dev, urb->pipe);
++#else
++	max_packet = usb_maxpacket(urb->dev, urb->pipe, 1);
++#endif
++	if (max_packet > MAX_FIFO_SIZE) {
++		ch37x_hcd->urb_done = -EMSGSIZE;
++		return -EMSGSIZE;
++	}
++	ch37x_hcd->curr_len = min((urb->transfer_buffer_length - urb->actual_length), max_packet);
++
++	Write374Block(hcd, RAM_HOST_TRAN, ch37x_hcd->curr_len, src);
++	Write374Byte(hcd, REG_USB_LENGTH, ch37x_hcd->curr_len);
++
++	ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d]\n", __func__, __LINE__);
++
++	return CH374_TOKEN_BULK_OUT(epnum);
++}
++
++/*
++ * Issue the next host-transfer command.
++ * Caller must NOT hold HCD spinlock.
++ */
++static void ch37x_next_transfer(struct usb_hcd *hcd, int epnum)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	struct urb *urb = ch37x_hcd->curr_urb;
++	struct ch37x_ep *ch37x_ep;
++	int cmd = -EINVAL;
++	int index = -1;
++
++	if (!urb) {
++		ch37x_hcd_dbg(ch37x_hcd, "%s:URB NULL\n", __func__);
++		return; /* nothing to do */
++	}
++
++	if (urb->ep->hcpriv) {
++		ch37x_ep = urb->ep->hcpriv;
++		ch37x_hcd_dbg(ch37x_hcd, "ch37x_next_transfer:full %d\n", ch37x_ep->pkt_state);
++	} else {
++		ch37x_hcd_dbg(ch37x_hcd, "%s:NULL\n", __func__);
++		return;
++	}
++
++	index = ch37x_get_port_from_addr(ch37x_hcd, urb->dev->devnum);
++
++	switch (ch37x_ep->pkt_state) {
++	case PKT_STATE_SETUP:
++		cmd = ch37x_ctrl_setup(hcd, urb);
++		ch37x_hcd->pid_state = CH374_DEF_USB_PID_SETUP;
++		break;
++	case PKT_STATE_TRANSFER:
++		if (usb_urb_dir_in(urb)) {
++			cmd = ch37x_transfer_in(hcd, urb);
++			ch37x_hcd->pid_state = CH374_DEF_USB_PID_IN;
++		} else {
++			cmd = ch37x_transfer_out(hcd, urb);
++			ch37x_hcd->pid_state = CH374_DEF_USB_PID_OUT;
++		}
++		break;
++	default:
++		break;
++	}
++	if (cmd < 0) {
++		ch37x_hcd_dbg(ch37x_hcd, "%s:cmd < 0\n", __func__);
++		return;
++	}
++
++	Write374Byte(hcd, REG_USB_H_PID, cmd);
++	if (ch37x_hcd->pid_state == CH374_DEF_USB_PID_SETUP && ch37x_ep->curr_pkt == PKT_STATE_SETUP) {
++		ch37x_hcd_dbg(ch37x_hcd, "%s: index:%d, line[%d]\n", __func__, index, __LINE__);
++		Write374Byte(hcd, REG_USB_H_CTRL, BIT_HOST_START);
++	} else if (ch37x_ep->curr_pkt == PKT_STATE_SETUP) {
++		ch37x_hcd_dbg(ch37x_hcd, "%s: index:%d, line[%d], controltog: %d\n", __func__, index, __LINE__,
++			      ch37x_hcd->ports[index].controltog);
++		Write374Byte(hcd, REG_USB_H_CTRL,
++			     (ch37x_hcd->ports[index].controltog ?
++				      (BIT_HOST_START | BIT_HOST_TRAN_TOG | BIT_HOST_RECV_TOG) :
++				      BIT_HOST_START));
++	} else if (ch37x_ep->curr_pkt == PKT_STATE_TRANSFER) {
++		if (ch37x_hcd->pid_state == CH374_DEF_USB_PID_IN) {
++			ch37x_hcd_dbg(ch37x_hcd, "%s - transferintog:%d, epnum:%d!!!!!\n", __func__,
++				      ch37x_hcd->ports[index].transferintog[epnum], epnum);
++			Write374Byte(hcd, REG_USB_H_CTRL,
++				     (ch37x_hcd->ports[index].transferintog[epnum] ?
++					      (BIT_HOST_START | BIT_HOST_TRAN_TOG | BIT_HOST_RECV_TOG) :
++					      BIT_HOST_START));
++		} else {
++			ch37x_hcd_dbg(ch37x_hcd, "%s - transferouttog:%d, epnum:%d!!!!!\n", __func__,
++				      ch37x_hcd->ports[index].transferouttog[epnum], epnum);
++			Write374Byte(hcd, REG_USB_H_CTRL,
++				     (ch37x_hcd->ports[index].transferouttog[epnum] ?
++					      (BIT_HOST_START | BIT_HOST_TRAN_TOG | BIT_HOST_RECV_TOG) :
++					      BIT_HOST_START));
++		}
++	}
++	ch37x_hcd_dbg(ch37x_hcd, "%s: index:%d, line[%d], end\n", __func__, index, __LINE__);
++}
++
++/*
++ * Find the next URB to process and start its execution.
++ */
++static int ch37x_select_and_start_urb(struct usb_hcd *hcd)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	struct urb *urb, *curr_urb = NULL;
++	struct ch37x_ep *ch37x_ep;
++	int epnum;
++	struct usb_host_endpoint *ep;
++	struct list_head *pos;
++	unsigned long flags;
++	int index;
++	u8 setup_packet_suspend[] = { 0x00, 0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00 };
++
++	ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d] begin\n", __func__, __LINE__);
++
++	spin_lock_irqsave(&ch37x_hcd->lock, flags);
++	if (list_empty(&ch37x_hcd->ep_list)) {
++		ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d] list empty now\n", __func__, __LINE__);
++		spin_unlock_irqrestore(&ch37x_hcd->lock, flags);
++		return 0;
++	}
++
++	list_for_each(pos, &ch37x_hcd->ep_list) {
++		urb = NULL;
++		ch37x_ep = container_of(pos, struct ch37x_ep, ep_list);
++		ep = ch37x_ep->ep;
++
++		if (list_empty(&ep->urb_list))
++			continue;
++		urb = list_first_entry(&ep->urb_list, struct urb, urb_list);
++		if (urb->unlinked) {
++			ch37x_hcd_dbg(ch37x_hcd, "%s: URB %p unlinked=%d", __func__, urb, urb->unlinked);
++			ch37x_hcd->curr_urb = urb;
++			/* modified on 202307 */
++			ch37x_hcd->urb_done = 1;
++			spin_unlock_irqrestore(&ch37x_hcd->lock, flags);
++			return 1;
++		}
++		if (urb->dev->devnum != 0) {
++			index = ch37x_get_port_from_addr_backup(ch37x_hcd, urb->dev->devnum);
++			if (index != NUM_PORTS) {
++				if (ch37x_hcd->ports[index].usbsta == USB_UNLINK) {
++					ch37x_hcd_dbg(ch37x_hcd, "%s: URB-ep %d canceled cause disconnect", __func__,
++						      urb->dev->devnum);
++					ch37x_hcd->curr_urb = urb;
++					ch37x_hcd->urb_done = -ESHUTDOWN;
++					spin_unlock_irqrestore(&ch37x_hcd->lock, flags);
++					return 1;
++				}
++			}
++		}
++		/*move current ep to tail*/
++		list_move_tail(pos, &ch37x_hcd->ep_list);
++		curr_urb = urb;
++		goto done;
++	}
++done:
++	atomic_set(&ch37x_hcd->urb_process, 0);
++	if (!curr_urb) {
++		spin_unlock_irqrestore(&ch37x_hcd->lock, flags);
++		ch37x_hcd_dbg(ch37x_hcd, "%s: curr_urb null here!\n ", __func__);
++		return 0;
++	}
++	urb = ch37x_hcd->curr_urb = curr_urb;
++	epnum = usb_endpoint_num(&curr_urb->ep->desc);
++	ch37x_manage_address(hcd, urb->dev);
++	index = ch37x_get_port_from_addr(ch37x_hcd, urb->dev->devnum);
++	if (ch37x_ep->retransmit) {
++		ch37x_ep->retransmit = 0;
++		ch37x_hcd_dbg(ch37x_hcd, "Retransmit here!\n");
++	} else {
++		if (usb_endpoint_xfer_control(&ep->desc)) {
++			/*
++			 * See USB 2.0 spec section 8.6.1
++			 * Initialization via SETUP Token:
++			 */
++			usb_settoggle(urb->dev, epnum, 0, 1);
++			usb_settoggle(urb->dev, epnum, 1, 1);
++			ch37x_ep->pkt_state = PKT_STATE_SETUP;
++			ch37x_ep->curr_pkt = PKT_STATE_SETUP;
++			ch37x_hcd->ports[index].controltog = true;
++
++			// added on 20231221
++			if (memcmp(setup_packet_suspend, urb->setup_packet, sizeof(setup_packet_suspend)) == 0) {
++				ch37x_hcd_dbg(ch37x_hcd, "Suspend Setup packet captured for ports[%d].\n", index);
++				ch37x_hcd->ports[index].todosuspend = true;
++			}
++
++			ch37x_hcd_dbg(ch37x_hcd, "New Setup packet! --> ports[%d].controltog: %d\n", index,
++				      ch37x_hcd->ports[index].controltog);
++			ch37x_hcd_dbg(
++				ch37x_hcd, "%s:line[%d], first:0x%x 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x\n", __func__,
++				__LINE__, *((unsigned char *)urb->setup_packet),
++				*((unsigned char *)urb->setup_packet + 1), *((unsigned char *)urb->setup_packet + 2),
++				*((unsigned char *)urb->setup_packet + 3), *((unsigned char *)urb->setup_packet + 4),
++				*((unsigned char *)urb->setup_packet + 5), *((unsigned char *)urb->setup_packet + 6),
++				*((unsigned char *)urb->setup_packet + 7));
++		} else {
++			ch37x_ep->pkt_state = PKT_STATE_TRANSFER;
++			ch37x_ep->curr_pkt = PKT_STATE_TRANSFER;
++		}
++	}
++	spin_unlock_irqrestore(&ch37x_hcd->lock, flags);
++
++	/*
++	 * set address
++	 */
++	ch37x_set_address(hcd, urb->dev, epnum);
++	ch37x_set_speed(hcd, urb->dev);
++	ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d], index=%d, epnum=%d\n", __func__, __LINE__, index, epnum);
++	ch37x_next_transfer(hcd, epnum);
++	return 1;
++}
++
++/*
++ * Caller must NOT hold HCD spinlock.
++ */
++static int ch37x_recv_data_available(struct usb_hcd *hcd, struct urb *curr_urb)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	struct urb *urb = curr_urb;
++	size_t remaining, transfer_size;
++	u32 max_packet;
++	u8 rcvLen;
++
++	rcvLen = Read374Byte(hcd, REG_USB_LENGTH);
++
++	if (rcvLen > MAX_FIFO_SIZE) {
++		rcvLen = MAX_FIFO_SIZE;
++	}
++
++	if (urb->actual_length >= urb->transfer_buffer_length)
++		remaining = 0;
++	else
++		remaining = urb->transfer_buffer_length - urb->actual_length;
++
++	ch37x_hcd_dbg(ch37x_hcd, "%s:remaining=%d, rcvLen=0x%x\n", __func__, remaining, rcvLen);
++	ch37x_hcd_dbg(ch37x_hcd, "%s:transfer_buffer_length=%d, actual_length=0x%x\n", __func__,
++		      urb->transfer_buffer_length, urb->actual_length);
++
++	transfer_size = rcvLen;
++	if (transfer_size > remaining) {
++		transfer_size = remaining;
++	}
++	if (transfer_size > 0) {
++		void *dst = urb->transfer_buffer + urb->actual_length;
++
++		Read374Block(hcd, RAM_HOST_RECV, transfer_size, dst);
++
++		urb->actual_length += transfer_size;
++		ch37x_hcd->curr_len = transfer_size;
++	}
++
++	if (urb->actual_length >= urb->transfer_buffer_length)
++		return 1; /* read is complete, so we're done */
++			  /*
++	 * USB 2.0 Section 5.3.2 Pipes: packets must be full size
++	 * except for last one.
++	 */
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0))
++	max_packet = usb_maxpacket(urb->dev, urb->pipe);
++#else
++	max_packet = usb_maxpacket(urb->dev, urb->pipe, 0);
++#endif
++	if (max_packet > MAX_FIFO_SIZE) {
++		pr_err("%s: packet-size of %u too big for ch37x (limit is %u bytes)", __func__, max_packet,
++		       MAX_FIFO_SIZE);
++		return -EINVAL;
++	}
++
++	if (rcvLen == 0 || (rcvLen & (max_packet - 1)))
++		return 1;
++	else
++		return 0;
++}
++
++static int ch37x_urb_done(struct usb_hcd *hcd)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	unsigned long flags;
++	struct urb *urb;
++	int status;
++	int oldstatus;
++
++	oldstatus = status = ch37x_hcd->urb_done;
++	ch37x_hcd_dbg(ch37x_hcd, "%s start:line[%d], status=%d\n", __func__, __LINE__, status);
++	ch37x_hcd->urb_done = 0;
++	ch37x_hcd->isLastSetup = false;
++	if (status > 0)
++		status = 0;
++
++	urb = ch37x_hcd->curr_urb;
++	if (urb) {
++		ch37x_hcd_dbg(ch37x_hcd, "%s line[%d], unlink here!\n", __func__, __LINE__);
++		ch37x_hcd->curr_urb = NULL;
++		if (oldstatus != 2) {
++			spin_lock_irqsave(&ch37x_hcd->lock, flags);
++			usb_hcd_unlink_urb_from_ep(hcd, urb);
++			spin_unlock_irqrestore(&ch37x_hcd->lock, flags);
++			/* must be called without the HCD spinlock: */
++			usb_hcd_giveback_urb(hcd, urb, status);
++		} else
++			ch37x_hcd_dbg(ch37x_hcd, "%s line[%d], unlinked in check_unlink\n", __func__, __LINE__);
++	}
++	ch37x_hcd_dbg(ch37x_hcd, "%s end:line[%d]\n", __func__, __LINE__);
++	return 1;
++}
++
++static void ch37x_slow_retransmit(struct usb_hcd *hcd)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	struct urb *urb = ch37x_hcd->curr_urb;
++	struct ch37x_ep *ch37x_ep;
++
++	ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d] Slow retransmit\n", __func__, __LINE__);
++	ch37x_ep = urb->ep->hcpriv;
++	ch37x_ep->retransmit = 1;
++	ch37x_hcd->curr_urb = NULL;
++}
++
++static void ch37x_handle_error(struct usb_hcd *hcd, u8 result)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	u8 result_code = result & BIT_STAT_DEV_RESP;
++	struct urb *urb = ch37x_hcd->curr_urb;
++	//struct ch37x_ep *ch37x_ep = urb->ep->hcpriv;
++	struct ch37x_ep *ch37x_ep = NULL;
++	bool tmp_tog = false;
++	int epnum;
++	int dirin;
++	int index = -1;
++
++	if (!urb) {
++		ch37x_hcd_dbg(ch37x_hcd, "%s: 0x%p\n ", __func__, urb);
++		return;
++	}
++	if (!urb->ep) {
++		ch37x_hcd_dbg(ch37x_hcd, "%s:urb->ep=0x%p\n ", __func__, urb->ep);
++		return;
++	}
++	if (!urb->ep->hcpriv) {
++		ch37x_hcd_dbg(ch37x_hcd, "%s:urb->ep=0x%p\n ", __func__, urb->ep->hcpriv);
++		/* added on 202307 */
++		ch37x_hcd->curr_urb = NULL;
++		return;
++	}
++
++	ch37x_ep = urb->ep->hcpriv;
++	epnum = usb_endpoint_num(&urb->ep->desc);
++	dirin = usb_endpoint_dir_in(&urb->ep->desc);
++
++	index = ch37x_get_port_from_addr(ch37x_hcd, urb->dev->devnum);
++
++	switch (result_code) {
++	case DEF_USB_PID_ACK: /* this shouldn't happen */
++		return;
++	case DEF_USB_PID_STALL:
++		ch37x_hcd->urb_done = -EPIPE;
++		//		ch37x_urb_done(hcd);
++		if (dirin)
++			ch37x_hcd->ports[index].transferintog[epnum] = false;
++		else
++			ch37x_hcd->ports[index].transferouttog[epnum] = false;
++		ch37x_hcd_dbg_data(ch37x_hcd, "%s: urb_done=%d\n", __func__, ch37x_hcd->urb_done);
++		break;
++	case DEF_USB_PID_NAK:
++		/*
++		 * Device wasn't ready for data or has no data
++		 * available: retry the packet again.
++		 */
++		if (!ch37x_ep) {
++			ch37x_hcd_dbg_data(ch37x_hcd, "%s: ch37x_ep=0x%p, naks=0x%x\n ", __func__, ch37x_ep,
++					   ch37x_ep->naks);
++			return;
++		}
++
++		if (ch37x_ep->curr_pkt == PKT_STATE_SETUP && ch37x_hcd->isLastSetup == true) {
++			ch37x_hcd_dbg_data(ch37x_hcd, "%s: ----> DEF_USB_PID_NAK, get IN package again \n ", __func__);
++			if (usb_urb_dir_in(urb))
++				tmp_tog = false;
++			else
++				tmp_tog = true;
++			ch37x_setpid(hcd, urb, tmp_tog);
++			return;
++		}
++
++		if (ch37x_ep->naks++ < NAK_MAX_FAST_RETRANSMITS) {
++			ch37x_next_transfer(hcd, epnum);
++		} else
++			ch37x_slow_retransmit(hcd);
++
++		ch37x_hcd_dbg_data(ch37x_hcd, "%s:line[%d] DEF_USB_PID_NAK\n", __func__, __LINE__);
++
++		break;
++	default:
++		ch37x_slow_retransmit(hcd);
++		break;
++	}
++}
++
++/*
++ * Caller must NOT hold HCD spinlock.
++ */
++static int ch37x_transfer_out_done(struct usb_hcd *hcd, struct urb *urb)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++
++	ch37x_hcd_dbg_data(ch37x_hcd, "%s:line[%d], urb=0x%p\n", __func__, __LINE__, urb);
++	urb->actual_length += ch37x_hcd->curr_len;
++	if (urb->actual_length < urb->transfer_buffer_length)
++		return 0;
++	if (urb->transfer_flags & URB_ZERO_PACKET) {
++		/*
++		 * Some hardware needs a zero-size packet at the end
++		 * of a bulk-out transfer if the last transfer was a
++		 * full-sized packet (i.e., such hardware use <
++		 * max_packet as an indicator that the end of the
++		 * packet has been reached).
++		 */
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0))
++		u32 max_packet = usb_maxpacket(urb->dev, urb->pipe);
++#else
++		u32 max_packet = usb_maxpacket(urb->dev, urb->pipe, 1);
++#endif
++
++		if (ch37x_hcd->curr_len == max_packet)
++			return 0;
++	}
++	return 1;
++}
++
++static int ch37x_handle_pid_status(struct usb_hcd *hcd, int result)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	int retval = result & BIT_STAT_DEV_RESP;
++
++	switch (ch37x_hcd->pid_state) {
++	case CH374_DEF_USB_PID_SETUP:
++	case CH374_DEF_USB_PID_OUT:
++		if (retval == DEF_USB_PID_ACK)
++			return result;
++		else
++			return (retval | 0x20);
++		break;
++	case CH374_DEF_USB_PID_IN:
++		if (M_IS_HOST_IN_DATA(retval)) {
++			if (result & BIT_STAT_TOG_MATCH) {
++				/*keep high four bits*/
++				result = ((result & BIT_HOST_PID_TOKEN) | DEF_USB_PID_ACK);
++				return result;
++			}
++
++		} else if (retval == DEF_USB_PID_STALL || retval == DEF_USB_PID_NAK) {
++			return (retval | 0x20);
++		} else if (!M_IS_HOST_TIMEOUT(retval)) {
++			return (retval | 0x20);
++		}
++		break;
++	default:
++		break;
++	}
++	return result;
++}
++
++static void ch37x_setpid(struct usb_hcd *hcd, struct urb *urb, bool tog)
++{
++	int epnum = usb_pipeendpoint(urb->pipe);
++
++	Write374Byte(hcd, REG_USB_LENGTH, 0);
++	usleep_range(500, 600);
++	Write374Byte(hcd, REG_USB_H_PID, tog ? CH374_TOKEN_BULK_IN(epnum) : CH374_TOKEN_BULK_OUT(epnum));
++	Write374Byte(hcd, REG_USB_H_CTRL, BIT_HOST_START | BIT_HOST_TRAN_TOG | BIT_HOST_RECV_TOG);
++}
++
++/*
++ * Caller must NOT hold HCD spinlock.
++ */
++static void ch37x_host_transfer_done(struct usb_hcd *hcd, u8 status)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	struct urb *urb = ch37x_hcd->curr_urb;
++	struct ch37x_ep *ch37x_ep;
++	bool tog = false;
++	u8 result_code;
++	int urb_done = 0;
++	int epnum;
++	int index = -1;
++
++	result_code = ch37x_handle_pid_status(hcd, status);
++	result_code &= BIT_STAT_DEV_RESP;
++
++	ch37x_hcd_dbg_data(ch37x_hcd, "%s:REG_USB_STATUS(0x%x), pid_status=0x%x\n", __func__, status, result_code);
++
++	usleep_range(200, 240);
++
++	if (!urb) {
++		ch37x_hcd_dbg(ch37x_hcd, "%s: 0x%p\n ", __func__, urb);
++		return;
++	}
++	if (!urb->ep) {
++		ch37x_hcd_dbg(ch37x_hcd, "%s:urb->ep = 0x%p\n ", __func__, urb->ep);
++		return;
++	}
++	if (!urb->ep->hcpriv) {
++		ch37x_hcd_dbg(ch37x_hcd, "%s:urb->ep->hcpriv = 0x%p\n ", __func__, urb->ep->hcpriv);
++		/* added on 20220630 */
++		ch37x_hcd->curr_urb = NULL;
++		return;
++	}
++	if (unlikely(result_code != DEF_USB_PID_ACK)) {
++		if (ch37x_hcd->curr_urb)
++			ch37x_handle_error(hcd, result_code);
++		return;
++	}
++
++	if (urb->unlinked) {
++		ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d] urb unlinked here !!!!\n ", __func__, __LINE__);
++		if (ch37x_hcd->curr_urb) {
++			ch37x_hcd->curr_urb = NULL;
++		}
++		ch37x_hcd->isLastSetup = false;
++		return;
++	}
++	ch37x_ep = urb->ep->hcpriv;
++	ch37x_ep->naks = 0;
++	epnum = usb_endpoint_num(&urb->ep->desc);
++
++	index = ch37x_get_port_from_addr(ch37x_hcd, urb->dev->devnum);
++
++	if (ch37x_ep->curr_pkt == PKT_STATE_SETUP && ch37x_hcd->isLastSetup == true) {
++		ch37x_hcd->isLastSetup = false;
++		urb_done = 1;
++		ch37x_hcd->urb_done = urb_done;
++		ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d], done for setup\n", __func__, __LINE__);
++		return;
++	}
++
++	switch (ch37x_ep->pkt_state) {
++	case PKT_STATE_SETUP:
++		if (urb->transfer_buffer_length > 0) {
++			ch37x_ep->pkt_state = PKT_STATE_TRANSFER;
++			ch37x_hcd_dbg_data(ch37x_hcd, "%s:line[%d], PKT_STATE_SETUP, len: %d\n", __func__, __LINE__,
++					   urb->transfer_buffer_length);
++		} else {
++			ch37x_hcd_dbg_data(ch37x_hcd, "%s:line[%d], PKT_STATE_SETUP No data\n", __func__, __LINE__);
++			if (usb_urb_dir_in(urb)) {
++				tog = false;
++			} else {
++				/*urb dir is out and transfer length = 0*/
++				tog = true;
++			}
++			ch37x_hcd->isLastSetup = true;
++			urb_done = 1;
++		}
++		break;
++
++	case PKT_STATE_TRANSFER:
++		if (usb_urb_dir_in(urb)) {
++			urb_done = ch37x_recv_data_available(hcd, urb);
++			if (ch37x_ep->curr_pkt == PKT_STATE_SETUP) {
++				ch37x_hcd->ports[index].controltog = ch37x_hcd->ports[index].controltog ? false : true;
++				if (urb_done) {
++					ch37x_hcd->isLastSetup = true;
++					ch37x_hcd->ports[index].controltog = true;
++					tog = false;
++				}
++			} else {
++				ch37x_hcd->ports[index].transferintog[epnum] =
++					ch37x_hcd->ports[index].transferintog[epnum] ? false : true;
++				ch37x_hcd_dbg_data(ch37x_hcd, "%s - transferintog:%d, epnum:%d !!!!!\n", __func__,
++						   ch37x_hcd->ports[index].transferintog[epnum], epnum);
++			}
++		} else {
++			urb_done = ch37x_transfer_out_done(hcd, urb);
++			if (ch37x_ep->curr_pkt == PKT_STATE_SETUP) {
++				ch37x_hcd->ports[index].controltog = ch37x_hcd->ports[index].controltog ? false : true;
++				if (urb_done) {
++					ch37x_hcd->isLastSetup = true;
++					ch37x_hcd->ports[index].controltog = true;
++					tog = true;
++				}
++			} else {
++				ch37x_hcd->ports[index].transferouttog[epnum] =
++					ch37x_hcd->ports[index].transferouttog[epnum] ? false : true;
++				ch37x_hcd_dbg_data(ch37x_hcd, "%s - transferouttog:%d, epnum:%d !!!!!\n", __func__,
++						   ch37x_hcd->ports[index].transferouttog[epnum], epnum);
++			}
++		}
++		break;
++	default:
++		break;
++	}
++
++	/* still need to wait pid status */
++	if (urb_done && ch37x_ep->curr_pkt == PKT_STATE_SETUP && ch37x_hcd->isLastSetup == true) {
++		urb_done = 0;
++		if (tog) {
++			ch37x_hcd->pid_state = CH374_DEF_USB_PID_IN;
++		} else {
++			ch37x_hcd->pid_state = CH374_DEF_USB_PID_OUT;
++		}
++		ch37x_setpid(hcd, urb, tog);
++	} else if (urb_done) {
++		ch37x_hcd->urb_done = urb_done;
++		//		ch37x_urb_done(hcd);
++	} else {
++		ch37x_hcd_dbg_data(ch37x_hcd, "%s: go to next transfer\n", __func__);
++		ch37x_next_transfer(hcd, epnum);
++	}
++	ch37x_hcd_dbg_data(ch37x_hcd, "%s:end, urb_done = %d\n", __func__, urb_done);
++}
++
++/*
++ * Caller must NOT hold HCD spinlock.
++ */
++static void ch37x_detect_conn(struct usb_hcd *hcd, int index)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	int i = 0;
++	u8 ureg = 0;
++	u8 reghub = 0;
++	u8 bitattach = 0;
++	u8 usbstatusall = 0;
++
++	if (index == 0) {
++		reghub = REG_HUB_SETUP;
++		bitattach = BIT_HUB0_ATTACH;
++	} else if (index == 1) {
++		reghub = REG_HUB_CTRL;
++		bitattach = BIT_HUB1_ATTACH;
++	} else if (index == 2) {
++		reghub = REG_HUB_CTRL;
++		bitattach = BIT_HUB2_ATTACH;
++	}
++	ch37x_hcd_dbg(ch37x_hcd, "%s: wPortStatus[%d]:0x%x, REG_HUB_SETUP(CTRL) = 0x%x start\n", __func__, index,
++		      ch37x_hcd->ports[index].port_status.wPortStatus, Read374Byte(hcd, reghub));
++
++	if ((Read374Byte(hcd, reghub) & bitattach) && (ch37x_hcd->ports[index].port_status.wPortStatus == 0)) {
++		msleep(50);
++		if ((Read374Byte(hcd, reghub) & bitattach) && (ch37x_hcd->ports[index].port_status.wPortStatus == 0)) {
++			pr_info("%s:-------connect-------, index=%d\n", __func__, index);
++			ch37x_hcd->ports[index].ch37x_usb_flag = 1;
++			ch37x_hcd->ports[index].bus_addr_backup = 0x00;
++			check_hub_port_speed(hcd, index);
++			ch37x_hcd->ports[index].port_status.wPortStatus |= USB_PORT_STAT_CONNECTION;
++			ch37x_hcd->ports[index].port_status.wPortChange |= USB_PORT_STAT_C_CONNECTION;
++			ch37x_hcd->ports[index].wPortTrigger = RH_PORT_STATUS_CHANGED;
++			msleep(50);
++		}
++	} else if (!(Read374Byte(hcd, reghub) & bitattach) && ch37x_hcd->ports[index].port_status.wPortStatus) {
++		pr_info("%s:-------disconnect-------, index=%d\n", __func__, index);
++		ch37x_hcd->ports[index].ch37x_usb_flag = 0;
++		disable_hub_port(hcd, index);
++		msleep(50);
++		for (i = 0; i < NUM_PORTS; i++) {
++			usbstatusall += ch37x_hcd->ports[index].ch37x_usb_flag;
++		}
++		// check if all devices disconnected
++		if (usbstatusall == 0) {
++			ch37x_hcd->curr_urb = NULL;
++			ch37x_hcd->curr_len = 0;
++		}
++	} else {
++		ureg = Read374Byte(hcd, REG_INTER_FLAG);
++		pr_info("%s:-------ureg3 = 0x%x-------\n", __func__, ureg);
++		return;
++	}
++
++	// only clear the device hotpluged
++	ch37x_hcd->ports[index].bus_addr = 0x00;
++	ch37x_hcd->ports[index].controltog = false;
++	for (i = 0; i < 4; i++) {
++		ch37x_hcd->ports[index].transferintog[i] = false;
++		ch37x_hcd->ports[index].transferouttog[i] = false;
++	}
++	Write374Byte(hcd, REG_INTER_FLAG, BIT_IF_USB_PAUSE | BIT_IF_INTER_FLAG);
++	//	pr_info("%s: wPortStatus=0x%x i=%d end\n",__func__, ch37x_hcd->port_status.wPortStatus, i);
++}
++
++static void ch37x_set_check_connect(struct usb_hcd *hcd)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	set_bit(CHECK_CONNECT, &ch37x_hcd->todo);
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0))
++	queue_kthread_work(&ch37x_hcd->spi_worker, &ch37x_hcd->spi_work);
++#else
++	kthread_queue_work(&ch37x_hcd->spi_worker, &ch37x_hcd->spi_work);
++#endif
++	wake_up_process(ch37x_hcd->spi_thread);
++	ch37x_hcd_dbg(ch37x_hcd, "%s:set bit CHECK_CONNECT\n", __func__);
++}
++
++/**
++ * interrupt handler
++ */
++static irqreturn_t ch37x_irq_thread_handler(int irq, void *dev_id)
++{
++	struct usb_hcd *hcd = dev_id;
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	u8 intvalue;
++
++	intvalue = Read374Byte(hcd, REG_INTER_FLAG);
++
++	ch37x_hcd_dbg_data(ch37x_hcd, "line[%d], reg:0x%02x\n", __LINE__, intvalue);
++
++	if ((intvalue & 0x03) == 0)
++		return IRQ_HANDLED;
++
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 0))
++	if (ch37x_hcd->spi_thread && ch37x_hcd->spi_thread->state != TASK_RUNNING) {
++#else
++	if (ch37x_hcd->spi_thread) {
++#endif
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0))
++		queue_kthread_work(&ch37x_hcd->spi_worker, &ch37x_hcd->spi_work);
++#else
++		kthread_queue_work(&ch37x_hcd->spi_worker, &ch37x_hcd->spi_work);
++#endif
++		wake_up_process(ch37x_hcd->spi_thread);
++	}
++
++	if (!test_and_set_bit(ENABLE_IRQ, &ch37x_hcd->todo)) {
++		disable_irq_nosync(ch37x_hcd->irq);
++	}
++
++	return IRQ_HANDLED;
++}
++
++static irqreturn_t ch37x_irq_handler(int irq, void *dev_id)
++{
++	return IRQ_WAKE_THREAD;
++}
++
++/* return zero if no work was performed, 1 otherwise.  */
++static int ch37x_handle_irqs(struct usb_hcd *hcd)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	u8 interrupt;
++	u8 status;
++
++	interrupt = Read374Byte(hcd, REG_INTER_FLAG);
++	ch37x_hcd_dbg_data(ch37x_hcd, "%s:line[%d], interrupt: 0x%x, REG_H_PID(0x%x)\n", __func__, __LINE__, interrupt,
++			   Read374Byte(hcd, REG_USB_H_PID));
++
++	if ((interrupt & 0x03) == 0) {
++		return 0;
++	}
++	if (interrupt & BIT_IF_DEV_DETECT) {
++		/*
++      	 * set 1 to clear BIT_IF_DEV_DETECT
++         */
++		Write374Byte(hcd, REG_INTER_FLAG, BIT_IF_DEV_DETECT);
++		ch37x_set_check_connect(hcd);
++	}
++
++	if (interrupt & BIT_IF_TRANSFER) {
++		Write374Byte(hcd, REG_INTER_FLAG, BIT_IF_USB_PAUSE | BIT_IF_TRANSFER);
++		status = Read374Byte(hcd, REG_USB_STATUS);
++		ch37x_host_transfer_done(hcd, status);
++	}
++
++	/*
++	 * Now process interrupts that may affect HCD state
++	 * other than the end-points:
++	 */
++
++	return 1;
++}
++
++static int ch37x_reset_hcd(struct usb_hcd *hcd)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	int index;
++
++	init_ch37x_host(hcd);
++	if (ch37x_hcd->addr)
++		set_host_usb_addr(hcd, ch37x_hcd->addr);
++
++	for (index = 0; index < NUM_PORTS; index++)
++		ch37x_detect_conn(hcd, index);
++
++	pr_info("%s:line[%d]\n", __func__, __LINE__);
++
++	return 1;
++}
++
++static int ch37x_check_unlink(struct usb_hcd *hcd)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	struct list_head *pos, *upos, *next_upos;
++	struct ch37x_ep *ch37x_ep;
++	struct urb *urb;
++	struct usb_host_endpoint *ep;
++
++	unsigned long flags;
++	int retval = 0;
++
++	spin_lock_irqsave(&ch37x_hcd->lock, flags);
++	list_for_each(pos, &ch37x_hcd->ep_list) {
++		ch37x_ep = container_of(pos, struct ch37x_ep, ep_list);
++		ep = ch37x_ep->ep;
++		list_for_each_safe(upos, next_upos, &ep->urb_list) {
++			urb = container_of(upos, struct urb, urb_list);
++			ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d], urb here! epnum=%d dir=%s\n", __func__, __LINE__,
++				      usb_endpoint_num(&urb->ep->desc),
++				      usb_endpoint_dir_in(&urb->ep->desc) ? "in" : "out");
++			if (urb->unlinked) {
++				ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d], urb unlinked here! epnum=%d dir=%s\n", __func__,
++					      __LINE__, usb_endpoint_num(&urb->ep->desc),
++					      usb_endpoint_dir_in(&urb->ep->desc) ? "in" : "out");
++				ch37x_hcd->urb_done = 2;
++				retval = 1;
++				usb_hcd_unlink_urb_from_ep(hcd, urb);
++				spin_unlock_irqrestore(&ch37x_hcd->lock, flags);
++				usb_hcd_giveback_urb(hcd, urb, 0);
++				spin_lock_irqsave(&ch37x_hcd->lock, flags);
++			}
++		}
++	}
++	spin_unlock_irqrestore(&ch37x_hcd->lock, flags);
++
++	ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d], retval=%d\n", __func__, __LINE__, retval);
++
++	return retval;
++}
++
++static void ch37x_spi_thread(struct kthread_work *work)
++{
++	struct ch37x_hcd_data *ch37x_hcd = container_of(work, struct ch37x_hcd_data, spi_work);
++	struct usb_hcd *hcd = ch37x_to_hcd(ch37x_hcd);
++	int i_worked = 1;
++	int urb_null = 0;
++	int index = 0;
++
++	while (!kthread_should_stop()) {
++		if (ch37x_hcd->rh_state == CH374_RH_RUNNING) {
++			msleep(100);
++			break;
++		}
++		pr_info("hcd is not in CH374_RH_RUNNING.\n");
++		msleep(1000);
++	}
++
++	while (!kthread_should_stop() && !atomic_read(&ch37x_hcd->suspend_flag)) {
++		if (!i_worked) {
++			set_current_state(TASK_INTERRUPTIBLE);
++			if (test_and_clear_bit(ENABLE_IRQ, &ch37x_hcd->todo)) {
++				enable_irq(ch37x_hcd->irq);
++				ch37x_hcd_dbg_data(ch37x_hcd, "%s:enable irq %d\n", __func__, ch37x_hcd->irq);
++			}
++			// check if urb is really null (enqueue comes)
++			if ((urb_null == 1) && (atomic_read(&ch37x_hcd->urb_process) == 1)) {
++				if (!test_and_set_bit(ENABLE_IRQ, &ch37x_hcd->todo)) {
++					disable_irq_nosync(ch37x_hcd->irq);
++					set_current_state(TASK_RUNNING);
++				}
++				urb_null = 0;
++				i_worked = 1;
++				ch37x_hcd_dbg_data(ch37x_hcd, "%s:new urb_enqueue, dont schedule\n", __func__);
++				continue;
++			}
++			schedule();
++			set_current_state(TASK_RUNNING);
++		}
++
++		i_worked = 0;
++
++		if (ch37x_hcd->urb_done)
++			i_worked |= ch37x_urb_done(hcd);
++		else if (ch37x_handle_irqs(hcd))
++			i_worked = 1;
++		else if (!ch37x_hcd->curr_urb) {
++			i_worked |= ch37x_select_and_start_urb(hcd);
++			if (i_worked == 0) {
++				urb_null = 1;
++			} else {
++				urb_null = 0;
++			}
++		} else if (ch37x_hcd->curr_urb) {
++			ch37x_hcd_dbg_data(ch37x_hcd, "%s:line[%d], curr_urb not null\n", __func__, __LINE__);
++		}
++
++		if (test_and_clear_bit(RESET_HCD, &ch37x_hcd->todo))
++			/* reset the HCD: */
++			i_worked |= ch37x_reset_hcd(hcd);
++
++		for (index = 0; index < NUM_PORTS; index++) {
++			if (test_and_clear_bit(RESET_PORT, &ch37x_hcd->ports[index].todoport)) {
++				/* perform a USB bus reset: */
++				host_reset_bus(hcd, index);
++				i_worked = 1;
++				ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d], wPortStatus[%d]=0x%x RESET_PORT\n", __func__,
++					      __LINE__, index, ch37x_hcd->ports[index].port_status.wPortStatus);
++			}
++		}
++
++		if (test_and_clear_bit(CHECK_CONNECT, &ch37x_hcd->todo)) {
++			pr_info("%s:line[%d]\n", __func__, __LINE__);
++			for (index = 0; index < NUM_PORTS; index++)
++				ch37x_detect_conn(hcd, index);
++			i_worked = 1;
++		}
++
++		// 处理已经dequeue的URB
++		if (test_and_clear_bit(CHECK_UNLINK, &ch37x_hcd->todo)) {
++			pr_info("%s:line[%d]\n", __func__, __LINE__);
++			i_worked |= ch37x_check_unlink(hcd);
++		}
++
++		ch37x_hcd_dbg_data(ch37x_hcd, "%s:line[%d], i_worked=%d continue\n", __func__, __LINE__, i_worked);
++	}
++	set_current_state(TASK_RUNNING);
++	ch37x_hcd->kthread_running = false;
++	wake_up_interruptible(&ch37x_hcd->wthread);
++
++	return;
++}
++
++static int ch37x_get_frame_number(struct usb_hcd *hcd)
++{
++	struct ch37x_hcd_data *ch37x = hcd_to_ch37x(hcd);
++	ch37x->frame_number = 0;
++	return ch37x->frame_number;
++}
++#if 1
++
++#ifdef CONFIG_PM
++static int ch37x_bus_suspend(struct usb_hcd *hcd)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++
++	dev_info(&hcd->self.root_hub->dev, "%s\n", __func__);
++
++	return -1;
++
++	spin_lock_irq(&ch37x_hcd->lock);
++	ch37x_hcd->rh_state = CH374_RH_SUSPENDED;
++	//	set_link_state(dum_hcd);
++	hcd->state = HC_STATE_SUSPENDED;
++	spin_unlock_irq(&ch37x_hcd->lock);
++
++	return 0;
++}
++
++static int ch37x_bus_resume(struct usb_hcd *hcd)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	int rc = 0;
++
++	dev_info(&hcd->self.root_hub->dev, "%s\n", __func__);
++
++	return -1;
++
++	spin_lock_irq(&ch37x_hcd->lock);
++	if (!HCD_HW_ACCESSIBLE(hcd)) {
++		rc = -ESHUTDOWN;
++	} else {
++		ch37x_hcd->rh_state = CH374_RH_RUNNING;
++		//		set_link_state(dum_hcd);
++		hcd->state = HC_STATE_RUNNING;
++	}
++	spin_unlock_irq(&ch37x_hcd->lock);
++
++	return rc;
++}
++
++#else
++
++#define ch37x_bus_suspend NULL
++#define ch37x_bus_resume  NULL
++
++#endif
++#endif
++
++static int ch37x_map_urb_for_dma(struct usb_hcd *hcd, struct urb *urb, gfp_t mem_flags)
++{
++	return 0;
++}
++
++static void ch37x_unmap_urb_for_dma(struct usb_hcd *hcd, struct urb *urb)
++{
++}
++
++static void ch37x_endpoint_disable(struct usb_hcd *hcd, struct usb_host_endpoint *hep)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	unsigned long flags;
++
++	ch37x_hcd_dbg_data(ch37x_hcd, "%s:line[%d] start\n", __func__, __LINE__);
++	spin_lock_irqsave(&ch37x_hcd->lock, flags);
++	if (hep->hcpriv) {
++		struct ch37x_ep *ch37x_ep = hep->hcpriv;
++		ch37x_hcd_dbg_data(ch37x_hcd, "%s:line[%d] epnum=%d\n", __func__, __LINE__,
++				   usb_endpoint_num(&ch37x_ep->ep->desc));
++		if (!list_empty(&ch37x_ep->ep_list)) {
++			ch37x_hcd_dbg_data(ch37x_hcd, "%s:line[%d] epnum=%d list_del %p.\n", __func__, __LINE__,
++					   usb_endpoint_num(&ch37x_ep->ep->desc), ch37x_ep);
++			list_del(&ch37x_ep->ep_list);
++		}
++		kfree(ch37x_ep);
++		hep->hcpriv = NULL;
++	}
++	spin_unlock_irqrestore(&ch37x_hcd->lock, flags);
++	ch37x_hcd_dbg_data(ch37x_hcd, "%s:line[%d] end\n", __func__, __LINE__);
++
++	return;
++}
++
++static inline void ch37x_hub_descriptor(struct usb_hub_descriptor *desc)
++{
++	memset(desc, 0, sizeof(*desc));
++	/*
++	 * See Table 11-13: Hub Descriptor in USB 2.0 spec.
++	 */
++	desc->bDescriptorType = 0x29; /* hub descriptor */
++	desc->bDescLength = 9;
++	desc->bHubContrCurrent = 0;
++	// Power switching, device type, overcurrent.
++	desc->wHubCharacteristics = 0x12; //
++	desc->bPwrOn2PwrGood = 10;	  // 20ms
++	desc->bNbrPorts = NUM_PORTS;
++
++	// two bitmaps:  ports removable, and legacy PortPwrCtrlMask
++	desc->u.hs.DeviceRemovable[0] = 0;
++	desc->u.hs.DeviceRemovable[1] = ~0;
++}
++
++static int ch37x_hub_status_data(struct usb_hcd *hcd, char *buf)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	unsigned long flags;
++	int retval = 0;
++	int index;
++
++	// ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d] start\n", __func__, __LINE__);
++
++	buf[0] = 0;
++
++	if (!HC_IS_RUNNING(hcd->state))
++		return -ESHUTDOWN;
++	// Report no status change now, if we are scheduled to be called later
++	if (timer_pending(&hcd->rh_timer))
++		return 0;
++
++	spin_lock_irqsave(&ch37x_hcd->lock, flags);
++
++	/* bit 0 denotes hub change, b1..n port change */
++	for (index = 0; index < NUM_PORTS; index++) {
++		if (ch37x_hcd->ports[index].wPortTrigger) {
++			buf[0] |= 1 << (index + 1);
++			ch37x_hcd_dbg(ch37x_hcd, "port %d status 0x%08x has changes\n", index,
++				      ch37x_hcd->ports[index].port_status);
++			ch37x_hcd->ports[index].wPortTrigger = RH_PORT_STATUS_STAYED;
++		}
++	}
++	spin_unlock_irqrestore(&ch37x_hcd->lock, flags);
++
++	if (buf[0] != 0)
++		retval = 1;
++
++	// ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d] buf[0]=0x%2x retval=%d\n", __func__, __LINE__, buf[0], retval);
++
++	return retval;
++}
++
++static int ch37x_reset_port(struct usb_hcd *hcd, int index)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++
++	ch37x_hcd->ports[index].port_status.wPortStatus &= ~(USB_PORT_STAT_RESET);
++	ch37x_hcd->ports[index].port_status.wPortStatus |= USB_PORT_STAT_ENABLE;
++	ch37x_hcd->ports[index].port_status.wPortChange |= USB_PORT_STAT_C_RESET;
++	ch37x_hcd->ports[index].bus_addr = ch37x_hcd->ports[index].bus_addr_backup = 0x00;
++	ch37x_hcd->ports[index].usbsta = USB_RESET;
++
++	set_bit(RESET_PORT, &ch37x_hcd->ports[index].todoport);
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0))
++	queue_kthread_work(&ch37x_hcd->spi_worker, &ch37x_hcd->spi_work);
++#else
++	kthread_queue_work(&ch37x_hcd->spi_worker, &ch37x_hcd->spi_work);
++#endif
++	wake_up_process(ch37x_hcd->spi_thread);
++
++	ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d], index:%d\n", __func__, __LINE__, index);
++	return 0;
++}
++
++static int ch37x_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue, u16 wIndex, char *buf, u16 wLength)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	int retval = 0;
++	unsigned long flags;
++	u16 *wdata_buf = (u16 *)buf;
++	u8 index = (u8)wIndex;
++
++	pr_info("hub control -> typeReq: %04x wValue: %04x wIndex:%04x\n", typeReq, wValue, wIndex);
++	if (index > 0)
++		pr_info("hub control -> wPortStatus[%d]: %04x wPortChange: %4x\n", index - 1,
++			ch37x_hcd->ports[index - 1].port_status.wPortStatus,
++			ch37x_hcd->ports[index - 1].port_status.wPortChange);
++
++	spin_lock_irqsave(&ch37x_hcd->lock, flags);
++
++	switch (typeReq) {
++	case ClearHubFeature:
++		switch (wValue) {
++		case C_HUB_OVER_CURRENT:
++		case C_HUB_LOCAL_POWER:
++			break;
++		default:
++			goto error;
++		}
++		break;
++	case SetHubFeature:
++		switch (wValue) {
++		case C_HUB_OVER_CURRENT:
++		case C_HUB_LOCAL_POWER:
++			break;
++		default:
++			goto error;
++		}
++		break;
++	case GetHubDescriptor:
++		ch37x_hub_descriptor((struct usb_hub_descriptor *)buf);
++		break;
++	case GetHubStatus:
++		*(__le32 *)buf = cpu_to_le32(0);
++		break;
++	case GetPortStatus:
++		if ((index < 1) || (index > NUM_PORTS)) {
++			retval = -EPIPE;
++			goto error;
++		}
++		*wdata_buf = cpu_to_le16(ch37x_hcd->ports[index - 1].port_status.wPortStatus);
++		wdata_buf++;
++		*wdata_buf = cpu_to_le16(ch37x_hcd->ports[index - 1].port_status.wPortChange);
++		break;
++	case ClearPortFeature:
++		if ((index < 1) || (index > NUM_PORTS)) {
++			retval = -EPIPE;
++			goto error;
++		}
++		switch (wValue) {
++		case USB_PORT_FEAT_ENABLE:
++			if (ch37x_hcd->ports[index - 1].port_status.wPortStatus & USB_PORT_STAT_CONNECTION) {
++				ch37x_hcd->ports[index - 1].port_status.wPortStatus &= ~USB_PORT_STAT_ENABLE;
++			}
++			break;
++		case USB_PORT_FEAT_C_ENABLE:
++			ch37x_hcd->ports[index - 1].port_status.wPortChange &= ~USB_PORT_STAT_C_ENABLE;
++			break;
++		case USB_PORT_FEAT_SUSPEND:
++			ch37x_hcd->ports[index - 1].port_status.wPortStatus &= ~USB_PORT_STAT_SUSPEND;
++			break;
++		case USB_PORT_FEAT_C_SUSPEND:
++			ch37x_hcd->ports[index - 1].port_status.wPortChange &= ~USB_PORT_STAT_C_SUSPEND;
++			break;
++		case USB_PORT_FEAT_POWER:
++			ch37x_hcd->ports[index - 1].port_status.wPortStatus &= ~USB_PORT_STAT_POWER;
++			break;
++		case USB_PORT_FEAT_C_CONNECTION:
++			ch37x_hcd->ports[index - 1].port_status.wPortChange &= ~USB_PORT_STAT_C_CONNECTION;
++			break;
++		case USB_PORT_FEAT_C_OVER_CURRENT:
++			ch37x_hcd->ports[index - 1].port_status.wPortChange &= ~USB_PORT_STAT_C_OVERCURRENT;
++			break;
++		case USB_PORT_FEAT_C_RESET:
++			ch37x_hcd->ports[index - 1].port_status.wPortChange &= ~USB_PORT_STAT_C_RESET;
++			break;
++		default:
++			goto error;
++		}
++		break;
++	case SetPortFeature:
++		if ((index < 1) || (index > NUM_PORTS)) {
++			retval = -EPIPE;
++			goto error;
++		}
++		switch (wValue) {
++		case USB_PORT_FEAT_ENABLE:
++			ch37x_hcd->ports[index - 1].port_status.wPortStatus |= USB_PORT_STAT_ENABLE;
++			break;
++		case USB_PORT_FEAT_SUSPEND:
++			break;
++		case USB_PORT_FEAT_POWER:
++			break;
++		case USB_PORT_FEAT_RESET:
++			/*reset port*/
++			ch37x_reset_port(hcd, index - 1);
++			break;
++		default:
++			goto error;
++		}
++		break;
++
++	default:
++		pr_info("hub control typeReq:%04x wValue: %04x wIndex:%04x\n", typeReq, wValue, wIndex);
++
++error: /* "protocol stall" on error */
++		retval = -EPIPE;
++	}
++	spin_unlock_irqrestore(&ch37x_hcd->lock, flags);
++
++	ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d] retval=%d end\n", __func__, __LINE__, retval);
++
++	return retval;
++}
++
++/*
++ * Searches list of ports to find the index of the one with a specified  USB
++ * bus address. If none of the ports has the bus address then the connection
++ * port is returned, if there is one or -1 otherwise.
++ * Context: any
++ */
++static int ch37x_get_port_from_addr(struct ch37x_hcd_data *ch37x_hcd, u8 bus_addr)
++{
++	int i;
++
++	ch37x_hcd_dbg_data(ch37x_hcd, "%s:line[%d] bus_addr:%d\n", __func__, __LINE__, bus_addr);
++
++	if (bus_addr == 0x00)
++		return NUM_PORTS;
++
++	for (i = 0; i < NUM_PORTS; i++) {
++		if (ch37x_hcd->ports[i].bus_addr == bus_addr) {
++			return i;
++		}
++	}
++
++	return NUM_PORTS;
++}
++
++/*
++ * Searches list of ports to find the index of the one with a specified  USB
++ * bus address. If none of the ports has the bus address then the connection
++ * port is returned, if there is one or -1 otherwise.
++ * Context: any
++ */
++static int ch37x_get_port_from_addr_backup(struct ch37x_hcd_data *ch37x_hcd, u8 bus_addr)
++{
++	int i;
++
++	if (bus_addr == 0x00)
++		return NUM_PORTS;
++
++	for (i = 0; i < NUM_PORTS; i++) {
++		if (ch37x_hcd->ports[i].bus_addr_backup == bus_addr)
++			return i;
++	}
++	ch37x_hcd_dbg_data(ch37x_hcd, "%s:line[%d] bus_addr:%d\n", __func__, __LINE__, bus_addr);
++
++	return NUM_PORTS;
++}
++
++/*
++ * Called to queue an urb for the device.
++ * This function should return a non-zero error code if it fails the urb but
++ * should not call usb_hcd_giveback_urb().
++ * Context: any
++ */
++static int ch37x_urb_enqueue(struct usb_hcd *hcd, struct urb *urb, gfp_t mem_flags)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	struct ch37x_ep *ch37x_ep;
++	unsigned long flags;
++	int retval = 0;
++
++	spin_lock_irqsave(&ch37x_hcd->lock, flags);
++
++	ch37x_ep = urb->ep->hcpriv;
++	if (!ch37x_ep) {
++		ch37x_hcd_dbg_data(ch37x_hcd, "%s:line[%d] ch37x_ep null here\n", __func__, __LINE__);
++		ch37x_ep = kzalloc(sizeof(struct ch37x_ep), GFP_ATOMIC);
++		if (!ch37x_ep) {
++			retval = -ENOMEM;
++			goto exit;
++		}
++		ch37x_ep->ep = urb->ep;
++		urb->ep->hcpriv = ch37x_ep;
++		list_add_tail(&ch37x_ep->ep_list, &ch37x_hcd->ep_list);
++	}
++
++	retval = usb_hcd_link_urb_to_ep(hcd, urb);
++	if (retval == 0) {
++		atomic_set(&ch37x_hcd->urb_process, 1);
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0))
++		queue_kthread_work(&ch37x_hcd->spi_worker, &ch37x_hcd->spi_work);
++#else
++		kthread_queue_work(&ch37x_hcd->spi_worker, &ch37x_hcd->spi_work);
++#endif
++		wake_up_process(ch37x_hcd->spi_thread);
++	}
++
++	ch37x_hcd_dbg_data(ch37x_hcd, "%s:line[%d] retval=%d epnum=%d dir=%s\n", __func__, __LINE__, retval,
++			   usb_endpoint_num(&urb->ep->desc), usb_endpoint_dir_in(&urb->ep->desc) ? "in" : "out");
++exit:
++	spin_unlock_irqrestore(&ch37x_hcd->lock, flags);
++	return retval;
++}
++
++static int ch37x_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	unsigned long flags;
++	int retval = 0;
++
++	spin_lock_irqsave(&ch37x_hcd->lock, flags);
++	retval = usb_hcd_check_unlink_urb(hcd, urb, status);
++	if (retval == 0) {
++		set_bit(CHECK_UNLINK, &ch37x_hcd->todo);
++//		atomic_set(&ch37x_hcd->urb_process, 0);
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0))
++		queue_kthread_work(&ch37x_hcd->spi_worker, &ch37x_hcd->spi_work);
++#else
++		kthread_queue_work(&ch37x_hcd->spi_worker, &ch37x_hcd->spi_work);
++#endif
++		wake_up_process(ch37x_hcd->spi_thread);
++	}
++	spin_unlock_irqrestore(&ch37x_hcd->lock, flags);
++
++	ch37x_hcd_dbg_data(ch37x_hcd, "%s:line[%d] retval=%d epnum=%d dir=%s\n", __func__, __LINE__, retval,
++			   usb_endpoint_num(&urb->ep->desc), usb_endpoint_dir_in(&urb->ep->desc) ? "in" : "out");
++	return 0;
++}
++
++static int ch37x_start(struct usb_hcd *hcd)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	int index;
++	int i;
++
++	ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d] start\n", __func__, __LINE__);
++	hcd->state = HC_STATE_RUNNING;
++	ch37x_hcd->rh_state = CH374_RH_RUNNING;
++	INIT_LIST_HEAD(&ch37x_hcd->ep_list);
++	for (index = 0; index < NUM_PORTS; index++) {
++		ch37x_hcd->ports[index].port_status.wPortStatus = 0;
++		ch37x_hcd->ports[index].port_status.wPortChange = 0;
++		ch37x_hcd->ports[index].wPortTrigger = RH_PORT_STATUS_STAYED;
++		ch37x_hcd->ports[index].bus_addr = ch37x_hcd->ports[index].bus_addr_backup = 0x00;
++		ch37x_hcd->ports[index].usbsta = USB_UNLINK;
++		ch37x_hcd->ports[index].controltog = false;
++		for (i = 0; i < 4; i++) {
++			ch37x_hcd->ports[index].transferintog[i] = false;
++			ch37x_hcd->ports[index].transferouttog[i] = false;
++		}
++	}
++
++	return 0;
++}
++
++static void ch37x_stop(struct usb_hcd *hcd)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	unsigned long flags;
++#if 1
++	spin_lock_irqsave(&ch37x_hcd->lock, flags);
++	hcd->state = HC_STATE_HALT;
++	spin_unlock_irqrestore(&ch37x_hcd->lock, flags);
++#endif
++	ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d] end\n", __func__, __LINE__);
++}
++
++static int ch37x_reset(struct usb_hcd *hcd)
++{
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++
++	ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d]\n", __func__, __LINE__);
++	hcd->self.sg_tablesize = 0;
++	hcd->speed = HCD_USB2;
++	hcd->self.root_hub->speed = USB_SPEED_FULL;
++	set_bit(RESET_HCD, &ch37x_hcd->todo);
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0))
++	queue_kthread_work(&ch37x_hcd->spi_worker, &ch37x_hcd->spi_work);
++#else
++	kthread_queue_work(&ch37x_hcd->spi_worker, &ch37x_hcd->spi_work);
++#endif
++	wake_up_process(ch37x_hcd->spi_thread);
++
++	return 0;
++}
++
++#ifdef CONFIG_OF
++static struct xgold_spi_chip *spi_ch37x_hcd_parse_dt(struct usb_hcd *hcd, struct device *dev)
++{
++	u32 temp;
++	struct xgold_spi_chip *spi_chip_data;
++	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++
++	spi_chip_data = devm_kzalloc(dev, sizeof(*spi_chip_data), GFP_KERNEL);
++	if (!spi_chip_data) {
++		dev_err(dev, "memory allocation for spi_chip_data failed\n");
++		return ERR_PTR(-ENOMEM);
++	}
++
++	if (of_property_read_u32(dev->of_node, "poll_mode", &temp)) {
++		dev_warn(dev, "fail to get poll_mode, default set 0\n");
++		spi_chip_data->poll_mode = 0;
++	} else {
++		spi_chip_data->poll_mode = temp;
++	}
++
++	if (of_property_read_u32(dev->of_node, "type", &temp)) {
++		dev_warn(dev, "fail to get type, default set 0\n");
++		spi_chip_data->type = 0;
++	} else {
++		spi_chip_data->type = temp;
++	}
++
++	if (of_property_read_u32(dev->of_node, "enable_dma", &temp)) {
++		dev_warn(dev, "fail to get enable_dma, default set 0\n");
++		spi_chip_data->enable_dma = 0;
++	} else {
++		spi_chip_data->enable_dma = temp;
++	}
++
++	ch37x_hcd_dbg(ch37x_hcd, "%s: poll_mode=%d, type=%d, enable_dma=%d\n", __func__, spi_chip_data->poll_mode,
++		      spi_chip_data->type, spi_chip_data->enable_dma);
++
++	return spi_chip_data;
++}
++#else
++static struct spi_board_info *spi_ch37x_hcd_parse_dt(struct usb_hcd *hcd, struct device *dev)
++{
++	return dev->platform_data;
++}
++#endif
++
++static struct hc_driver ch37x_hcd_desc = {
++	.description = "ch37x",
++	.product_desc = DRIVER_DESC,
++	.hcd_priv_size = sizeof(struct ch37x_hcd_data),
++	.flags = HCD_USB11,
++	.reset = ch37x_reset,
++	.start = ch37x_start,
++	.stop = ch37x_stop,
++	.get_frame_number = ch37x_get_frame_number,
++	.urb_enqueue = ch37x_urb_enqueue,
++	.urb_dequeue = ch37x_urb_dequeue,
++	.map_urb_for_dma = ch37x_map_urb_for_dma,
++	.unmap_urb_for_dma = ch37x_unmap_urb_for_dma,
++	.endpoint_disable = ch37x_endpoint_disable,
++	.hub_status_data = ch37x_hub_status_data,
++	.hub_control = ch37x_hub_control,
++	.bus_suspend = ch37x_bus_suspend,
++	.bus_resume = ch37x_bus_resume,
++};
++
++static void ch37x_resume_delaywork_func(struct work_struct *work)
++{
++#if 0
++	struct delayed_work *delaywork = container_of(work, struct delayed_work, work);
++	struct ch37x_hcd_data *ch37x_hcd = container_of(delaywork, struct ch37x_hcd_data, delaywork);
++	struct usb_hcd *hcd = ch37x_to_hcd(ch37x_hcd);
++
++	return;
++	
++	atomic_set(&ch37x_hcd->suspend_flag, 0);
++	//	Write374Byte(hcd,REG_HUB_SETUP, Read374Byte(hcd, REG_HUB_SETUP) | BIT_HUB0_EN);
++	//	Write374Byte(hcd, REG_SYS_CTRL, Read374Byte(hcd, REG_SYS_CTRL ) & (~ BIT_CTRL_OSCIL_OFF) );
++	msleep(100);
++	ch37x_reset_hcd(hcd);
++	enable_irq(ch37x_hcd->irq);
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0))
++	queue_kthread_work(&ch37x_hcd->spi_worker, &ch37x_hcd->spi_work);
++#else
++	kthread_queue_work(&ch37x_hcd->spi_worker, &ch37x_hcd->spi_work);
++#endif
++	wake_up_process(ch37x_hcd->spi_thread);
++	msleep(1000); //wait for usb host regist,neccessary?
++	pr_info("%s:exit\n", __func__);
++#endif
++}
++
++static int ch37x_probe(struct spi_device *spi)
++{
++	struct ch37x_hcd_data *ch37x_hcd;
++	struct usb_hcd *hcd = NULL;
++	int irq;
++	int gpio_num = GPIO_NUMBER;
++	int irq_gpio_value = -1;
++	int cs_gpio_num = -1;
++	int cs_gpio_raw = -1;
++	unsigned long flags = IRQF_TRIGGER_LOW;
++#ifdef CONFIG_OF
++	static struct xgold_spi_chip *spi_chip_data;
++#else
++	struct spi_board_info *spi_chip_data;
++#endif
++	struct device_node *np = of_node_get(spi->dev.of_node);
++	int retval = -ENOMEM;
++
++	if (!spi)
++		return -ENOMEM;
++
++	if (usb_disabled())
++		return -ENODEV;
++	hcd = usb_create_hcd(&ch37x_hcd_desc, &spi->dev, dev_name(&spi->dev));
++	if (!hcd) {
++		dev_err(&spi->dev, "failed to create HCD structure\n");
++		goto error;
++	}
++
++	ch37x_hcd = hcd_to_ch37x(hcd);
++	ch37x_hcd->next = ch37x_hcd_list;
++	ch37x_hcd_list = ch37x_hcd;
++	INIT_LIST_HEAD(&ch37x_hcd->ep_list);
++	spin_lock_init(&ch37x_hcd->lock);
++	init_waitqueue_head(&ch37x_hcd->wthread);
++	spin_lock_init(&spilock);
++
++	if (!spi_chip_data && np) {
++		spi_chip_data = spi_ch37x_hcd_parse_dt(hcd, &spi->dev);
++		if (IS_ERR(spi_chip_data))
++			return -ENOMEM;
++	}
++
++	spi->bits_per_word = 8;
++	spi->controller_data = spi_chip_data;
++	if (spi_setup(spi) < 0) {
++		dev_err(&spi->dev, "unable to setup SPI bus (mode=0x%x bpw=%u speed=%uHz)\n",
++			spi->mode, spi->bits_per_word, spi->max_speed_hz);
++		retval = -EFAULT;
++		goto error;
++	}
++
++	/* if your platform supports acquire irq number from dts */
++#ifdef USE_IRQ_FROM_DTS
++	irq = spi->irq;
++#else
++	if (np)
++		gpio_num = of_get_named_gpio(np, "int-gpios", 0);
++	if (gpio_num < 0)
++		gpio_num = GPIO_NUMBER;
++
++	retval = devm_gpio_request_one(&spi->dev, gpio_num, GPIOF_IN, "gpioint");
++	if (retval) {
++		dev_err(&spi->dev, "gpio_request\n");
++		goto error;
++	}
++	retval = gpio_direction_input(gpio_num);
++	if (retval) {
++		dev_err(&spi->dev, "gpio_direction_input\n");
++		goto error;
++	}
++	irq = gpio_to_irq(gpio_num);
++	if (irq < 0) {
++		dev_err(&spi->dev, "gpio_to_irq(%d) failed: %d\n", gpio_num, irq);
++		retval = irq;
++		goto error;
++	}
++	irq_set_irq_type(irq, flags);
++	irq_gpio_value = gpio_get_value(gpio_num);
++#endif
++
++	ch37x_hcd->spi = spi;
++	ch37x_hcd->dev = &spi->dev;
++	ch37x_hcd->irq = irq;
++	if (spi_get_csgpiod(spi, 0)) {
++		cs_gpio_num = desc_to_gpio(spi_get_csgpiod(spi, 0));
++		cs_gpio_raw = gpiod_get_raw_value_cansleep(spi_get_csgpiod(spi, 0));
++	}
++
++	dev_info(&spi->dev,
++		 "SPI config: mode=0x%x bpw=%u max_speed=%uHz cs=%u cs-gpio=%d raw=%d irq=%d int-gpio=%d level=%d\n",
++		 spi->mode, spi->bits_per_word, spi->max_speed_hz, spi_get_chipselect(spi, 0),
++		 cs_gpio_num, cs_gpio_raw, irq, gpio_num, irq_gpio_value);
++
++	ch37x_hcd->tx = devm_kzalloc(&spi->dev, sizeof(*ch37x_hcd->tx), GFP_KERNEL);
++	if (!ch37x_hcd->tx) {
++		dev_err(&spi->dev, "failed to kmalloc tx buffer\n");
++		goto error;
++	}
++	ch37x_hcd->rx = devm_kzalloc(&spi->dev, sizeof(*ch37x_hcd->rx), GFP_KERNEL);
++	if (!ch37x_hcd->rx) {
++		dev_err(&spi->dev, "failed to kmalloc rx buffer\n");
++		goto error;
++	}
++
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0))
++	init_kthread_worker(&ch37x_hcd->spi_worker);
++#else
++	kthread_init_worker(&ch37x_hcd->spi_worker);
++#endif
++	ch37x_hcd->spi_thread = kthread_run(kthread_worker_fn, &ch37x_hcd->spi_worker, "ch37x_spi_thread");
++	if (IS_ERR(ch37x_hcd->spi_thread)) {
++		retval = PTR_ERR(ch37x_hcd->spi_thread);
++		ch37x_hcd->spi_thread = NULL;
++		pr_err("failed to run spi_thread\n");
++		goto error;
++	}
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 9, 0))
++	init_kthread_work(&ch37x_hcd->spi_work, ch37x_spi_thread);
++#else
++	kthread_init_work(&ch37x_hcd->spi_work, ch37x_spi_thread);
++#endif
++
++	retval = usb_add_hcd(hcd, 0, 0);
++	if (retval) {
++		dev_err(&spi->dev, "failed to add HCD\n");
++		goto error;
++	}
++
++	spi_set_drvdata(spi, ch37x_hcd);
++	atomic_set(&ch37x_hcd->suspend_flag, 0);
++	INIT_DELAYED_WORK(&ch37x_hcd->delaywork, ch37x_resume_delaywork_func);
++	atomic_set(&ch37x_hcd->debug_flag, DEBUG_FLAG_LEVEL);
++	atomic_set(&ch37x_hcd->urb_process, 0);
++	mutex_init(&ch37x_hcd->thread_mutex);
++
++	retval = devm_request_threaded_irq(&spi->dev, irq, ch37x_irq_handler, ch37x_irq_thread_handler,
++					   flags | IRQF_ONESHOT, "spi-ch37x-hcd", hcd);
++	if (retval < 0) {
++		dev_err(&spi->dev, "failed to request irq %d error %d\n", irq, retval);
++		goto error;
++	}
++
++	printk("spi->max_speed_hz: %d Hz\n", spi->max_speed_hz);
++	ch37x_debugfs_init(hcd);
++
++	return 0;
++
++error:
++	if (hcd) {
++		if (ch37x_hcd->spi_thread)
++			kthread_stop(ch37x_hcd->spi_thread);
++		usb_put_hcd(hcd);
++	}
++	return retval;
++}
++
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0))
++static void ch37x_remove(struct spi_device *spi)
++#else
++static int ch37x_remove(struct spi_device *spi)
++#endif
++{
++	struct ch37x_hcd_data *ch37x_hcd = spi_get_drvdata(spi);
++	struct usb_hcd *hcd = NULL;
++	int timeout;
++
++	hcd = ch37x_to_hcd(ch37x_hcd);
++
++	ch37x_debugfs_exit(hcd);
++
++	usb_remove_hcd(hcd);
++
++	kthread_stop(ch37x_hcd->spi_thread);
++	timeout = wait_event_interruptible_timeout(ch37x_hcd->wthread, !ch37x_hcd->kthread_running,
++						   msecs_to_jiffies(2000));
++	if (timeout <= 0) {
++	}
++
++	devm_free_irq(&spi->dev, ch37x_hcd->irq, hcd);
++
++#ifndef USE_IRQ_FROM_DTS
++#endif
++
++	usb_put_hcd(hcd);
++
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0))
++	return;
++#else
++	return 0;
++#endif
++}
++
++#ifdef CONFIG_OF
++static const struct of_device_id spi_ch37x_hcd_dt_match[] = {
++	{
++		.compatible = "wch,ch37x_hcd",
++	},
++	{},
++};
++MODULE_DEVICE_TABLE(of, spi_ch37x_hcd_dt_match);
++
++#endif
++
++static struct spi_driver ch37x_driver = {
++	.probe =	ch37x_probe,
++	.remove =	ch37x_remove,
++	.driver = {
++		.name =	"wch, spi_ch37x_hcd",
++		.owner = THIS_MODULE,
++		.of_match_table = of_match_ptr(spi_ch37x_hcd_dt_match),
++	},
++};
++
++static int __init ch37x_init(void)
++{
++	int retval;
++	if (usb_disabled())
++		return -ENODEV;
++
++	retval = spi_register_driver(&ch37x_driver);
++
++	return retval;
++}
++
++static void __exit ch37x_exit(void)
++{
++	spi_unregister_driver(&ch37x_driver);
++}
++
++module_init(ch37x_init);
++module_exit(ch37x_exit);
++
++MODULE_AUTHOR(DRIVER_AUTHOR);
++MODULE_DESCRIPTION(DRIVER_DESC);
++MODULE_VERSION(VERSION_DESC);
++MODULE_LICENSE("GPL");
+diff --git a/drivers/usb/host/ch37x.h b/drivers/usb/host/ch37x.h
+new file mode 100644
+index 000000000000..314ec751cd83
+--- /dev/null
++++ b/drivers/usb/host/ch37x.h
+@@ -0,0 +1,168 @@
++
++/* ********************************************************************************************************************* */
++/* 芯片定义 */
++
++/* 寄存器及缓冲区 */
++
++#define	RAM_ENDP0_SIZE		0x08		/* 端点0的缓冲区长度 */
++#define	RAM_ENDP0_TRAN		0x20		/* 端点0发送缓冲区的起始地址 */
++#define	RAM_ENDP0_RECV		0x28		/* 端点0接收缓冲区的起始地址 */
++#define	RAM_ENDP1_SIZE		0x08		/* 端点1的缓冲区长度 */
++#define	RAM_ENDP1_TRAN		0x30		/* 端点1发送缓冲区的起始地址 */
++#define	RAM_ENDP1_RECV		0x38		/* 端点1接收缓冲区的起始地址 */
++#define	RAM_ENDP2_SIZE		0x40		/* 端点2的缓冲区长度 */
++#define	RAM_ENDP2_TRAN		0x40		/* 端点2发送缓冲区的起始地址 */
++#define	RAM_ENDP2_RECV		0xC0		/* 端点2接收缓冲区的起始地址 */
++#define	RAM_ENDP2_EXCH		0x80		/* 端点2备用缓冲区的起始地址 */
++#define	RAM_HOST_TRAN		0x40		/* 主机发送缓冲区的起始地址 */
++#define	RAM_HOST_RECV		0xC0		/* 主机接收缓冲区的起始地址 */
++#define	RAM_HOST_EXCH		0x80		/* 主机备用缓冲区的起始地址 */
++
++#define	REG_HUB_SETUP		0x02		/* 仅USB主机方式: ROOT-HUB配置 */
++#define	REG_HUB_CTRL		0x03		/* 仅USB主机方式: ROOT-HUB控制 */
++#define	REG_SYS_INFO		0x04		/* 系统信息, 只读 */
++#define	REG_SYS_CTRL		0x05		/* 系统控制, 不受软件复位影响 */
++#define	REG_USB_SETUP		0x06		/* USB配置 */
++#define	REG_INTER_EN		0x07		/* 中断使能 */
++#define	REG_USB_ADDR		0x08		/* USB设备地址 */
++#define	REG_INTER_FLAG		0x09		/* 中断标志, 只读, 位写1清0 */
++#define	REG_USB_STATUS		0x0A		/* USB状态, 只读 */
++#define	REG_USB_LENGTH		0x0B		/* USB长度, 读为当前USB接收长度, 设备方式下写为USB端点2, 主机方式下写为USB主机发送长度 */
++#define	REG_USB_ENDP0		0x0C		/* 仅USB设备方式: USB端点0控制 */
++#define	REG_USB_ENDP1		0x0D		/* 仅USB设备方式: USB端点1控制 */
++#define	REG_USB_H_PID		0x0D		/* 仅USB主机方式: USB主机令牌 */
++#define	REG_USB_ENDP2		0x0E		/* 仅USB设备方式: USB端点2控制 */
++#define	REG_USB_H_CTRL		0x0E		/* 仅USB主机方式: USB主机控制 */
++
++/* 寄存器的位及常用宏定义 */
++
++#define	BIT_HUB0_EN			0x01		/* HUB0端口的USB传输使能: 0-禁止, 1-允许 */
++#define	BIT_HUB0_RESET		0x02		/* HUB0端口的USB总线复位控制: 0-不复位, 1-复位 */
++#define	BIT_HUB0_POLAR		0x04		/* HUB0端口的信号极性控制: 0-正极性/全速, 1-负极性/低速 */
++#define	BIT_HUB0_ATTACH		0x08		/* HUB0端口的USB设备连接状态(只读): 0-尚未连接/断开/拔出, 1-已经连接/插入 */
++#define	BIT_HUB1_DX_IN		0x10		/* HUB1全速正极性时UD+引脚/低速负极性时UD-引脚的采样状态: 0-低电平,速度失配, 1-高电平,速度匹配 */
++#define	BIT_HUB2_DX_IN		0x20		/* HUB2全速正极性时UD+引脚/低速负极性时UD-引脚的采样状态: 0-低电平,速度失配, 1-高电平,速度匹配 */
++#define	BIT_HUB_PRE_PID		0x40		/* 低速前置包PRE PID输出控制: 0-禁止, 1-允许(外部设备是USB-HUB) */
++#define	BIT_HUB_DISABLE		0x80		/* 禁止ROOT-HUB根集线器功能: 0-允许(仅USB主机方式), 1-禁止(默认) */
++
++#define	BIT_HUB1_EN			0x01		/* HUB1端口的USB传输使能: 0-禁止, 1-允许 */
++#define	BIT_HUB1_RESET		0x02		/* HUB1端口的USB总线复位控制: 0-不复位, 1-复位 */
++#define	BIT_HUB1_POLAR		0x04		/* HUB1端口的信号极性控制: 0-正极性/全速, 1-负极性/低速 */
++#define	BIT_HUB1_ATTACH		0x08		/* HUB1端口的USB设备连接状态(只读): 0-尚未连接/断开/拔出, 1-已经连接/插入 */
++#define	BIT_HUB2_EN			0x10		/* HUB2端口的USB传输使能: 0-禁止, 1-允许 */
++#define	BIT_HUB2_RESET		0x20		/* HUB2端口的USB总线复位控制: 0-不复位, 1-复位 */
++#define	BIT_HUB2_POLAR		0x40		/* HUB2端口的信号极性控制: 0-正极性/全速, 1-负极性/低速 */
++#define	BIT_HUB2_ATTACH		0x80		/* HUB2端口的USB设备连接状态(只读): 0-尚未连接/断开/拔出, 1-已经连接/插入 */
++
++#define	BIT_INFO_HW_ID		0x03		/* 硬件识别位: 总是常量01, 否则说明读操作或硬件连接有误 */
++#define	BIT_INFO_USB_DM		0x04		/* USB总线HUB0的UD-引脚的逻辑电平状态: 0-低电平, 1-高电平 */
++#define	BIT_INFO_USB_DP		0x08		/* USB总线HUB0的UD+引脚的逻辑电平状态: 0-低电平, 1-高电平 */
++#define	BIT_INFO_CLK_8KHZ	0x10		/* 硬件8KHz时钟位 */
++#define	BIT_INFO_SOF_PRES	0x20		/* 硬件1mS定时周期状态,对于USB主机, 1说明将要产生SOF */
++#define	BIT_INFO_WAKE_UP	0x40		/* 芯片唤醒状态: 0-正在睡眠或唤醒过程中, 1-已唤醒 */
++#define	BIT_INFO_POWER_RST	0x80		/* 硬件上电复位完成状态: 0-正在复位, 1-复位完成 */
++
++#define	BIT_CTRL_OSCIL_OFF	0x01		/* 时钟振荡器控制: 0-允许振荡, 1-停止振荡 */
++#define	BIT_CTRL_CLK_12MHZ	0x02		/* 输入时钟频率选择: 0-24MHz, 1-12MHz */
++#define	BIT_CTRL_USB_POWER	0x04		/* V3引脚的USB电源调节器控制: 0-开启, 1-禁用 */
++#define	BIT_CTRL_RESET_NOW	0x08		/* 芯片软件复位控制: 0-不复位, 1-复位 */
++#define	BIT_CTRL_WATCH_DOG	0x10		/* RST引脚和RST#引脚的看门狗复位使能: 0-禁用, 1-启用 */
++#define	BIT_CTRL_INT_PULSE	0x20		/* INT#引脚的中断输出方式: 0-低电平中断, 1-低电平脉冲中断 */
++#define	BIT_CTRL_OE_POLAR	0x40		/* UEN引脚的USB输出使能极性: 0-高电平使能, 1-低电平使能 */
++
++#define	BIT_SETP_TRANS_EN	0x01		/* 仅USB设备方式: USB设备传输使能: 0-禁止, 1-允许 */
++#define	BIT_SETP_PULLUP_EN	0x02		/* 仅USB设备方式: USB上拉电阻控制: 0-禁用上拉电阻, 1-启用上拉电阻 */
++#define	BIT_SETP_BUS_CTRL	0x03		/* 仅USB主机方式: USB总线状态控制: 00-正常/空闲, 01-D+低D-低(总线复位), 10-禁用, 11-D+低D-高(总线恢复) */
++#define	M_SET_USB_BUS_FREE( old )		( (old) & ~ BIT_SETP_BUS_CTRL | 0x00 )		/* 仅USB主机方式: USB总线空闲 */
++#define	M_SET_USB_BUS_RESET( old )		( (old) & ~ BIT_SETP_BUS_CTRL | 0x01 )		/* 仅USB主机方式: USB总线状态控制/D+低D-低(总线复位) */
++#define	M_SET_USB_BUS_RESUME( old )		( (old) & ~ BIT_SETP_BUS_CTRL | 0x03 )		/* 仅USB主机方式: USB总线状态控制/D+低D-高(总线恢复) */
++#define	BIT_SETP_RAM_MODE	0x0C		/* 备用缓冲区应用方式: 00-禁用备用缓冲区, 01-连接接收缓冲区以连续接收128字节, 10-用于发送第二缓冲区, 11-用于接收第二缓冲区 */
++#define	M_SET_RAM_MODE_OFF( old )		( (old) & ~ BIT_SETP_RAM_MODE | 0x00 )		/* 备用缓冲区方式/禁用备用缓冲区 */
++#define	M_SET_RAM_MODE_128( old )		( (old) & ~ BIT_SETP_RAM_MODE | 0x04 )		/* 备用缓冲区方式/连接接收缓冲区以连续接收128字节 */
++#define	M_SET_RAM_MODE_2TX( old )		( (old) & ~ BIT_SETP_RAM_MODE | 0x08 )		/* 备用缓冲区方式/用于发送的第二缓冲区,支持连续发送 */
++#define	M_SET_RAM_MODE_2RX( old )		( (old) & ~ BIT_SETP_RAM_MODE | 0x0C )		/* 备用缓冲区方式/用于接收的第二缓冲区,支持连续接收 */
++#define	BIT_SETP_LOW_SPEED	0x20		/* USB总线传输速度: 0-12Mbps, 1-1.5Mbps */
++#define	BIT_SETP_USB_SPEED	0x30		/* USB总线速率: 00-全速模式/正极性12Mbps, 11-低速模式/负极性1.5Mbps */
++#define	BIT_SETP_LED_ACT	0x40		/* 仅USB设备方式: ACT#引脚低电平的激活事件: 0-收发传输过程, 1-USB主机活动 */
++#define	BIT_SETP_AUTO_SOF	0x40		/* 仅USB主机方式: 自动产生SOF使能: 0-禁止, 1-允许 */
++#define	BIT_SETP_HOST_MODE	0x80		/* USB主从方式选择: 0-设备方式, 1-主机方式 */
++
++#define	BIT_IE_TRANSFER		0x01		/* USB传输完成中断使能, 1有效 */
++#define	BIT_IE_BUS_RESET	0x02		/* 仅USB设备方式: USB总线复位中断使能, 1有效 */
++#define	BIT_IE_DEV_DETECT	0x02		/* 仅USB主机方式: USB设备检测中断使能, 1有效 */
++#define	BIT_IE_USB_SUSPEND	0x04		/* USB总线挂起中断使能, 1有效 */
++#define	BIT_IE_USB_RESUME	0x08		/* USB总线恢复/唤醒中断使能, 1有效, 0-使能芯片唤醒完成中断, 1-使能USB总线恢复中断 */
++#define	BIT_IE_CLK_OUT_DIV	0xF0		/* 可编程时钟的分频除数: 输出频率为48MHz/(该值+1), 例如: 0000-48MHz, 0001-24MHz, 0010-16MHz, 1111-3MHz */
++#define	M_SET_CLK_DIV( old, div )		( (old) & ~ BIT_IE_CLK_OUT_DIV | (div) << 4 )	/* 设置时钟输出分频除数 */
++
++#define	BIT_ADDR_USB_DEV	0x7F		/* 在设备方式下为自身作为USB设备的地址, 在主机方式下为当前被操作的USB设备地址 */
++
++#define	BIT_IF_INTER_FLAG	0x0F		/* 所有的USB中断标志 */
++#define	BIT_IF_TRANSFER		0x01		/* USB传输完成中断标志, 1有效, 向该位写1清标志, 该位在每次USB传输完成后自动置1 */
++#define	BIT_IF_BUS_RESET	0x02		/* 仅USB设备方式: USB总线复位中断标志, 1有效, 向该位写1清标志, 该位在检测到USB总线复位时自动置1 */
++#define	BIT_IF_DEV_DETECT	0x02		/* 仅USB主机方式: USB设备插拔检测中断标志, 1有效, 向该位写1清标志, 该位在检测到USB设备插拔后自动置1 */
++#define	BIT_IF_USB_SUSPEND	0x04		/* USB总线挂起中断标志, 1有效, 向该位写1清标志, 该位在检测到USB总线挂起时自动置1 */
++#define	BIT_IF_WAKE_UP		0x08		/* 芯片唤醒完成中断标志, 1有效, 向该位写1清标志, 该位在芯片唤醒完成后自动置1 */
++#define	BIT_IF_USB_RESUME	0x08		/* USB总线恢复/唤醒中断标志, 1有效, 向该位写1清标志, 该位在检测到USB总线恢复时自动置1 */
++#define	BIT_IF_USB_PAUSE	0x10		/* USB传输暂停标志, 1有效, 向该位写1清标志, 该位在每次USB传输完成后自动置1 */
++#define	BIT_IF_DEV_ATTACH	0x20		/* USB设备连接状态: 0-尚未连接/断开/拔出, 1-至少有一个USB设备已经连接/插入 */
++#define	BIT_IF_USB_OE		0x40		/* UEN引脚的USB输出使能状态: 0-UEN引脚为低电平, 1-UEN引脚为高电平 */
++#define	BIT_IF_USB_DX_IN	0x80		/* HUB0全速正极性时UD+引脚/低速负极性时UD-引脚的采样状态: 0-低电平,速度失配, 1-高电平,速度匹配 */
++#define	BIT_HUB0_DX_IN		0x80		/* HUB0全速正极性时UD+引脚/低速负极性时UD-引脚的采样状态: 0-低电平,速度失配, 1-高电平,速度匹配 */
++
++#define	BIT_STAT_THIS_ENDP	0x03		/* 仅USB设备方式: USB传输的目的端点号: 00-端点0, 01-端点1, 10-端点2, 11-保留 */
++#define	BIT_STAT_THIS_PID	0x0C		/* 仅USB设备方式: USB传输的事务/令牌PID: 00-OUT事务, 01-保留, 10-IN事务, 11-SETUP事务 */
++#define	BIT_STAT_PID_ENDP	0x0F		/* 仅USB设备方式: USB传输的事务和端点号,参考后面的USB_INT_EP*定义 */
++#define	BIT_STAT_DEV_RESP	0x0F		/* 仅USB主机方式: USB设备的应答PID: XX00=错误或超时,其它值-同PID定义,参考后面的USB_INT_RET_*定义 */
++#define	M_IS_HOST_TIMEOUT( status )		( ( (status) & 0x03 ) == 0 )		/* 检查USB主机状态是否为应答超时/出错 */
++#define	M_IS_HOST_IN_DATA( status )		( ( (status) & BIT_STAT_DEV_RESP & ~ ( DEF_USB_PID_DATA0 ^ DEF_USB_PID_DATA1 ) ) == ( DEF_USB_PID_DATA0 & DEF_USB_PID_DATA1 ) )	/* 检查是否返回DATA0或者DATA1 */
++#define	BIT_STAT_TOG_MATCH	0x10		/* 指示当前的传输是否成功/当前接收的数据包是否同步: 0-不同步, 1-同步 */
++#define	BIT_STAT_BUS_RESET	0x20		/* 当前USB总线复位状态: 0-没有复位, 1-正在复位 */
++#define	BIT_STAT_SUSPEND	0x40		/* 当前USB总线挂起状态: 0-总线有活动, 1-总线挂起 */
++#define	BIT_STAT_SIE_FREE	0x80		/* 当前USB接口引擎SIE的状态: 0=忙/正在传输, 1=空闲/等待 */
++
++#define	BIT_EP0_TRAN_RESP	0x0F		/* 仅USB设备方式: 端点0发送响应: 0000~1000-应答数据长度0~8, 1110-应答NAK, 1111-应答STALL,其它值-禁用 */
++#define	M_SET_EP0_TRAN_ACK( old, len )	( (old) & ~ BIT_EP0_TRAN_RESP | (len) & 0x0F )	/* 仅USB设备方式: 端点0发送响应/应答ACK */
++#define	M_SET_EP0_TRAN_NAK( old )		( (old) & ~ BIT_EP0_TRAN_RESP | 0x0E )		/* 仅USB设备方式: 端点0发送响应/应答NAK */
++#define	M_SET_EP0_TRAN_STA( old )		( (old) & ~ BIT_EP0_TRAN_RESP | 0x0F )		/* 仅USB设备方式: 端点0发送响应/应答STALL */
++#define	BIT_EP0_RECV_RESP	0x30		/* 仅USB设备方式: 端点0接收响应: 00-应答ACK, 01-禁用, 10-应答NAK, 11-应答STALL */
++#define	M_SET_EP0_RECV_ACK( old )		( (old) & ~ BIT_EP0_RECV_RESP | 0x00 )		/* 仅USB设备方式: 端点0接收响应/应答ACK */
++#define	M_SET_EP0_RECV_NAK( old )		( (old) & ~ BIT_EP0_RECV_RESP | 0x20 )		/* 仅USB设备方式: 端点0接收响应/应答NAK */
++#define	M_SET_EP0_RECV_STA( old )		( (old) & ~ BIT_EP0_RECV_RESP | 0x30 )		/* 仅USB设备方式: 端点0接收响应/应答STALL */
++#define	BIT_EP0_TRAN_TOG	0x40		/* 仅USB设备方式: 端点0发送同步标志: 0-DATA0, 1-DATA1 */
++#define	BIT_EP0_RECV_TOG	0x80		/* 仅USB设备方式: 端点0接收同步标志: 0-DATA0, 1-DATA1 */
++
++#define	BIT_EP1_TRAN_RESP	0x0F		/* 仅USB设备方式: 端点1发送响应: 0000~1000-应答数据长度0~8, 1110-应答NAK, 1111-应答STALL,其它值-禁用 */
++#define	M_SET_EP1_TRAN_ACK( old, len )	( (old) & ~ BIT_EP1_TRAN_RESP | (len) & 0x0F )	/* 仅USB设备方式: 端点1发送响应/应答ACK */
++#define	M_SET_EP1_TRAN_NAK( old )		( (old) & ~ BIT_EP1_TRAN_RESP | 0x0E )		/* 仅USB设备方式: 端点1发送响应/应答NAK */
++#define	M_SET_EP1_TRAN_STA( old )		( (old) & ~ BIT_EP1_TRAN_RESP | 0x0F )		/* 仅USB设备方式: 端点1发送响应/应答STALL */
++#define	BIT_EP1_RECV_RESP	0x30		/* 仅USB设备方式: 端点1接收响应: 00-应答ACK, 01-禁用, 10-应答NAK, 11-应答STALL */
++#define	M_SET_EP1_RECV_ACK( old )		( (old) & ~ BIT_EP1_RECV_RESP | 0x00 )		/* 仅USB设备方式: 端点1接收响应/应答ACK */
++#define	M_SET_EP1_RECV_NAK( old )		( (old) & ~ BIT_EP1_RECV_RESP | 0x20 )		/* 仅USB设备方式: 端点1接收响应/应答NAK */
++#define	M_SET_EP1_RECV_STA( old )		( (old) & ~ BIT_EP1_RECV_RESP | 0x30 )		/* 仅USB设备方式: 端点1接收响应/应答STALL */
++#define	BIT_EP1_TRAN_TOG	0x40		/* 仅USB设备方式: 端点1发送同步标志: 0-DATA0, 1-DATA1 */
++#define	BIT_EP1_RECV_TOG	0x80		/* 仅USB设备方式: 端点1接收同步标志: 0-DATA0, 1-DATA1 */
++
++#define	BIT_HOST_PID_ENDP	0x0F		/* 仅USB主机方式: 目的端点号: 0000~1111-端点号0~15 */
++#define	BIT_HOST_PID_TOKEN	0xF0		/* 仅USB主机方式: 指定事务/令牌PID: 1101-SETUP事务, 0001-OUT事务, 1001-IN事务, 0101-SOF包,其它值-禁用 */
++#define	M_MK_HOST_PID_ENDP( pid, endp )	( ((pid) << 4) | ((endp) & BIT_HOST_PID_ENDP) )		/* 用事务/令牌PID和目的端点号生成USB主机令牌数据 */
++
++#define	BIT_EP2_TRAN_RESP	0x03		/* 仅USB设备方式: 端点2发送响应: 00-应答数据, 01-同步/等时传输, 10-应答NAK, 11-应答STALL */
++#define	M_SET_EP2_TRAN_ACK( old )		( (old) & ~ BIT_EP2_TRAN_RESP | 0x00 )		/* 仅USB设备方式: 端点2发送响应/应答ACK */
++#define	M_SET_EP2_TRAN_ISO( old )		( (old) & ~ BIT_EP2_TRAN_RESP | 0x01 )		/* 仅USB设备方式: 端点2发送响应/同步/等时传输/无需应答 */
++#define	M_SET_EP2_TRAN_NAK( old )		( (old) & ~ BIT_EP2_TRAN_RESP | 0x02 )		/* 仅USB设备方式: 端点2发送响应/应答NAK */
++#define	M_SET_EP2_TRAN_STA( old )		( (old) & ~ BIT_EP2_TRAN_RESP | 0x03 )		/* 仅USB设备方式: 端点2发送响应/应答STALL */
++#define	BIT_EP2_RECV_RESP	0x30		/* 仅USB设备方式: 端点2接收响应: 00-应答ACK, 01-同步/等时传输, 10-应答NAK, 11-应答STALL */
++#define	M_SET_EP2_RECV_ACK( old )		( (old) & ~ BIT_EP2_RECV_RESP | 0x00 )		/* 仅USB设备方式: 端点2接收响应/应答ACK */
++#define	M_SET_EP2_RECV_ISO( old )		( (old) & ~ BIT_EP2_RECV_RESP | 0x10 )		/* 仅USB设备方式: 端点2接收响应/同步/等时传输/不作应答 */
++#define	M_SET_EP2_RECV_NAK( old )		( (old) & ~ BIT_EP2_RECV_RESP | 0x20 )		/* 仅USB设备方式: 端点2接收响应/应答NAK */
++#define	M_SET_EP2_RECV_STA( old )		( (old) & ~ BIT_EP2_RECV_RESP | 0x30 )		/* 仅USB设备方式: 端点2接收响应/应答STALL */
++#define	BIT_EP2_TRAN_TOG	0x40		/* 仅USB设备方式: 端点2发送同步标志: 0-DATA0, 1-DATA1 */
++#define	BIT_EP2_RECV_TOG	0x80		/* 仅USB设备方式: 端点2接收同步标志: 0-DATA0, 1-DATA1 */
++
++#define	BIT_HOST_TRAN_ISO	0x01		/* 仅USB主机方式: 主机发送的传输类型: 0-控制/批量/中断传输, 1-同步/等时传输 */
++#define	BIT_HOST_START		0x08		/* 仅USB主机方式: 主机传输启动控制: 0-暂停, 1-启动传输,完成后自动清0 */
++#define	BIT_HOST_RECV_ISO	0x10		/* 仅USB主机方式: 主机接收的传输类型: 0-控制/批量/中断传输, 1-同步/等时传输 */
++#define	BIT_HOST_TRAN_TOG	0x40		/* 仅USB主机方式: 主机发送同步标志: 0-DATA0, 1-DATA1 */
++#define	BIT_HOST_RECV_TOG	0x80		/* 仅USB主机方式: 主机接收同步标志: 0-DATA0, 1-DATA1 */
++
+-- 
+2.50.1 (Apple Git-155)
+

@@ -1,0 +1,316 @@
+From b49b868f2511936c514f635fe00ff5a905302d3f Mon Sep 17 00:00:00 2001
+From: CatMe0w <CatMe0w@live.cn>
+Date: Wed, 15 Apr 2026 00:28:27 +0800
+Subject: [PATCH v1 6/6] video: fbdev: Add Anyka Boot Framebuffer driver
+
+---
+ drivers/video/fbdev/Kconfig        |   7 +
+ drivers/video/fbdev/Makefile       |   1 +
+ drivers/video/fbdev/anyka-bootfb.c | 265 +++++++++++++++++++++++++++++
+ 3 files changed, 273 insertions(+)
+ create mode 100644 drivers/video/fbdev/anyka-bootfb.c
+
+diff --git a/drivers/video/fbdev/Kconfig b/drivers/video/fbdev/Kconfig
+index ac9ac4287c6a..dd31552347b1 100644
+--- a/drivers/video/fbdev/Kconfig
++++ b/drivers/video/fbdev/Kconfig
+@@ -1787,6 +1787,13 @@ config FB_SIMPLE
+ 	  Configuration re: surface address, size, and format must be provided
+ 	  through device tree, or plain old platform data.
+ 
++config FB_ANYKA_BOOT
++	bool
++	depends on FB && OF && ARM && ARCH_ANYKA
++	default y
++	select APERTURE_HELPERS
++	select FB_IOMEM_HELPERS
++
+ config FB_SSD1307
+ 	tristate "Solomon SSD1307 framebuffer support"
+ 	depends on FB && I2C
+diff --git a/drivers/video/fbdev/Makefile b/drivers/video/fbdev/Makefile
+index 36a18d958ba0..3b4c5e2876f6 100644
+--- a/drivers/video/fbdev/Makefile
++++ b/drivers/video/fbdev/Makefile
+@@ -121,6 +121,7 @@ obj-$(CONFIG_FB_EFI)              += efifb.o
+ obj-$(CONFIG_FB_VGA16)            += vga16fb.o
+ obj-$(CONFIG_FB_OF)               += offb.o
+ obj-$(CONFIG_FB_SSD1307)	  += ssd1307fb.o
++obj-$(CONFIG_FB_ANYKA_BOOT)       += anyka-bootfb.o
+ obj-$(CONFIG_FB_SIMPLE)           += simplefb.o
+ 
+ # the test framebuffer is last
+diff --git a/drivers/video/fbdev/anyka-bootfb.c b/drivers/video/fbdev/anyka-bootfb.c
+new file mode 100644
+index 000000000000..320cc845bf7b
+--- /dev/null
++++ b/drivers/video/fbdev/anyka-bootfb.c
+@@ -0,0 +1,265 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Anyka AK7802 firmware framebuffer handoff driver
++ *
++ * This keeps the firmware-programmed LCD controller running and only maps the
++ * scanout buffer as normal RAM so fbcon can take over.
++ *
++ * Copyright (C) 2026 CatMe0w
++ */
++
++#include <linux/aperture.h>
++#include <linux/errno.h>
++#include <linux/fb.h>
++#include <linux/ioport.h>
++#include <linux/memremap.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/of_reserved_mem.h>
++#include <linux/platform_data/simplefb.h>
++#include <linux/platform_device.h>
++
++static const struct fb_fix_screeninfo anyka_bootfb_fix = {
++	.id		= "anyka-bootfb",
++	.type		= FB_TYPE_PACKED_PIXELS,
++	.visual		= FB_VISUAL_TRUECOLOR,
++	.accel		= FB_ACCEL_NONE,
++};
++
++static const struct fb_var_screeninfo anyka_bootfb_var = {
++	.height		= -1,
++	.width		= -1,
++	.activate	= FB_ACTIVATE_NOW,
++	.vmode		= FB_VMODE_NONINTERLACED,
++};
++
++#define ANYKA_BOOTFB_PSEUDOCMAP_SIZE 16
++
++struct anyka_bootfb_par {
++	u32 palette[ANYKA_BOOTFB_PSEUDOCMAP_SIZE];
++	struct resource *mem;
++};
++
++struct anyka_bootfb_params {
++	u32 width;
++	u32 height;
++	u32 stride;
++	struct simplefb_format *format;
++	struct resource memory;
++};
++
++static struct simplefb_format anyka_bootfb_formats[] = SIMPLEFB_FORMATS;
++
++static int anyka_bootfb_setcolreg(unsigned int regno, unsigned int red,
++				  unsigned int green, unsigned int blue,
++				  unsigned int transp, struct fb_info *info)
++{
++	u32 *palette = info->pseudo_palette;
++	u32 cr = red >> (16 - info->var.red.length);
++	u32 cg = green >> (16 - info->var.green.length);
++	u32 cb = blue >> (16 - info->var.blue.length);
++	u32 value;
++
++	if (regno >= ANYKA_BOOTFB_PSEUDOCMAP_SIZE)
++		return -EINVAL;
++
++	value = (cr << info->var.red.offset) |
++		(cg << info->var.green.offset) |
++		(cb << info->var.blue.offset);
++
++	if (info->var.transp.length > 0) {
++		u32 mask = (1 << info->var.transp.length) - 1;
++
++		value |= mask << info->var.transp.offset;
++	}
++
++	palette[regno] = value;
++
++	return 0;
++}
++
++static void anyka_bootfb_destroy(struct fb_info *info)
++{
++	struct anyka_bootfb_par *par = info->par;
++
++	if (info->screen_base)
++		memunmap(info->screen_base);
++
++	framebuffer_release(info);
++
++	if (par->mem)
++		release_mem_region(par->mem->start, resource_size(par->mem));
++}
++
++static const struct fb_ops anyka_bootfb_ops = {
++	.owner		= THIS_MODULE,
++	FB_DEFAULT_IOMEM_OPS,
++	.fb_destroy	= anyka_bootfb_destroy,
++	.fb_setcolreg	= anyka_bootfb_setcolreg,
++};
++
++static int anyka_bootfb_parse_dt(struct platform_device *pdev,
++				 struct anyka_bootfb_params *params)
++{
++	struct device_node *np = pdev->dev.of_node;
++	const char *format;
++	struct resource *res;
++	int i;
++	int ret;
++
++	ret = of_property_read_u32(np, "width", &params->width);
++	if (ret)
++		return dev_err_probe(&pdev->dev, ret, "missing width property\n");
++
++	ret = of_property_read_u32(np, "height", &params->height);
++	if (ret)
++		return dev_err_probe(&pdev->dev, ret, "missing height property\n");
++
++	ret = of_property_read_u32(np, "stride", &params->stride);
++	if (ret)
++		return dev_err_probe(&pdev->dev, ret, "missing stride property\n");
++
++	ret = of_property_read_string(np, "format", &format);
++	if (ret)
++		return dev_err_probe(&pdev->dev, ret, "missing format property\n");
++
++	params->format = NULL;
++	for (i = 0; i < ARRAY_SIZE(anyka_bootfb_formats); i++) {
++		if (strcmp(format, anyka_bootfb_formats[i].name))
++			continue;
++
++		params->format = &anyka_bootfb_formats[i];
++		break;
++	}
++
++	if (!params->format)
++		return dev_err_probe(&pdev->dev, -EINVAL,
++				     "unsupported format '%s'\n", format);
++
++	ret = of_reserved_mem_region_to_resource(np, 0, &params->memory);
++	if (!ret)
++		return 0;
++
++	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++	if (!res)
++		return dev_err_probe(&pdev->dev, -EINVAL,
++				     "missing framebuffer memory resource\n");
++
++	params->memory = *res;
++	return 0;
++}
++
++static int anyka_bootfb_probe(struct platform_device *pdev)
++{
++	struct anyka_bootfb_params params;
++	struct anyka_bootfb_par *par;
++	struct fb_info *info;
++	struct resource *mem;
++	struct resource *res;
++	int ret;
++
++	ret = anyka_bootfb_parse_dt(pdev, &params);
++	if (ret)
++		return ret;
++
++	res = &params.memory;
++	mem = request_mem_region(res->start, resource_size(res), "anyka-bootfb");
++	if (!mem) {
++		dev_warn(&pdev->dev,
++			 "cannot reserve framebuffer memory at %pR\n", res);
++		mem = res;
++	}
++
++	info = framebuffer_alloc(sizeof(*par), &pdev->dev);
++	if (!info) {
++		ret = -ENOMEM;
++		goto err_release_mem;
++	}
++
++	platform_set_drvdata(pdev, info);
++	par = info->par;
++
++	info->fix = anyka_bootfb_fix;
++	info->fix.smem_start = mem->start;
++	info->fix.smem_len = resource_size(mem);
++	info->fix.line_length = params.stride;
++
++	info->var = anyka_bootfb_var;
++	info->var.xres = params.width;
++	info->var.yres = params.height;
++	info->var.xres_virtual = params.width;
++	info->var.yres_virtual = params.height;
++	info->var.bits_per_pixel = params.format->bits_per_pixel;
++	info->var.red = params.format->red;
++	info->var.green = params.format->green;
++	info->var.blue = params.format->blue;
++	info->var.transp = params.format->transp;
++
++	info->fbops = &anyka_bootfb_ops;
++	info->pseudo_palette = par->palette;
++	info->screen_base = memremap(info->fix.smem_start, info->fix.smem_len,
++				     MEMREMAP_WB);
++	if (!info->screen_base) {
++		ret = -ENOMEM;
++		goto err_release_fb;
++	}
++
++	ret = devm_aperture_acquire_for_platform_device(pdev,
++							info->fix.smem_start,
++							info->fix.smem_len);
++	if (ret) {
++		dev_err(&pdev->dev, "unable to acquire framebuffer aperture: %d\n",
++			ret);
++		goto err_unmap;
++	}
++
++	if (mem != res)
++		par->mem = mem;
++
++	ret = register_framebuffer(info);
++	if (ret < 0) {
++		dev_err(&pdev->dev, "unable to register framebuffer: %d\n", ret);
++		goto err_unmap;
++	}
++
++	dev_info(&pdev->dev, "framebuffer at %pa, %u bytes, %ux%ux%u\n",
++		 &info->fix.smem_start, info->fix.smem_len, info->var.xres,
++		 info->var.yres, info->var.bits_per_pixel);
++
++	return 0;
++
++err_unmap:
++	memunmap(info->screen_base);
++err_release_fb:
++	framebuffer_release(info);
++err_release_mem:
++	if (mem != res)
++		release_mem_region(mem->start, resource_size(mem));
++	return ret;
++}
++
++static void anyka_bootfb_remove(struct platform_device *pdev)
++{
++	struct fb_info *info = platform_get_drvdata(pdev);
++
++	unregister_framebuffer(info);
++}
++
++static const struct of_device_id anyka_bootfb_of_match[] = {
++	{ .compatible = "anyka,ak7802-bootfb" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, anyka_bootfb_of_match);
++
++static struct platform_driver anyka_bootfb_driver = {
++	.driver = {
++		.name = "anyka-bootfb",
++		.of_match_table = anyka_bootfb_of_match,
++	},
++	.probe = anyka_bootfb_probe,
++	.remove = anyka_bootfb_remove,
++};
++module_platform_driver(anyka_bootfb_driver);
++
++MODULE_DESCRIPTION("Anyka boot framebuffer handoff driver");
++MODULE_LICENSE("GPL");
+-- 
+2.50.1 (Apple Git-155)
+

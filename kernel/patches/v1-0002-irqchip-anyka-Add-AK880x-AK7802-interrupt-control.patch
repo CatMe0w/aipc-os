@@ -1,0 +1,282 @@
+From 2aa209e69dc80d8815d6da83e81b5e7de96ae38c Mon Sep 17 00:00:00 2001
+From: CatMe0w <CatMe0w@live.cn>
+Date: Wed, 15 Apr 2026 00:28:24 +0800
+Subject: [PATCH v1 2/6] irqchip: anyka: Add AK880x/AK7802 interrupt controller
+ driver
+
+---
+ drivers/irqchip/Makefile    |   1 +
+ drivers/irqchip/irq-anyka.c | 249 ++++++++++++++++++++++++++++++++++++
+ 2 files changed, 250 insertions(+)
+ create mode 100644 drivers/irqchip/irq-anyka.c
+
+diff --git a/drivers/irqchip/Makefile b/drivers/irqchip/Makefile
+index 26aa3b6ec99f..a58afaf1ded2 100644
+--- a/drivers/irqchip/Makefile
++++ b/drivers/irqchip/Makefile
+@@ -8,6 +8,7 @@ obj-$(CONFIG_ATH79)			+= irq-ath79-misc.o
+ obj-$(CONFIG_ARCH_BCM2835)		+= irq-bcm2835.o
+ obj-$(CONFIG_ARCH_BCM2835)		+= irq-bcm2836.o
+ obj-$(CONFIG_ARCH_ACTIONS)		+= irq-owl-sirq.o
++obj-$(CONFIG_ARCH_ANYKA)		+= irq-anyka.o
+ obj-$(CONFIG_DAVINCI_CP_INTC)		+= irq-davinci-cp-intc.o
+ obj-$(CONFIG_EXYNOS_IRQ_COMBINER)	+= exynos-combiner.o
+ obj-$(CONFIG_ECONET_EN751221_INTC)	+= irq-econet-en751221.o
+diff --git a/drivers/irqchip/irq-anyka.c b/drivers/irqchip/irq-anyka.c
+new file mode 100644
+index 000000000000..eddcb9b97dda
+--- /dev/null
++++ b/drivers/irqchip/irq-anyka.c
+@@ -0,0 +1,249 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Anyka AK78/AK88/AK98 interrupt controller support
++ * 
++ * Copyright (C) 2004-2010 ANYKA LTD.
++ */
++
++#include <linux/bitops.h>
++#include <linux/io.h>
++#include <linux/irq.h>
++#include <linux/irqchip.h>
++#include <linux/irqchip/chained_irq.h>
++#include <linux/of_address.h>
++#include <linux/of_irq.h>
++#include <linux/slab.h>
++
++#include <asm/exception.h>
++
++#define ANYKA_MAIN_IRQS			28
++#define ANYKA_SYSCTRL_IRQS		11
++
++#define ANYKA_IRQ_MASK_REG		0x34
++#define ANYKA_FIQ_MASK_REG		0x38
++#define ANYKA_SYSCTRL_REG		0x4c
++#define ANYKA_INT_STATUS_REG		0xcc
++
++enum anyka_irqc_type {
++	ANYKA_IRQC_MAIN,
++	ANYKA_IRQC_SYSCTRL,
++};
++
++struct anyka_irqc {
++	void __iomem *base;
++	struct irq_domain *domain;
++	raw_spinlock_t lock;
++	enum anyka_irqc_type type;
++};
++
++static struct anyka_irqc *anyka_main_irqc;
++
++static void anyka_main_mask(struct irq_data *d)
++{
++	struct anyka_irqc *ic = irq_data_get_irq_chip_data(d);
++	unsigned long flags;
++	u32 mask;
++
++	raw_spin_lock_irqsave(&ic->lock, flags);
++	mask = readl_relaxed(ic->base + ANYKA_IRQ_MASK_REG);
++	mask &= ~BIT(d->hwirq);
++	writel_relaxed(mask, ic->base + ANYKA_IRQ_MASK_REG);
++	raw_spin_unlock_irqrestore(&ic->lock, flags);
++}
++
++static void anyka_main_unmask(struct irq_data *d)
++{
++	struct anyka_irqc *ic = irq_data_get_irq_chip_data(d);
++	unsigned long flags;
++	u32 mask;
++
++	raw_spin_lock_irqsave(&ic->lock, flags);
++	mask = readl_relaxed(ic->base + ANYKA_IRQ_MASK_REG);
++	mask |= BIT(d->hwirq);
++	writel_relaxed(mask, ic->base + ANYKA_IRQ_MASK_REG);
++	raw_spin_unlock_irqrestore(&ic->lock, flags);
++}
++
++static struct irq_chip anyka_main_chip = {
++	.name = "anyka-main",
++	.irq_mask = anyka_main_mask,
++	.irq_unmask = anyka_main_unmask,
++};
++
++static void anyka_sysctrl_mask(struct irq_data *d)
++{
++	struct anyka_irqc *ic = irq_data_get_irq_chip_data(d);
++	unsigned long flags;
++	u32 val;
++
++	raw_spin_lock_irqsave(&ic->lock, flags);
++	val = readl_relaxed(ic->base + ANYKA_SYSCTRL_REG);
++	val &= ~BIT(d->hwirq);
++	writel_relaxed(val, ic->base + ANYKA_SYSCTRL_REG);
++	raw_spin_unlock_irqrestore(&ic->lock, flags);
++}
++
++static void anyka_sysctrl_unmask(struct irq_data *d)
++{
++	struct anyka_irqc *ic = irq_data_get_irq_chip_data(d);
++	unsigned long flags;
++	u32 val;
++
++	raw_spin_lock_irqsave(&ic->lock, flags);
++	val = readl_relaxed(ic->base + ANYKA_SYSCTRL_REG);
++	val |= BIT(d->hwirq);
++	writel_relaxed(val, ic->base + ANYKA_SYSCTRL_REG);
++	raw_spin_unlock_irqrestore(&ic->lock, flags);
++}
++
++static struct irq_chip anyka_sysctrl_chip = {
++	.name = "anyka-sysctrl",
++	.irq_mask = anyka_sysctrl_mask,
++	.irq_unmask = anyka_sysctrl_unmask,
++};
++
++static int anyka_irq_map(struct irq_domain *d, unsigned int irq,
++			 irq_hw_number_t hwirq)
++{
++	struct anyka_irqc *ic = d->host_data;
++	struct irq_chip *chip;
++
++	if (ic->type == ANYKA_IRQC_MAIN)
++		chip = &anyka_main_chip;
++	else
++		chip = &anyka_sysctrl_chip;
++
++	irq_set_chip_data(irq, ic);
++	irq_set_chip_and_handler(irq, chip, handle_level_irq);
++	irq_set_probe(irq);
++	irq_set_status_flags(irq, IRQ_LEVEL);
++
++	return 0;
++}
++
++static void anyka_irq_unmap(struct irq_domain *d, unsigned int irq)
++{
++	irq_set_chip_and_handler(irq, NULL, NULL);
++	irq_set_chip_data(irq, NULL);
++}
++
++static const struct irq_domain_ops anyka_irq_domain_ops = {
++	.map = anyka_irq_map,
++	.unmap = anyka_irq_unmap,
++	.xlate = irq_domain_xlate_onecell,
++};
++
++static void __exception_irq_entry anyka_handle_irq(struct pt_regs *regs)
++{
++	struct anyka_irqc *ic = anyka_main_irqc;
++	u32 pending;
++
++	do {
++		pending = readl_relaxed(ic->base + ANYKA_INT_STATUS_REG);
++		pending &= readl_relaxed(ic->base + ANYKA_IRQ_MASK_REG);
++		pending &= GENMASK(ANYKA_MAIN_IRQS - 1, 0);
++		if (!pending)
++			return;
++
++		generic_handle_domain_irq(ic->domain, __ffs(pending));
++	} while (1);
++}
++
++static void anyka_sysctrl_handle_irq(struct irq_desc *desc)
++{
++	struct anyka_irqc *ic = irq_desc_get_handler_data(desc);
++	struct irq_chip *chip = irq_desc_get_chip(desc);
++	u32 pending;
++
++	chained_irq_enter(chip, desc);
++
++	pending = readl_relaxed(ic->base + ANYKA_SYSCTRL_REG);
++	pending = (pending & GENMASK(ANYKA_SYSCTRL_IRQS - 1, 0)) &
++		  ((pending >> 16) & GENMASK(ANYKA_SYSCTRL_IRQS - 1, 0));
++
++	while (pending) {
++		unsigned int hwirq = __ffs(pending);
++
++		pending &= ~BIT(hwirq);
++		generic_handle_domain_irq(ic->domain, hwirq);
++	}
++
++	chained_irq_exit(chip, desc);
++}
++
++static int __init anyka_main_of_init(struct device_node *node,
++				     struct device_node *parent)
++{
++	struct anyka_irqc *ic;
++
++	if (parent)
++		return -EINVAL;
++
++	ic = kzalloc(sizeof(*ic), GFP_KERNEL);
++	if (!ic)
++		return -ENOMEM;
++
++	ic->base = of_iomap(node, 0);
++	if (!ic->base) {
++		kfree(ic);
++		return -ENXIO;
++	}
++
++	raw_spin_lock_init(&ic->lock);
++	ic->type = ANYKA_IRQC_MAIN;
++
++	writel_relaxed(0, ic->base + ANYKA_IRQ_MASK_REG);
++	writel_relaxed(0, ic->base + ANYKA_FIQ_MASK_REG);
++	readl_relaxed(ic->base + ANYKA_INT_STATUS_REG);
++
++	ic->domain = irq_domain_add_linear(node, ANYKA_MAIN_IRQS,
++					   &anyka_irq_domain_ops, ic);
++	if (!ic->domain)
++		return -ENOMEM;
++
++	anyka_main_irqc = ic;
++	set_handle_irq(anyka_handle_irq);
++
++	return 0;
++}
++IRQCHIP_DECLARE(anyka_main_intc, "anyka,ak880x-intc", anyka_main_of_init);
++
++static int __init anyka_sysctrl_of_init(struct device_node *node,
++					struct device_node *parent)
++{
++	struct anyka_irqc *ic;
++	unsigned int parent_irq;
++
++	if (!parent)
++		return -EINVAL;
++
++	ic = kzalloc(sizeof(*ic), GFP_KERNEL);
++	if (!ic)
++		return -ENOMEM;
++
++	ic->base = of_iomap(node, 0);
++	if (!ic->base) {
++		kfree(ic);
++		return -ENXIO;
++	}
++
++	parent_irq = irq_of_parse_and_map(node, 0);
++	if (!parent_irq)
++		return -EINVAL;
++
++	raw_spin_lock_init(&ic->lock);
++	ic->type = ANYKA_IRQC_SYSCTRL;
++
++	writel_relaxed(0, ic->base + ANYKA_SYSCTRL_REG);
++
++	ic->domain = irq_domain_add_linear(node, ANYKA_SYSCTRL_IRQS,
++					   &anyka_irq_domain_ops, ic);
++	if (!ic->domain)
++		return -ENOMEM;
++
++	irq_set_chained_handler_and_data(parent_irq, anyka_sysctrl_handle_irq, ic);
++
++	return 0;
++}
++IRQCHIP_DECLARE(anyka_sysctrl_intc, "anyka,ak880x-sysctrl-intc",
++		anyka_sysctrl_of_init);
+-- 
+2.50.1 (Apple Git-155)
+

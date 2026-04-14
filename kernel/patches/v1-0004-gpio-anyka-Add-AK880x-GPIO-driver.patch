@@ -1,0 +1,539 @@
+From 9a8f431c6b8669991246436bb26c1aadf87bd9fa Mon Sep 17 00:00:00 2001
+From: CatMe0w <CatMe0w@live.cn>
+Date: Wed, 15 Apr 2026 00:28:25 +0800
+Subject: [PATCH v1 4/6] gpio: anyka: Add AK880x GPIO driver
+
+---
+ drivers/gpio/Kconfig      |   8 +
+ drivers/gpio/Makefile     |   1 +
+ drivers/gpio/gpio-anyka.c | 487 ++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 496 insertions(+)
+ create mode 100644 drivers/gpio/gpio-anyka.c
+
+diff --git a/drivers/gpio/Kconfig b/drivers/gpio/Kconfig
+index b45fb799e36c..1d676d3eb07b 100644
+--- a/drivers/gpio/Kconfig
++++ b/drivers/gpio/Kconfig
+@@ -173,6 +173,14 @@ config GPIO_AMDPT
+ 	  Driver for GPIO functionality on Promontory IOHub.
+ 	  Requires ACPI ASL code to enumerate as a platform device.
+ 
++config GPIO_ANYKA
++	bool "Anyka AK78/AK88/AK98 GPIO support"
++	depends on ARCH_ANYKA || COMPILE_TEST
++	select GPIOLIB_IRQCHIP
++	help
++	  Say Y here to support the internal GPIO controller found in
++	  Anyka AK78/AK88/AK98 ARM926 SoCs.
++
+ config GPIO_ASPEED
+ 	tristate "Aspeed GPIO support"
+ 	depends on (ARCH_ASPEED || COMPILE_TEST) && OF_GPIO
+diff --git a/drivers/gpio/Makefile b/drivers/gpio/Makefile
+index c05f7d795c43..9b20e6745b58 100644
+--- a/drivers/gpio/Makefile
++++ b/drivers/gpio/Makefile
+@@ -38,6 +38,7 @@ obj-$(CONFIG_GPIO_ALTERA)  		+= gpio-altera.o
+ obj-$(CONFIG_GPIO_AMD8111)		+= gpio-amd8111.o
+ obj-$(CONFIG_GPIO_AMD_FCH)		+= gpio-amd-fch.o
+ obj-$(CONFIG_GPIO_AMDPT)		+= gpio-amdpt.o
++obj-$(CONFIG_GPIO_ANYKA)		+= gpio-anyka.o
+ obj-$(CONFIG_GPIO_ARIZONA)		+= gpio-arizona.o
+ obj-$(CONFIG_GPIO_ASPEED)		+= gpio-aspeed.o
+ obj-$(CONFIG_GPIO_ASPEED_SGPIO)		+= gpio-aspeed-sgpio.o
+diff --git a/drivers/gpio/gpio-anyka.c b/drivers/gpio/gpio-anyka.c
+new file mode 100644
+index 000000000000..cb4912150c50
+--- /dev/null
++++ b/drivers/gpio/gpio-anyka.c
+@@ -0,0 +1,487 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * GPIO controller support for Anyka AK78/AK88/AK98 SoCs.
++ * 
++ * Copyright (C) 2026 CatMe0w
++ * Based on vendor kernel code provided by:
++ * Copyright (C) 2001-2010 ANYKA LTD.
++ */
++
++#include <linux/bitops.h>
++#include <linux/gpio/driver.h>
++#include <linux/io.h>
++#include <linux/irq.h>
++#include <linux/irqchip/chained_irq.h>
++#include <linux/mod_devicetable.h>
++#include <linux/module.h>
++#include <linux/of_device.h>
++#include <linux/pinctrl/pinconf-generic.h>
++#include <linux/platform_device.h>
++#include <linux/property.h>
++#include <linux/spinlock.h>
++
++#define ANYKA_GPIO_SHAREPIN_CON2	0x00
++#define ANYKA_GPIO_SHAREPIN_CON1	0x04
++#define ANYKA_GPIO_DIR1			0x08
++#define ANYKA_GPIO_OUT1			0x0c
++#define ANYKA_GPIO_UPDOWN1		0x28
++#define ANYKA_GPIO_IN1			0x48
++#define ANYKA_GPIO_INT_CTRL1		0x6c
++#define ANYKA_GPIO_INTP1		0x7c
++
++#define ANYKA_GPIO_COUNT		117
++#define ANYKA_GPIO_GROUP_SIZE		32
++
++struct anyka_sharepin_range {
++	u8 start;
++	u8 end;
++	u8 bit;
++};
++
++static const struct anyka_sharepin_range anyka_sharepin_clr_con1[] = {
++	{ 0, 3, 0 }, { 4, 4, 1 }, { 5, 7, 2 }, { 8, 8, 3 },
++	{ 9, 9, 4 }, { 10, 10, 5 }, { 11, 11, 6 }, { 12, 12, 7 },
++	{ 13, 13, 8 }, { 18, 19, 11 }, { 22, 23, 13 }, { 24, 25, 14 },
++	{ 26, 27, 15 }, { 30, 30, 16 }, { 31, 33, 17 }, { 34, 37, 18 },
++	{ 38, 38, 19 }, { 41, 41, 22 }, { 47, 58, 24 }, { 62, 68, 25 },
++	{ 61, 61, 26 }, { 69, 70, 27 }, { 71, 71, 28 }, { 72, 75, 29 },
++	{ 76, 79, 30 }, { 80, 83, 31 },
++};
++
++static const struct anyka_sharepin_range anyka_sharepin_clr_con2[] = {
++	{ 84, 89, 8 }, { 90, 90, 9 }, { 91, 91, 10 },
++};
++
++static const struct anyka_sharepin_range anyka_sharepin_set_con2[] = {
++	{ 14, 14, 12 }, { 15, 15, 13 }, { 16, 16, 14 },
++	{ 17, 17, 15 }, { 20, 20, 16 }, { 21, 21, 17 },
++};
++
++struct anyka_gpio {
++	void __iomem *base;
++	spinlock_t lock;
++	struct gpio_chip gc;
++	int parent_irq;
++};
++
++static void anyka_gpio_update_bit(void __iomem *reg, unsigned int bit, bool set)
++{
++	u32 val = readl_relaxed(reg);
++
++	if (set)
++		val |= BIT(bit);
++	else
++		val &= ~BIT(bit);
++
++	writel_relaxed(val, reg);
++}
++
++static void __iomem *anyka_gpio_dir_reg(struct anyka_gpio *ag, unsigned int offset)
++{
++	return ag->base + ANYKA_GPIO_DIR1 + (offset / ANYKA_GPIO_GROUP_SIZE) * 8;
++}
++
++static void __iomem *anyka_gpio_out_reg(struct anyka_gpio *ag, unsigned int offset)
++{
++	return ag->base + ANYKA_GPIO_OUT1 + (offset / ANYKA_GPIO_GROUP_SIZE) * 8;
++}
++
++static void __iomem *anyka_gpio_in_reg(struct anyka_gpio *ag, unsigned int offset)
++{
++	return ag->base + ANYKA_GPIO_IN1 + (offset / ANYKA_GPIO_GROUP_SIZE) * 4;
++}
++
++static void __iomem *anyka_gpio_bias_reg(struct anyka_gpio *ag, unsigned int offset)
++{
++	return ag->base + ANYKA_GPIO_UPDOWN1 + (offset / ANYKA_GPIO_GROUP_SIZE) * 4;
++}
++
++static void __iomem *anyka_gpio_irq_en_reg(struct anyka_gpio *ag, unsigned int offset)
++{
++	return ag->base + ANYKA_GPIO_INT_CTRL1 +
++	       (offset / ANYKA_GPIO_GROUP_SIZE) * 4;
++}
++
++static void __iomem *anyka_gpio_irq_pol_reg(struct anyka_gpio *ag, unsigned int offset)
++{
++	return ag->base + ANYKA_GPIO_INTP1 + (offset / ANYKA_GPIO_GROUP_SIZE) * 4;
++}
++
++static unsigned int anyka_gpio_bit(unsigned int offset)
++{
++	return offset % ANYKA_GPIO_GROUP_SIZE;
++}
++
++static unsigned int anyka_gpio_group_count(unsigned int ngpio)
++{
++	return (ngpio + ANYKA_GPIO_GROUP_SIZE - 1) / ANYKA_GPIO_GROUP_SIZE;
++}
++
++static u32 anyka_gpio_group_mask(struct gpio_chip *gc, unsigned int group)
++{
++	unsigned int offset = group * ANYKA_GPIO_GROUP_SIZE;
++	unsigned int remaining = gc->ngpio - offset;
++
++	if (remaining >= ANYKA_GPIO_GROUP_SIZE)
++		return GENMASK(ANYKA_GPIO_GROUP_SIZE - 1, 0);
++
++	return GENMASK(remaining - 1, 0);
++}
++
++static void anyka_gpio_force_mux(struct anyka_gpio *ag, unsigned int offset)
++{
++	unsigned long flags;
++	unsigned int i;
++
++	spin_lock_irqsave(&ag->lock, flags);
++
++	if (offset == 28 || offset == 29) {
++		u32 val = readl_relaxed(ag->base + ANYKA_GPIO_SHAREPIN_CON2);
++
++		val &= ~(GENMASK(2, 1));
++		writel_relaxed(val, ag->base + ANYKA_GPIO_SHAREPIN_CON2);
++	}
++
++	for (i = 0; i < ARRAY_SIZE(anyka_sharepin_clr_con1); i++) {
++		const struct anyka_sharepin_range *range = &anyka_sharepin_clr_con1[i];
++
++		if (offset >= range->start && offset <= range->end) {
++			anyka_gpio_update_bit(ag->base + ANYKA_GPIO_SHAREPIN_CON1,
++					      range->bit, false);
++			goto out;
++		}
++	}
++
++	for (i = 0; i < ARRAY_SIZE(anyka_sharepin_clr_con2); i++) {
++		const struct anyka_sharepin_range *range = &anyka_sharepin_clr_con2[i];
++
++		if (offset >= range->start && offset <= range->end) {
++			anyka_gpio_update_bit(ag->base + ANYKA_GPIO_SHAREPIN_CON2,
++					      range->bit, false);
++			goto out;
++		}
++	}
++
++	for (i = 0; i < ARRAY_SIZE(anyka_sharepin_set_con2); i++) {
++		const struct anyka_sharepin_range *range = &anyka_sharepin_set_con2[i];
++
++		if (offset >= range->start && offset <= range->end) {
++			anyka_gpio_update_bit(ag->base + ANYKA_GPIO_SHAREPIN_CON2,
++					      range->bit, true);
++			goto out;
++		}
++	}
++
++out:
++	spin_unlock_irqrestore(&ag->lock, flags);
++}
++
++static int anyka_gpio_request(struct gpio_chip *gc, unsigned int offset)
++{
++	struct anyka_gpio *ag = gpiochip_get_data(gc);
++	int ret;
++
++	ret = gpiochip_generic_request(gc, offset);
++	if (ret)
++		return ret;
++
++	anyka_gpio_force_mux(ag, offset);
++
++	return 0;
++}
++
++static int anyka_gpio_get_direction(struct gpio_chip *gc, unsigned int offset)
++{
++	struct anyka_gpio *ag = gpiochip_get_data(gc);
++	u32 dir;
++
++	dir = readl_relaxed(anyka_gpio_dir_reg(ag, offset));
++
++	return !!(dir & BIT(anyka_gpio_bit(offset)));
++}
++
++static int anyka_gpio_get(struct gpio_chip *gc, unsigned int offset)
++{
++	struct anyka_gpio *ag = gpiochip_get_data(gc);
++	void __iomem *reg;
++	u32 val;
++
++	if (anyka_gpio_get_direction(gc, offset))
++		reg = anyka_gpio_in_reg(ag, offset);
++	else
++		reg = anyka_gpio_out_reg(ag, offset);
++
++	val = readl_relaxed(reg);
++
++	return !!(val & BIT(anyka_gpio_bit(offset)));
++}
++
++static int anyka_gpio_direction_input(struct gpio_chip *gc, unsigned int offset)
++{
++	struct anyka_gpio *ag = gpiochip_get_data(gc);
++	unsigned long flags;
++
++	anyka_gpio_force_mux(ag, offset);
++
++	spin_lock_irqsave(&ag->lock, flags);
++	anyka_gpio_update_bit(anyka_gpio_dir_reg(ag, offset),
++			      anyka_gpio_bit(offset), true);
++	spin_unlock_irqrestore(&ag->lock, flags);
++
++	return 0;
++}
++
++static int anyka_gpio_direction_output(struct gpio_chip *gc, unsigned int offset,
++				       int value)
++{
++	struct anyka_gpio *ag = gpiochip_get_data(gc);
++	unsigned long flags;
++	unsigned int bit = anyka_gpio_bit(offset);
++
++	anyka_gpio_force_mux(ag, offset);
++
++	spin_lock_irqsave(&ag->lock, flags);
++	anyka_gpio_update_bit(anyka_gpio_out_reg(ag, offset), bit, value);
++	anyka_gpio_update_bit(anyka_gpio_dir_reg(ag, offset), bit, false);
++	spin_unlock_irqrestore(&ag->lock, flags);
++
++	return 0;
++}
++
++static int anyka_gpio_set(struct gpio_chip *gc, unsigned int offset, int value)
++{
++	struct anyka_gpio *ag = gpiochip_get_data(gc);
++	unsigned long flags;
++
++	spin_lock_irqsave(&ag->lock, flags);
++	anyka_gpio_update_bit(anyka_gpio_out_reg(ag, offset),
++			      anyka_gpio_bit(offset), value);
++	spin_unlock_irqrestore(&ag->lock, flags);
++
++	return 0;
++}
++
++static int anyka_gpio_set_config(struct gpio_chip *gc, unsigned int offset,
++				 unsigned long config)
++{
++	struct anyka_gpio *ag = gpiochip_get_data(gc);
++	unsigned long flags;
++	enum pin_config_param param = pinconf_to_config_param(config);
++
++	switch (param) {
++	case PIN_CONFIG_BIAS_DISABLE:
++		anyka_gpio_force_mux(ag, offset);
++		spin_lock_irqsave(&ag->lock, flags);
++		anyka_gpio_update_bit(anyka_gpio_bias_reg(ag, offset),
++				      anyka_gpio_bit(offset), false);
++		spin_unlock_irqrestore(&ag->lock, flags);
++		return 0;
++	default:
++		return -ENOTSUPP;
++	}
++}
++
++static void anyka_gpio_irq_mask(struct irq_data *d)
++{
++	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
++	struct anyka_gpio *ag = gpiochip_get_data(gc);
++	unsigned long flags;
++	unsigned int offset = irqd_to_hwirq(d);
++	unsigned int bit = anyka_gpio_bit(offset);
++	void __iomem *reg = anyka_gpio_irq_en_reg(ag, offset);
++	u32 val;
++
++	spin_lock_irqsave(&ag->lock, flags);
++	val = readl_relaxed(reg);
++	val &= ~BIT(bit);
++	writel_relaxed(val, reg);
++	spin_unlock_irqrestore(&ag->lock, flags);
++
++	gpiochip_disable_irq(gc, offset);
++}
++
++static void anyka_gpio_irq_unmask(struct irq_data *d)
++{
++	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
++	struct anyka_gpio *ag = gpiochip_get_data(gc);
++	unsigned long flags;
++	unsigned int offset = irqd_to_hwirq(d);
++	unsigned int bit = anyka_gpio_bit(offset);
++	void __iomem *reg = anyka_gpio_irq_en_reg(ag, offset);
++	u32 val;
++
++	gpiochip_enable_irq(gc, offset);
++
++	spin_lock_irqsave(&ag->lock, flags);
++	val = readl_relaxed(reg);
++	val |= BIT(bit);
++	writel_relaxed(val, reg);
++	spin_unlock_irqrestore(&ag->lock, flags);
++}
++
++static int anyka_gpio_irq_set_type(struct irq_data *d, unsigned int type)
++{
++	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
++	struct anyka_gpio *ag = gpiochip_get_data(gc);
++	unsigned long flags;
++	unsigned int offset = irqd_to_hwirq(d);
++	unsigned int bit = anyka_gpio_bit(offset);
++	void __iomem *reg = anyka_gpio_irq_pol_reg(ag, offset);
++	u32 val;
++
++	switch (type & IRQ_TYPE_SENSE_MASK) {
++	case IRQ_TYPE_LEVEL_HIGH:
++	case IRQ_TYPE_LEVEL_LOW:
++		irq_set_handler_locked(d, handle_level_irq);
++		break;
++	case IRQ_TYPE_NONE:
++		return 0;
++	default:
++		return -EINVAL;
++	}
++
++	spin_lock_irqsave(&ag->lock, flags);
++	val = readl_relaxed(reg);
++	if ((type & IRQ_TYPE_SENSE_MASK) == IRQ_TYPE_LEVEL_LOW)
++		val |= BIT(bit);
++	else
++		val &= ~BIT(bit);
++	writel_relaxed(val, reg);
++	spin_unlock_irqrestore(&ag->lock, flags);
++
++	return 0;
++}
++
++static void anyka_gpio_irq_handler(struct irq_desc *desc)
++{
++	struct gpio_chip *gc = irq_desc_get_handler_data(desc);
++	struct irq_chip *chip = irq_desc_get_chip(desc);
++	struct anyka_gpio *ag = gpiochip_get_data(gc);
++	unsigned int group;
++
++	chained_irq_enter(chip, desc);
++
++	for (group = 0; group < anyka_gpio_group_count(gc->ngpio); group++) {
++		unsigned int offset = group * ANYKA_GPIO_GROUP_SIZE;
++		u32 mask = anyka_gpio_group_mask(gc, group);
++		u32 enabled;
++		u32 pending;
++
++		enabled = readl_relaxed(ag->base + ANYKA_GPIO_INT_CTRL1 + group * 4);
++		enabled &= mask;
++		if (!enabled)
++			continue;
++
++		pending = readl_relaxed(ag->base + ANYKA_GPIO_INTP1 + group * 4) ^
++			  readl_relaxed(ag->base + ANYKA_GPIO_IN1 + group * 4);
++		pending &= enabled;
++
++		while (pending) {
++			unsigned int bit = __ffs(pending);
++
++			pending &= ~BIT(bit);
++			generic_handle_domain_irq(gc->irq.domain, offset + bit);
++		}
++	}
++
++	chained_irq_exit(chip, desc);
++}
++
++static const struct irq_chip anyka_gpio_irq_chip = {
++	.name = "anyka-gpio",
++	.irq_mask = anyka_gpio_irq_mask,
++	.irq_unmask = anyka_gpio_irq_unmask,
++	.irq_set_type = anyka_gpio_irq_set_type,
++	.flags = IRQCHIP_IMMUTABLE | IRQCHIP_SET_TYPE_MASKED,
++	GPIOCHIP_IRQ_RESOURCE_HELPERS,
++};
++
++static int anyka_gpio_probe(struct platform_device *pdev)
++{
++	struct anyka_gpio *ag;
++	u32 ngpio = ANYKA_GPIO_COUNT;
++	unsigned int group;
++	int ret;
++
++	ag = devm_kzalloc(&pdev->dev, sizeof(*ag), GFP_KERNEL);
++	if (!ag)
++		return -ENOMEM;
++
++	ag->base = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(ag->base))
++		return PTR_ERR(ag->base);
++
++	device_property_read_u32(&pdev->dev, "ngpios", &ngpio);
++
++	spin_lock_init(&ag->lock);
++
++	ag->gc.label = dev_name(&pdev->dev);
++	ag->gc.parent = &pdev->dev;
++	ag->gc.owner = THIS_MODULE;
++	ag->gc.base = -1;
++	ag->gc.ngpio = ngpio;
++	ag->gc.request = anyka_gpio_request;
++	ag->gc.free = gpiochip_generic_free;
++	ag->gc.get_direction = anyka_gpio_get_direction;
++	ag->gc.direction_input = anyka_gpio_direction_input;
++	ag->gc.direction_output = anyka_gpio_direction_output;
++	ag->gc.get = anyka_gpio_get;
++	ag->gc.set = anyka_gpio_set;
++	ag->gc.set_config = anyka_gpio_set_config;
++	ag->gc.fwnode = dev_fwnode(&pdev->dev);
++	ag->gc.can_sleep = false;
++
++	ag->parent_irq = platform_get_irq_optional(pdev, 0);
++	if (ag->parent_irq == -EPROBE_DEFER)
++		return ag->parent_irq;
++	if (ag->parent_irq < 0 && ag->parent_irq != -ENXIO)
++		return dev_err_probe(&pdev->dev, ag->parent_irq,
++				     "failed to get GPIO parent IRQ\n");
++
++	if (ag->parent_irq > 0) {
++		struct gpio_irq_chip *girq = &ag->gc.irq;
++
++		/* Start from a known state and mask any bootloader leftovers. */
++		for (group = 0; group < anyka_gpio_group_count(ngpio); group++)
++			writel_relaxed(0, ag->base + ANYKA_GPIO_INT_CTRL1 + group * 4);
++
++		gpio_irq_chip_set_chip(girq, &anyka_gpio_irq_chip);
++		girq->handler = handle_bad_irq;
++		girq->default_type = IRQ_TYPE_NONE;
++		girq->parent_handler = anyka_gpio_irq_handler;
++		girq->num_parents = 1;
++		girq->parents = devm_kcalloc(&pdev->dev, 1,
++					     sizeof(*girq->parents), GFP_KERNEL);
++		if (!girq->parents)
++			return -ENOMEM;
++		girq->parents[0] = ag->parent_irq;
++	}
++
++	ret = devm_gpiochip_add_data(&pdev->dev, &ag->gc, ag);
++	if (ret)
++		return ret;
++
++	platform_set_drvdata(pdev, ag);
++
++	dev_info(&pdev->dev, "registered %u internal GPIOs\n", ngpio);
++
++	return 0;
++}
++
++static const struct of_device_id anyka_gpio_of_match[] = {
++	{ .compatible = "anyka,ak880x-gpio" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, anyka_gpio_of_match);
++
++static struct platform_driver anyka_gpio_driver = {
++	.probe = anyka_gpio_probe,
++	.driver = {
++		.name = "anyka-gpio",
++		.of_match_table = anyka_gpio_of_match,
++	},
++};
++module_platform_driver(anyka_gpio_driver);
++
++MODULE_DESCRIPTION("Anyka AK78/AK88/AK98 GPIO driver");
++MODULE_LICENSE("GPL");
+-- 
+2.50.1 (Apple Git-155)
+
