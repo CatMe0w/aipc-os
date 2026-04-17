@@ -5,7 +5,7 @@
  * EXECUTE opcode. DOOM1.WAD is uploaded separately to DDR_WAD_BASE.
  *
  * DDR is 64 MB: 0x30000000 - 0x33FFFFFF.
- * Framebuffer is carved out near the top: 0x33ed3c00 - 0x33f8f400 (0xBB800 bytes, RGB565).
+ * Framebuffer is carved out near the top: 0x33B00000 - 0x33BBB800 (0xBB800 bytes, RGB565).
  *
  * Memory layout:
  *   0x30000000  doom.bin (code + rodata + data + BSS)

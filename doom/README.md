@@ -2,41 +2,51 @@
 
 Bare-metal DOOM port for the AIPC netbook, based on [doomgeneric](https://github.com/ozkl/doomgeneric).
 
-## Building
+## Quick start
 
 Requires `arm-none-eabi-gcc` with newlib.
 
-```
+Put the device in USB boot mode (DGPIO[2] high at power-on), then:
+
+```sh
 make
-```
-
-> **macOS:** The Homebrew `arm-none-eabi-gcc` package does not include newlib. Use the [Arm GNU Toolchain](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads) instead and set `CROSS` accordingly:
-> ```
-> make CROSS=/Applications/ArmGNUToolchain/15.2.rel1/arm-none-eabi/bin/arm-none-eabi-
-> ```
-
-## Running
-
-The device must be in USB boot mode (DGPIO[2] high at power-on). `ak7802-usbboot` must be available (see `tools/usbboot`).
-
-```
-cd doom
 ./boot.sh
 ```
 
-`boot.sh` performs four steps:
+> **macOS:** The Homebrew `arm-none-eabi-gcc` does not include newlib. Install [Arm GNU Toolchain](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads) instead; the Makefile auto-detects it.
 
-1. DDR initialization via `poke` commands (mirrors the nboot header script)
-2. Upload `doom.bin` to `0x30000000`
-3. Upload `DOOM1.WAD` to `0x30900000`
-4. Execute at `0x30000000`
+## Playing with other DOOM versions (optional)
 
-For v1.88 hardware, see the version note in `boot.sh` before running.
+Purchase [DOOM + DOOM II](https://store.steampowered.com/app/2280/DOOM__DOOM_II/) on Steam. It includes all four supported WADs. 
+
+**Finding the install directory:** right-click the game in Steam -> _Manage_ -> _Browse local files_
+
+| Path in install directory    | Copy to `wad/` | `WAD=`     |
+| ---------------------------- | -------------- | ---------- |
+| `base/DOOM.WAD`              | `DOOM.WAD`     | `doom1`    |
+| `base/doom2/DOOM2.WAD`       | `DOOM2.WAD`    | `doom2`    |
+| `base/tnt/TNT.WAD`           | `TNT.WAD`      | `tnt`      |
+| `base/plutonia/PLUTONIA.WAD` | `PLUTONIA.WAD` | `plutonia` |
+
+Copy the WAD file into `wad/`. Then build and boot with the matching version name:
+
+```sh
+make WAD=doom2
+./boot.sh doom2
+```
+
+## Firmware versions
+
+In most cases the firmware version does not need to be specified. If DDR initialization fails, pass it as the second argument (`1.88` by default, or `1.58.2` for older boards. See `tools/ddr-init/README.md`):
+
+```sh
+./boot.sh doom2 1.58.2
+```
 
 ## Memory layout
 
-| Address      | Size   | Usage                                 |
-| ------------ | ------ | ------------------------------------- |
-| `0x30000000` | ~8 MB  | doom.bin (code + data + heap + stack) |
-| `0x30900000` | ~4 MB  | DOOM1.WAD                             |
-| `0x33ed3c00` | 750 KB | Framebuffer (800x480 RGB565)          |
+| Address      | Size   | Usage                                   |
+| ------------ | ------ | --------------------------------------- |
+| `0x30000000` | ~8 MB  | doom\*.bin (code + data + heap + stack) |
+| `0x30900000` | varies | IWAD (shareware ~4 MB, full ~14 MB)     |
+| `0x33b00000` | 750 KB | Framebuffer (800x480 RGB565)            |

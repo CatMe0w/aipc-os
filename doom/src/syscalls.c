@@ -39,7 +39,7 @@ void *_sbrk(ptrdiff_t incr)
     return prev;
 }
 
-/* -------------------------------------------------------------------------
+/*
  * WAD virtual file
  *
  * DOOM uses fseek(fd, 0, SEEK_END) to determine the WAD size, so we derive
@@ -51,7 +51,7 @@ void *_sbrk(ptrdiff_t incr)
  *   [8..11] dir_offset  byte offset of the directory
  *
  * File size = dir_offset + num_lumps * 16 (each directory entry is 16 bytes).
- * ------------------------------------------------------------------------- */
+ */
 
 #define DDR_WAD_BASE  0x30900000u
 #define WAD_FD        3
@@ -118,14 +118,20 @@ int _read(int fd, char *buf, int len)
 int _lseek(int fd, int offset, int whence)
 {
     if (fd == WAD_FD) {
-        size_t new_off;
+        ptrdiff_t new_off;
         switch (whence) {
-        case SEEK_SET: new_off = (size_t)offset;               break;
-        case SEEK_CUR: new_off = wad_offset + (size_t)offset;  break;
-        case SEEK_END: new_off = wad_size   + (size_t)offset;  break;
+        case SEEK_SET: new_off = (ptrdiff_t)offset; break;
+        case SEEK_CUR: new_off = (ptrdiff_t)wad_offset + (ptrdiff_t)offset; break;
+        case SEEK_END: new_off = (ptrdiff_t)wad_size + (ptrdiff_t)offset; break;
         default:       errno = EINVAL; return -1;
         }
-        wad_offset = new_off;
+
+        if (new_off < 0 || (size_t)new_off > wad_size) {
+            errno = EINVAL;
+            return -1;
+        }
+
+        wad_offset = (size_t)new_off;
         return (int)wad_offset;
     }
     errno = EBADF;
@@ -145,10 +151,16 @@ int _fstat(int fd, struct stat *st)
     return -1;
 }
 
+/* Debug log buffer in DDR - readable via cold-boot dump at 0x31D00000 */
+static char *log_ptr = (char *)0x31D00000;
+static char *log_end = (char *)0x31D10000;  /* 64 KB log buffer */
+
 int _write(int fd, char *buf, int len)
 {
-    /* TODO: route fd=1/2 to UART once UART is implemented. */
-    (void)fd; (void)buf;
+    (void)fd;
+    /* Copy output to DDR log buffer for cold-boot dump diagnosis */
+    for (int i = 0; i < len && log_ptr < log_end; i++)
+        *log_ptr++ = buf[i];
     return len;
 }
 
