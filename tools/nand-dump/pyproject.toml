@@ -1,23 +1,24 @@
 [project]
-name = "ak7802-nand-dump"
+name = "aipc-nand-dump"
 version = "0.1.0"
-description = "NAND flash dump tool for Anyka AK7802 SoC via USB boot mode"
+description = "NAND flash dump tool for AIPC (Anyka AK7802) via USB boot mode"
 authors = [
     { name = "CatMe0w", email = "CatMe0w@live.cn" }
 ]
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "ak7802-usbboot",
-    "pyusb>=1.2.1",
-    "libusb-package>=1.0.26",
+    "aipc-ddr-init",
     "click>=8.1",
+    "tqdm>=4.66",
 ]
 
 [tool.uv.sources]
 ak7802-usbboot = { workspace = true }
+aipc-ddr-init = { workspace = true }
 
 [project.scripts]
-ak7802-nand-dump = "ak7802_nand_dump.cli:main"
+aipc-nand-dump = "aipc_nand_dump.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.11.3,<0.12.0"]

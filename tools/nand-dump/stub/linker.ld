@@ -1,28 +1,34 @@
 /*
- * Linker script for AK7802 NAND dump stub.
+ * Linker script for AIPC NAND dump stubs.
  *
- * The stub is loaded to L2BUF_01 (0x48000200) by the USB boot host tool
- * and executed in place.  Code + read-only data + mutable data must all
- * fit within the L2 buffer SRAM.
+ * Loaded to 0x48000240 by the USB boot host tool and executed in place.
+ * NOT 0x48000200: the USB EP3 RX hardware DMA overwrites
+ * 0x48000200-0x4800023F with every USB packet.
  *
- * The exact size of the L2 buffer is unclear.
- * Bootrom only accesses up to 0x480017FF (6 KB), so we use that as the
- * conservative upper bound.  If testing reveals more SRAM, the regions
- * below can be extended.
+ * L2 buffer is 5.375 KB (5504 bytes) physical SRAM at 0x48000000-0x4800157F.
+ * Addresses 0x48001580-0x48001FFF are not connected (reads return noise).
+ * Accesses from 0x48002000 onward alias back with a 0x2000 period.
  *
- * Memory layout (0x48000000 .. 0x480017FF):
+ * Several regions are hardware-managed and must be avoided:
+ *   0x0000-0x003F  USB EP2 bulk IN staging (L2BUF_00)
+ *   0x0200-0x023F  USB EP3 bulk OUT DMA target (L2BUF_01)
+ *   0x1000-0x10FF  UART buffer / L2 control region
  *
- *   0x48000000 .. 0x480001FF  L2BUF_00  (512 B) - NAND DMA / USB TX staging
- *   0x48000200 .. 0x48000DFF  stub code (3 KB)
- *   0x48000E00 .. 0x48000FFF  NAND read temp buffer (512 B)
- *   0x48001000 .. 0x480017F0  stack (2 KB)
+ * Memory layout (post-EXECUTE):
+ *
+ *   0x48000000 .. 0x4800003F  USB TX staging (64 B, HW-managed)
+ *   0x48000040 .. 0x4800007F  Parameter / result block
+ *   0x48000240 .. 0x48000BFF  Stub code / rodata / bss
+ *   0x48000C00 .. 0x48000E6F  I/O scratch buffer
+ *   0x48000E70 .. 0x48000FFC  Bootrom call chain stack (preserved for return)
+ *   0x48001100 .. 0x4800157B  Stack (~1.1 KB, used by stub)
  */
 
 ENTRY(_start)
 
 MEMORY
 {
-    L2BUF (rwx) : ORIGIN = 0x48000200, LENGTH = 0xC00
+    L2BUF (rwx) : ORIGIN = 0x48000240, LENGTH = 0x9C0
 }
 
 SECTIONS
@@ -44,7 +50,7 @@ SECTIONS
 
     _stub_end = .;
 
-    ASSERT(_stub_end <= 0x48000E00, "stub overflows into temp buffer region")
+    ASSERT(_stub_end <= 0x48000C00, "stub overflows into scratch buffer")
 
     /DISCARD/ : {
         *(.ARM.attributes)

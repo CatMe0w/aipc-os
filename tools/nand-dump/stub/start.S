@@ -1,8 +1,8 @@
 /*
- * AK7802 NAND dump stub - entry point
+ * AIPC NAND dump stubs - shared entry point
  *
- * Loaded to 0x48000200 (L2BUF_01) via USB boot mode.
- * Sets up the stack at the top of L2 buffer SRAM and calls main().
+ * The bootrom's EXECUTE path calls the target as a function.  The stub
+ * always returns to the bootrom so the host retains full USB control.
  */
 
     .section .text.entry, "ax"
@@ -10,6 +10,7 @@
     .global _start
 
 _start:
-    ldr     sp, =0x480017F0
-    bl      main
-    b       .
+    mov     r4, lr
+    ldr     sp, =0x4800157C
+    bl      stub_main
+    mov     pc, r4

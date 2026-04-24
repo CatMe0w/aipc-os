@@ -2,31 +2,30 @@ CROSS   ?= arm-none-eabi-
 CC       = $(CROSS)gcc
 OBJCOPY  = $(CROSS)objcopy
 
-CFLAGS   = -mcpu=arm926ej-s -marm -O2 -ffreestanding -nostdlib \
+CFLAGS   = -mcpu=arm926ej-s -marm -Os -fomit-frame-pointer -ffreestanding -nostdlib \
            -nostartfiles -Wall -Wextra -Wno-unused-parameter
 LDFLAGS  = -T linker.ld -nostdlib -Wl,--gc-sections
 
-TARGET   = stub
-SRCS_S   = start.S
-SRCS_C   = stub.c
-OBJS     = $(SRCS_S:.S=.o) $(SRCS_C:.c=.o)
+STUBS    = nand_id nand_copy
+BINS     = $(addsuffix .bin, $(STUBS))
+ENTRY    = start.o
 
-all: $(TARGET).bin
+all: $(BINS)
 
-%.o: %.S
+start.o: start.S
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(TARGET).elf: $(OBJS)
-	$(CC) $(LDFLAGS) -o $@ $^
+%.elf: %.o $(ENTRY)
+	$(CC) $(LDFLAGS) -o $@ $(ENTRY) $<
 
-$(TARGET).bin: $(TARGET).elf
+%.bin: %.elf
 	$(OBJCOPY) -O binary $< $@
-	@echo "stub size: $$(wc -c < $@) bytes"
+	@echo "$@ size: $$(wc -c < $@) bytes"
 
 clean:
-	rm -f $(OBJS) $(TARGET).elf $(TARGET).bin
+	rm -f *.o *.elf *.bin
 
 .PHONY: all clean

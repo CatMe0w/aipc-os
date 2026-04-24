@@ -1,13 +1,16 @@
-# ak7802-nand-dump
+# aipc-nand-dump
 
-Dump NAND flash contents from an AK7802 device via USB boot mode.
+Full NAND dump tool for AIPC.
 
-A bare-metal stub is uploaded to the device's L2 buffer SRAM and executed.
-The stub initializes the NAND controller, detects the flash geometry via
-Read ID, and streams all pages back to the host over the existing USB
-connection. DDR is not required.
+Dumps the entire 512 MB NAND flash including OOB/ECC data in about 15
+minutes via USB boot mode. The dump can be used to restore the factory
+system or as a backup before flashing custom firmware. Keep it safe.
 
-## Building the stub
+This tool is AIPC-specific (requires DDR init and uses AIPC's NAND header
+for timing). For a chip-generic AK7802 NAND dump tool, see
+[`tools/nand-dump-min`](../nand-dump-min).
+
+## Building the stubs
 
 Requires `arm-none-eabi-gcc`.
 
@@ -16,36 +19,74 @@ cd stub
 make
 ```
 
+This produces `nand_id.bin` and `nand_copy.bin`.
+
 ## Running
 
 ```
-ak7802-nand-dump -o dump.bin
+aipc-nand-dump -o nand.bin
 ```
 
 The device must be in USB boot mode (DGPIO[2] high at power-on).
 
 Options:
 
-- `--stub PATH` -- path to a prebuilt `stub.bin` (default: `stub/stub.bin`)
-- `--timeout MS` -- per-packet USB read timeout (default: 5000)
+- `-o, --output PATH` -- output file for the raw NAND dump (required)
+- `--firmware {1.58.2,1.88}` -- DDR init firmware version (default: 1.88)
+- `--pages N` -- override total NAND page count
+- `--page-size N` -- override page size in bytes (data only, e.g. 2048)
+- `--addr-cycles N` -- override NAND address cycle count
+- `--ddr-base ADDR` -- DDR buffer base address (default: 0x30000000)
 
 ## How it works
 
-1. The host uploads `stub.bin` to `0x48000200` (L2BUF) and executes it.
-2. The stub takes over the bootrom's USB state (no re-enumeration).
-3. It sends a 64-byte header containing the NAND ID and detected geometry.
-4. It reads every page via the NF sequencer/DMA and streams data back
-   through USB EP2 bulk IN, 64 bytes at a time.
-5. A zero-length packet signals completion.
+1. Connect to the device and initialize DDR via `aipc-ddr-init`.
+2. Upload and execute `nand_id` stub: reads the 8-byte NAND ID and
+   probes page 0 for the "ANYKA382" header to extract factory NFC timing.
+3. Auto-detect NAND geometry from the ID bytes (or use manual overrides).
+4. Upload `nand_copy` stub once. For each batch:
+   - Write parameters (start page, count, DDR address, timing) to L2 SRAM.
+   - Execute the stub, which reads pages via the NFC sequencer into DDR.
+   - Read the DDR buffer back to the host via `read_mem`.
+5. Write the raw dump to file.
+
+Each batch fills ~61 MB of DDR (~31K pages for a 2KB-page NAND).
+A 512 MB NAND completes in 9 batches.
+
+## Raw dump format
+
+Each physical page is stored as `chunks_per_page` x 528 bytes:
+
+```
+[512B data | 16B OOB/ECC] x chunks_per_page
+```
+
+For a 2048-byte page NAND: 4 x 528 = 2112 bytes per page.
+
+To extract clean data, strip the OOB from each chunk:
+
+```python
+def strip_oob(page_2112: bytes) -> bytes:
+    out = bytearray()
+    for i in range(4):
+        out += page_2112[i * 528 : i * 528 + 512]
+    return bytes(out)  # 2048 bytes
+```
+
+_TODO: decode the OOB/ECC data and correct errors where possible._
 
 ## Memory layout
 
-The stub runs entirely in L2 buffer SRAM with no DDR access.
-Conservative layout assuming 6 KB of L2 buffer:
+The stubs run in L2 buffer SRAM (5504 bytes at `0x48000000`).
+DDR at `0x30000000` is used as a large read buffer after initialization.
 
-| Address range             | Size  | Usage                  |
-| ------------------------- | ----- | ---------------------- |
-| `0x48000000 - 0x480001FF` | 512 B | NAND DMA / USB staging |
-| `0x48000200 - 0x48000DFF` | 3 KB  | Stub code              |
-| `0x48000E00 - 0x48000FFF` | 512 B | Temp buffer            |
-| `0x48001000 - 0x480017F0` | ~2 KB | Stack                  |
+| Address range               | Size    | Usage                          |
+| --------------------------- | ------- | ------------------------------ |
+| `0x48000000 - 0x4800003F`   | 64 B    | USB TX staging (HW-managed)    |
+| `0x48000040 - 0x4800007F`   | 64 B    | Parameter / result block       |
+| `0x48000200 - 0x4800023F`   | 64 B    | USB RX DMA target (HW-managed) |
+| `0x48000240 - 0x48000BFF`   | 2.5 KB  | Stub code / rodata / bss       |
+| `0x48000C00 - 0x48000E6F`   | 624 B   | I/O scratch buffer             |
+| `0x48000E70 - 0x48000FFC`   | ~400 B  | Bootrom call chain stack       |
+| `0x48001100 - 0x4800157B`   | ~1.1 KB | Stub stack                     |
+| `0x30000000 - 0x33FFFFFF`   | 64 MB   | DDR read buffer (63 MB usable) |
