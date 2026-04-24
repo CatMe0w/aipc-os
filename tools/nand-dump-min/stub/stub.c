@@ -22,7 +22,8 @@
  *   +0x30  status       (uint32)  output: written by stub (0 = ok)
  *
  * Data output at 0x48000400 (read by host via UPLOAD):
- *   Up to chunks * chunk_size bytes.
+ *   For page reads: [512B data] * chunks, followed by chunks * 16B spare.
+ *   For other reads: chunks * chunk_size bytes.
  */
 
 #include <stdint.h>
@@ -98,7 +99,7 @@ void stub_main(void)
     ROM_NF_ISSUE_PROBE_SEQUENCE((const void *)&p->probe_param[0], p->page);
     p->status = 0x13;
 
-    uint32_t *out = (uint32_t *)DATA_BASE;
+    uint8_t *out = (uint8_t *)DATA_BASE;
     uint32_t chunk_size = p->chunk_size;
     uint32_t chunks = p->chunks;
     p->status = 0x14;
@@ -109,8 +110,17 @@ void stub_main(void)
             L2CTR_ASSIGN_REG1 = saved_assign;
             return;
         }
-        out += chunk_size / 4;
+        out += chunk_size;
         p->status = 0x15 + c;
+    }
+
+    if (chunk_size == 512 && chunks) {
+        uint32_t spare_size = chunks << 4;
+        if (!ROM_NF_READ_CHUNK_TO_BUF(out, spare_size)) {
+            p->status = 3;
+            L2CTR_ASSIGN_REG1 = saved_assign;
+            return;
+        }
     }
 
     L2CTR_ASSIGN_REG1 = saved_assign;

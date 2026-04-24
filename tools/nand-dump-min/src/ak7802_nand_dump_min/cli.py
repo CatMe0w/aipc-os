@@ -10,7 +10,7 @@ Data flow per page:
   host: write_mem(params)   -> bootrom writes params to SRAM
   host: execute(stub)       -> stub runs: ROM helpers read NAND -> SRAM
                             <- stub returns to bootrom
-  host: read_mem(data)      -> bootrom uploads SRAM contents to host
+  host: read_mem(data+OOB)  -> bootrom uploads raw page contents to host
 """
 
 import struct
@@ -191,6 +191,8 @@ def detect_geometry(id_bytes: bytes) -> dict | None:
 
     total_size = total_mb * 1024 * 1024
     total_pages = total_size // page_size
+    chunks_per_page = page_size // 512
+    raw_page_size = chunks_per_page * 528
 
     return {
         "page_size": page_size,
@@ -199,7 +201,9 @@ def detect_geometry(id_bytes: bytes) -> dict | None:
         "addr_cycles": addr_cycles,
         "total_pages": total_pages,
         "large_page": large_page,
-        "chunks_per_page": page_size // 512,
+        "chunks_per_page": chunks_per_page,
+        "raw_page_size": raw_page_size,
+        "total_raw_size": raw_page_size * total_pages,
     }
 
 
@@ -218,7 +222,7 @@ def build_page_read_param(geo: dict) -> tuple[int, int, int, int, int]:
 
     counts = (cmd_count << 16) | (prefix << 24)
     command = row_cycles | (0x00 << 8) | (cmd2 << 16)
-    delay_pair = 2000 << 16  # generous seq_wait
+    delay_pair = 0x000A000A  # same as the bootrom probe table
 
     return (counts, command, 0, 0, delay_pair)
 
@@ -262,11 +266,12 @@ def read_page(
     page: int,
     probe_param: tuple[int, int, int, int, int],
     chunks_per_page: int,
+    raw_page_size: int,
     timing0: int = 0,
     timing1: int = 0,
     pre_delay: int = 0,
 ) -> bytes:
-    """Read one full NAND page via the stub."""
+    """Read one raw NAND page via the stub, including spare/OOB bytes."""
     dev.write_mem(
         PARAM_ADDR,
         _pack_params(
@@ -284,7 +289,7 @@ def read_page(
     status = _read_status(dev)
     if status != 0:
         raise RuntimeError(f"read_page({page}) failed: status={status}")
-    return dev.read_mem(DATA_ADDR, chunks_per_page * 512)
+    return dev.read_mem(DATA_ADDR, raw_page_size)
 
 
 @click.command()
@@ -299,10 +304,10 @@ def read_page(
     "--output",
     required=True,
     type=click.Path(),
-    help="Output file for the NAND dump.",
+    help="Output file for the raw NAND dump (data + OOB).",
 )
 def main(stub: str | None, output: str) -> None:
-    """Dump NAND flash contents via AK7802 USB boot mode (host-driven)."""
+    """Dump raw NAND flash contents via AK7802 USB boot mode (host-driven)."""
 
     # Locate stub
     if stub is not None:
@@ -349,9 +354,10 @@ def main(stub: str | None, output: str) -> None:
 
     if geo is not None:
         click.echo(
-            f"  Page size:    {geo['page_size']} B\n"
+            f"  Page size:    {geo['page_size']} B (raw: {geo['raw_page_size']} B)\n"
             f"  Block size:   {geo['block_size'] // 1024} KB\n"
-            f"  Total size:   {geo['total_size'] // (1024 * 1024)} MB\n"
+            f"  Total size:   {geo['total_size'] // (1024 * 1024)} MB "
+            f"(raw: {geo['total_raw_size'] / (1024 * 1024):.1f} MB)\n"
             f"  Total pages:  {geo['total_pages']}\n"
             f"  Addr cycles:  {geo['addr_cycles']}\n"
             f"  Large page:   {geo['large_page']}"
@@ -374,8 +380,13 @@ def main(stub: str | None, output: str) -> None:
         addr_cycles = (command & 0xFF) + ((counts >> 24) & 0xFF)
         cmd_count = (counts >> 16) & 0xFF
         large_page = cmd_count == 2
+        raw_page_size = chunks_per_page * 528
 
-        click.echo(f"  Page size:    {page_size} B (from probe)\n" f"  Addr cycles:  {addr_cycles}\n" f"  Large page:   {large_page}")
+        click.echo(
+            f"  Page size:    {page_size} B (raw: {raw_page_size} B, from probe)\n"
+            f"  Addr cycles:  {addr_cycles}\n"
+            f"  Large page:   {large_page}"
+        )
         click.echo(
             "WARNING: total size unknown from probe. " "Dump will continue until read errors.",
             err=True,
@@ -389,6 +400,8 @@ def main(stub: str | None, output: str) -> None:
             "total_pages": 0,  # unknown
             "large_page": large_page,
             "chunks_per_page": chunks_per_page,
+            "raw_page_size": raw_page_size,
+            "total_raw_size": 0,
         }
 
         # Use the working timing from the successful probe
@@ -399,8 +412,9 @@ def main(stub: str | None, output: str) -> None:
         )
 
     chunks_per_page = geo["chunks_per_page"]
+    raw_page_size = geo["raw_page_size"]
     total_pages = geo["total_pages"]
-    total_size = geo["total_size"]
+    total_size = geo["total_raw_size"]
 
     if total_pages == 0:
         click.echo(
@@ -410,7 +424,6 @@ def main(stub: str | None, output: str) -> None:
         total_pages = 0xFFFFFFFF  # read until error
 
     # Begin dump
-    page_size = geo["page_size"]
     click.echo(f"\nDumping to {output} ...")
 
     received = 0
@@ -426,6 +439,7 @@ def main(stub: str | None, output: str) -> None:
                     page,
                     probe_param,
                     chunks_per_page,
+                    raw_page_size,
                     timing0=working_timing[0],
                     timing1=working_timing[1],
                     pre_delay=working_timing[2],
