@@ -37,7 +37,7 @@ PID = 0x0666
 EP_BULK_IN  = 0x82  # EP2 IN:  device -> host
 EP_BULK_OUT = 0x03  # EP3 OUT: host -> device
 
-FRAME_SIZE = 64
+FRAME_SIZE = 16384
 
 HEADER_MAGIC = 0x0052
 TAIL_MAGIC   = 0x1413
