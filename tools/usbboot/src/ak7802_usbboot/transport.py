@@ -152,7 +152,7 @@ class AK7802:
         self._drain_trailing_zlp()
         return bytes(buf)
 
-    def execute(self, addr: int, wait: bool = False) -> None:
+    def execute(self, addr: int, wait: bool = False, timeout: float = _EXECUTE_WAIT_TIMEOUT_S) -> None:
         """
         Jump to addr on the device.
 
@@ -163,10 +163,11 @@ class AK7802:
               4 bytes from 0x0 until they match the BootROM entry instruction
               bytes (06 00 00 EA). This avoids relying on a fixed delay when a
               returning stub races with the EXECUTE return path.
+        timeout: maximum seconds to wait for the stub to return (default 1.0).
         """
         self._send_cmd(OPCODE_EXECUTE, addr=addr)
         if wait:
-            deadline = time.monotonic() + _EXECUTE_WAIT_TIMEOUT_S
+            deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
                 if self._probe_bootrom_ready():
                     return
