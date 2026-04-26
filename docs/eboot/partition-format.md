@@ -1,9 +1,11 @@
 # Partition Format
 
 EBOOT keeps a partition table blob called `PTB` in RAM at `0x80106EA0`
-and persists snapshots of it inside the `CFG` partition. The layout is
-fixed-offset: EBOOT does not search for entry tags or parse alternate
-header variants.
+and persists snapshots of it inside the `CFG` partition. The v1.88
+EBOOT analyzed here uses a fixed table offset; it does not search for
+entry tags or parse alternate header variants. A separate v1.58.2 NAND
+dump has the same entry record format and tag order, but stores the table
+at a different offset.
 
 This document describes:
 
@@ -55,8 +57,8 @@ sector number is also recorded in the `PTB` header itself.
 
 ## PTB Entry Layout
 
-The entry table starts at fixed offset `0x670`. There are eight raw
-records, each `0x30` bytes wide.
+In the v1.88 EBOOT, the entry table starts at fixed offset `0x670`.
+There are eight raw records, each `0x30` bytes wide.
 
 | Raw Offset | Size | Field |
 | ---------- | ---- | ----- |
@@ -72,6 +74,9 @@ records, each `0x30` bytes wide.
 
 EBOOT helper `sub_80064B40(index)` returns `entry + 4`, so most code sees
 the record starting at the tag field rather than at the raw base.
+
+The older v1.58.2 raw NAND dump stores the same eight-entry table at
+`PTB+0x230`.
 
 ## Default Layout Built by EBOOT
 
@@ -106,7 +111,7 @@ and fills the table as follows:
 | `CFG` | `config.txt` | `0x00000003` | `start=total_blocks - 7`, `count=3`, `load=0xFFFFFFFF` |
 | `END` | `end.txt` | `0x00000013` | `start=total_blocks - 4`, `count=4`, `load=0xFFFFFFFF` |
 
-On the common AIPC NAND geometry reflected by current dumps
+On the v1.88 NAND geometry
 (`block_size = 0x40000`, `total_blocks = 2048`), that becomes:
 
 | Tag | start_block | block_count | size | load_addr |
@@ -123,6 +128,11 @@ On the common AIPC NAND geometry reflected by current dumps
 `END` is not an empty stop marker in EBOOT's own table. The builder gives
 it a real `start_block`, `block_count`, `flags`, and filename, and keeps
 the final four blocks reserved behind it.
+
+The v1.58.2 dump uses `block_size = 0x20000` and `total_blocks = 4096`.
+The same byte-size partition formulas therefore appear with doubled block
+counts, for example `IPL.count = 16`, `UDR.count = 2`, and
+`END.start = 4092`.
 
 ## Runtime Use
 
