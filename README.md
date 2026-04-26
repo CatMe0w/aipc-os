@@ -49,14 +49,21 @@ Kernel sources and patches (work in progress).
 
 Python CLI tools (uv workspace) for talking to the device:
 
+#### AK7802 SoC tools
+
 | Tool | Purpose |
 | ---- | ------- |
-| `ak7802-coldboot-dump` | Cold-boot attack RAM extraction |
-| `ak7802-ddr-init` | Standalone DDR SDRAM init via USB boot |
-| `ak7802-nand-dump` | Stream-mode NAND dump over USB (WIP) |
-| `ak7802-nand-dump-min` | Host-driven NAND dump, one page per round-trip |
-| `aipc-nand-extract` | Extract partitions from a raw NAND dump using PTB |
+| `ak7802-nand-dump-min` | Universal AK7802 NAND dump tool |
 | `ak7802-usbboot` | USB boot mode protocol: peek, poke, upload, execute |
+
+#### AIPC-specific tools
+
+| Tool | Purpose |
+| ---- | ------- |
+| `aipc-coldboot-dump` | Cold-boot attack RAM extraction |
+| `aipc-ddr-init` | Standalone DDR SDRAM init via USB boot |
+| `aipc-nand-dump` | Fast NAND dump tool for AIPC |
+| `aipc-nand-extract` | Extract partitions from a raw NAND dump |
 
 ### Website ([`website/`](website/))
 

@@ -1,7 +1,7 @@
 [project]
 name = "aipc-nand-extract"
 version = "0.1.0"
-description = "Normalize AIPC raw NAND dumps and export analysis-ready images"
+description = "Extract boot images from an AIPC netbook WinCE NAND dump"
 authors = [
     { name = "CatMe0w", email = "CatMe0w@live.cn" }
 ]

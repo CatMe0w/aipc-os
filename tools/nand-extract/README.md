@@ -1,31 +1,40 @@
 # aipc-nand-extract
 
-Extract partitions from an AIPC WinCE NAND dump.
-
-It first finds the vendor `PTB` block near the end of NAND, then scans for the
-`NBT` entry as the start of the fixed `0x30`-byte partition records, and parses
-forward until `END`.
+Normalize and extract AIPC 2112-byte/page raw NAND dumps.
 
 ## Usage
 
-```sh
-uv run aipc-nand-extract nand.img -o out/
+Raw nand dumps produced by `tools/nand-dump` are required.
+
+```
+uv run aipc-nand-extract dump.bin
 ```
 
-Without `-o`, files are written to an `extracted/` directory next to the
-input image.
+With an explicit output directory:
 
-## Output
+```
+uv run aipc-nand-extract dump.bin nand_extracted
+```
 
-The tool writes:
+## Flow
 
-- `ptb.json`: parsed PTB metadata and derived extraction results
-- `ptb.raw`: raw 4 KB PTB block
-- `<tag>.raw`: PTB-selected full partition slices for every non-`END` PTB entry
-- `nboot.nb0`, `eboot.nb0`, `eboot_bak.nb0`: payloads derived from known boot partitions
-- `nboot_ddr_init.txt`: DDR/init register script extracted from the `ANYKA382` nboot wrapper
-- `nk_ecec_XX.raw`: page-aligned `ECEC` sub-images found inside `nk.raw`
+The tool does one fixed extraction flow. It has no mode flags.
 
-`nk.raw` is not expected to begin with `B000FF`. On this platform, `EBOOT`
-boots through the vendor `PTB` and then loads one or more `ECEC` images from
-the `NK` partition.
+1. Scan the raw dump for valid `PTB` snapshots using temporary interleaved-page
+   normalization.
+2. Parse the newest valid PTB snapshot.
+3. Derive NAND block geometry from the parsed `END` entry.
+4. Normalize the full raw dump to `nand.clean.bin`.
+5. Split the clean dump into PTB partitions named `<TAG>.raw`.
+6. Export known analysis-ready views for bootloader and NK tooling.
+7. Write NAND geometry, parsed PTB data, and view provenance to
+   `nand_extract.json`.
+
+PTB entry records are found by the strict tag sequence
+`NBT, IPL, BAK, UDR, NK, DSK, CFG, END`, not by a fixed table offset. This
+covers the observed 1.88 layout at `PTB+0x670` and the 1.58.2 layout at
+`PTB+0x230`.
+
+Most pages are normalized as interleaved pages. `NBT` is special: pages whose
+final 64 raw bytes are all `0xFF` are treated as plain `2048B data + 64B (unused) OOB`
+pages, while the rest are normalized as interleaved pages.
