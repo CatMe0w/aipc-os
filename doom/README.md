@@ -17,7 +17,7 @@ make
 
 ## Playing with other DOOM versions (optional)
 
-Purchase [DOOM + DOOM II](https://store.steampowered.com/app/2280/DOOM__DOOM_II/) on Steam. It includes all four supported WADs. 
+Purchase [DOOM + DOOM II](https://store.steampowered.com/app/2280/DOOM__DOOM_II/) on Steam. It includes all four supported WADs.
 
 **Finding the install directory:** right-click the game in Steam -> _Manage_ -> _Browse local files_
 

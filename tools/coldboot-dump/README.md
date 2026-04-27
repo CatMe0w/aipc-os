@@ -1,7 +1,6 @@
 # aipc-coldboot-dump
 
-Dump AIPC DDR contents after forcing the machine into USB boot mode during a
-cold-boot attack workflow.
+Dump AIPC DDR contents after forcing the machine into USB boot mode during a cold-boot attack workflow.
 
 ## Running
 
@@ -21,9 +20,7 @@ Options:
 
 1. On the PC, start `aipc-coldboot-dump` first and let it wait for USB boot.
 2. Boot the netbook normally into Windows CE.
-   > You can leave the 9V DC adapter disconnected and only connect the rear USB
-   > port to the PC. In this USB-only setup, plugging in USB should immediately
-   > auto-boot the machine into Windows CE.
+   > You can leave the 9V DC adapter disconnected and only connect the rear USB port to the PC. In this USB-only setup, plugging in USB should immediately auto-boot the machine into Windows CE.
 3. Connect `DL_JUMP` or `USB_BOOT`.
 4. Immediately unplug and replug the USB cable once so the machine reboots.
 5. At that point the dump should start automatically.

@@ -1,27 +1,19 @@
 # Diagnostic Self-Test Mode
 
-Diagnostic mode is a factory test path activated when both DGPIO[3] and
-DGPIO[2] are held high during the boot override sampling (all 5 polls
-must see both bits asserted). The bootrom sets rRTC_BOOTMOD = 0x05000000,
-then enters `bootrom_diag_mode()`, which never returns.
+Diagnostic mode is a factory test path activated when both DGPIO[3] and DGPIO[2] are held high during the boot override sampling (all 5 polls must see both bits asserted). The bootrom sets rRTC_BOOTMOD = 0x05000000, then enters `bootrom_diag_mode()`, which never returns.
 
 ## Overview
 
 The diagnostic mode runs two categories of hardware self-tests:
 
-1. **GPIO/Sharepin connectivity test** - verifies that all GPIO groups can
-   be driven to all-ones and all-zeroes.
-2. **RTC/USB indexed register window test** - writes and reads back test
-   patterns across 6 register windows to verify the indexed sideband
-   interface.
+1. **GPIO/Sharepin connectivity test** - verifies that all GPIO groups can be driven to all-ones and all-zeroes.
+2. **RTC/USB indexed register window test** - writes and reads back test patterns across 6 register windows to verify the indexed sideband interface.
 
-Results are signaled via two GPIO4 output pins used as status indicators.
-After the tests complete, the bootrom enters an infinite idle loop.
+Results are signaled via two GPIO4 output pins used as status indicators. After the tests complete, the bootrom enters an infinite idle loop.
 
 ## GPIO4 Test Output Pins
 
-The diagnostic mode uses GPIO4 bits 10 and 11 (bit index = argument + 6,
-where argument 4 -> bit 10, argument 5 -> bit 11) as test status indicators:
+The diagnostic mode uses GPIO4 bits 10 and 11 (bit index = argument + 6, where argument 4 -> bit 10, argument 5 -> bit 11) as test status indicators:
 
 | Pin (bit) | Role           | Driven by  |
 | --------- | -------------- | ---------- |
@@ -30,13 +22,10 @@ where argument 4 -> bit 10, argument 5 -> bit 11) as test status indicators:
 
 Pin driving functions:
 
-- **Drive high**: clear direction bit in SYSCTRL+0x94, set output bit in
-  SYSCTRL+0x98.
-- **Drive low**: clear direction bit in SYSCTRL+0x94, clear output bit in
-  SYSCTRL+0x98.
+- **Drive high**: clear direction bit in SYSCTRL+0x94, set output bit in SYSCTRL+0x98.
+- **Drive low**: clear direction bit in SYSCTRL+0x94, clear output bit in SYSCTRL+0x98.
 
-Similarly, GPIO4 bits 6 and 7 (arguments 0 and 1) are used as additional
-status indicators during the GPIO/sharepin test phase.
+Similarly, GPIO4 bits 6 and 7 (arguments 0 and 1) are used as additional status indicators during the GPIO/sharepin test phase.
 
 ## Initialization
 
@@ -50,15 +39,12 @@ status indicators during the GPIO/sharepin test phase.
 
 ## GPIO/Sharepin Connectivity Test
 
-This test verifies that all four GPIO groups (GPIO1-GPIO4) can be driven
-and read back correctly.
+This test verifies that all four GPIO groups (GPIO1-GPIO4) can be driven and read back correctly.
 
 ### Setup
 
-1. Clear sharepin mux registers: SYSCTRL+0x74 = 0, SYSCTRL+0x78 = 0
-   (switch all sharepins to GPIO mode).
-2. Set I/O control: SYSCTRL+0xD4 |= 0x3FFFC (bits [17:2]) and
-   SYSCTRL+0xD4 |= 0xC000000 (bits [27:26]).
+1. Clear sharepin mux registers: SYSCTRL+0x74 = 0, SYSCTRL+0x78 = 0 (switch all sharepins to GPIO mode).
+2. Set I/O control: SYSCTRL+0xD4 |= 0x3FFFC (bits [17:2]) and SYSCTRL+0xD4 |= 0xC000000 (bits [27:26]).
 3. Set GPIO1 direction register to 0: SYSCTRL+0x7C = 0.
 
 ### Drive All-Ones Test
@@ -89,8 +75,7 @@ Any mismatch drives GPIO4[7] low (fail) and returns.
 
 ### Drive All-Zeroes Test
 
-Clear all output registers to 0 and verify all input registers read 0
-(with the same masks). Any mismatch drives GPIO4[7] low (fail).
+Clear all output registers to 0 and verify all input registers read 0 (with the same masks). Any mismatch drives GPIO4[7] low (fail).
 
 ## RTC/USB Indexed Register Window Test
 
@@ -132,8 +117,7 @@ The RTC/USB sideband is accessed through a 14-bit indexed register interface:
 
 ### Test Pattern
 
-Each window is tested with 4 write-read-verify cycles using complementary
-bit patterns:
+Each window is tested with 4 write-read-verify cycles using complementary bit patterns:
 
 | Step | Write Value | Purpose                        |
 | ---- | ----------- | ------------------------------ |
@@ -144,8 +128,7 @@ bit patterns:
 
 ### Per-Window Expected Masks
 
-Not all bits in every window are writable. The test applies per-window
-masks to the read-back value before comparison:
+Not all bits in every window are writable. The test applies per-window masks to the read-back value before comparison:
 
 | Window  | All-1s mask | All-0s mask | 0x1555 mask | 0x2AAA mask |
 | ------- | ----------- | ----------- | ----------- | ----------- |
@@ -156,12 +139,8 @@ masks to the read-back value before comparison:
 | 0x10000 | 0x1FFD      | 0x1FFD      | 0x1554      | 0xAA9       |
 | 0x14000 | 0x3FDF      | 0x3FDF      | 0x1555      | 0x2A8A      |
 
-These masks reflect read-only, reserved, or always-set/clear bits in each
-register window. If any verification step fails, the function returns 0
-immediately (fail), and the outer loop drives the fail indicator low.
+These masks reflect read-only, reserved, or always-set/clear bits in each register window. If any verification step fails, the function returns 0 immediately (fail), and the outer loop drives the fail indicator low.
 
 ## Post-Test Behavior
 
-After all tests complete (or any test fails), the diagnostic mode enters
-an infinite `while(1)` loop. The GPIO4 output pins retain their final state,
-allowing external test equipment to read the pass/fail result.
+After all tests complete (or any test fails), the diagnostic mode enters an infinite `while(1)` loop. The GPIO4 output pins retain their final state, allowing external test equipment to read the pass/fail result.

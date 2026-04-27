@@ -6,9 +6,7 @@ See `tools/nand-extract` for the successor.
 
 Extract partitions from an AIPC WinCE NAND dump.
 
-It first finds the vendor `PTB` block near the end of NAND, then scans for the
-`NBT` entry as the start of the fixed `0x30`-byte partition records, and parses
-forward until `END`.
+It first finds the vendor `PTB` block near the end of NAND, then scans for the `NBT` entry as the start of the fixed `0x30`-byte partition records, and parses forward until `END`.
 
 ## Usage
 
@@ -16,8 +14,7 @@ forward until `END`.
 uv run aipc-nand-extract nand.img -o out/
 ```
 
-Without `-o`, files are written to an `extracted/` directory next to the
-input image.
+Without `-o`, files are written to an `extracted/` directory next to the input image.
 
 ## Output
 
@@ -30,6 +27,4 @@ The tool writes:
 - `nboot_ddr_init.txt`: DDR/init register script extracted from the `ANYKA382` nboot wrapper
 - `nk_ecec_XX.raw`: page-aligned `ECEC` sub-images found inside `nk.raw`
 
-`nk.raw` is not expected to begin with `B000FF`. On this platform, `EBOOT`
-boots through the vendor `PTB` and then loads one or more `ECEC` images from
-the `NK` partition.
+`nk.raw` is not expected to begin with `B000FF`. On this platform, `EBOOT` boots through the vendor `PTB` and then loads one or more `ECEC` images from the `NK` partition.

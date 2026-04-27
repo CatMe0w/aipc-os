@@ -1,11 +1,8 @@
 # AIPC OS
 
-Reverse engineering and bare-metal development for the **AIPC netbook**, a
-retro WinCE-based handheld netbook built on the **Anyka AK7802** SoC (ARM926EJ-S).
-The long-term goal is a working Linux port.
+Reverse engineering and bare-metal development for the **AIPC netbook**, a retro WinCE-based handheld netbook built on the **Anyka AK7802** SoC (ARM926EJ-S). The long-term goal is a working Linux port.
 
-See [https://aipc-os.catme0w.org/](https://aipc-os.catme0w.org/) for the
-project homepage.
+See [https://aipc-os.catme0w.org/](https://aipc-os.catme0w.org/) for the project homepage.
 
 ## Showcase
 
@@ -19,22 +16,13 @@ project homepage.
 
 Three layers of the boot chain, reverse-engineered from scratch:
 
-- **[bootrom](docs/bootrom/README.md)** -- The mask ROM baked into the
-  AK7802 die. USB boot mode, NAND/SPI boot, UART console, GPIO naming
-  crosswalk, full memory map.
-- **[nboot](docs/nboot/README.md)** -- First-stage NAND bootloader. DDR
-  init script, self-relocation to upper DDR, EBOOT loading.
-- **[EBOOT](docs/eboot/README.md)** -- WinCE second-stage bootloader.
-  LCD bring-up (800x480, register-level cookbook), ENC28J60 SPI Ethernet,
-  CH374 USB HID keyboard, NAND driver (4x528-byte interleaved ECC layout),
-  vendor partition table (PTB), TFTP/EDBG download protocol, maintenance
-  mode password and menu, GPIO driver with two independent pin numbering
-  systems, CPU PLL formula.
+- **[bootrom](docs/bootrom/README.md)** -- The mask ROM baked into the AK7802 die. USB boot mode, NAND/SPI boot, UART console, GPIO naming crosswalk, full memory map.
+- **[nboot](docs/nboot/README.md)** -- First-stage NAND bootloader. DDR init script, self-relocation to upper DDR, EBOOT loading.
+- **[EBOOT](docs/eboot/README.md)** -- WinCE second-stage bootloader. LCD bring-up (800x480, register-level cookbook), ENC28J60 SPI Ethernet, CH374 USB HID keyboard, NAND driver (4x528-byte interleaved ECC layout), vendor partition table (PTB), TFTP/EDBG download protocol, maintenance mode password and menu, GPIO driver with two independent pin numbering systems, CPU PLL formula.
 
 ### Bare-metal DOOM ([`doom/`](doom/))
 
-A [doomgeneric](https://github.com/ozkl/doomgeneric)-based DOOM port that
-runs directly on AIPC. Loaded over USB boot mode.
+A [doomgeneric](https://github.com/ozkl/doomgeneric)-based DOOM port that runs directly on AIPC. Loaded over USB boot mode.
 
 ### Boot methods ([`boot/`](boot/))
 
@@ -49,21 +37,17 @@ Kernel sources and patches (work in progress).
 
 Python CLI tools (uv workspace) for talking to the device:
 
-#### AK7802 SoC tools
+| AK7802 SoC Tool        | Purpose                                             |
+| ---------------------- | --------------------------------------------------- |
+| `ak7802-nand-dump-min` | Universal AK7802 NAND dump tool                     |
+| `ak7802-usbboot`       | USB boot mode protocol: peek, poke, upload, execute |
 
-| Tool | Purpose |
-| ---- | ------- |
-| `ak7802-nand-dump-min` | Universal AK7802 NAND dump tool |
-| `ak7802-usbboot` | USB boot mode protocol: peek, poke, upload, execute |
-
-#### AIPC-specific tools
-
-| Tool | Purpose |
-| ---- | ------- |
-| `aipc-coldboot-dump` | Cold-boot attack RAM extraction |
-| `aipc-ddr-init` | Standalone DDR SDRAM init via USB boot |
-| `aipc-nand-dump` | Fast NAND dump tool for AIPC |
-| `aipc-nand-extract` | Extract partitions from a raw NAND dump |
+| AIPC-specific Tool   | Purpose                                 |
+| -------------------- | --------------------------------------- |
+| `aipc-coldboot-dump` | Cold-boot attack RAM extraction         |
+| `aipc-ddr-init`      | Standalone DDR SDRAM init via USB boot  |
+| `aipc-nand-dump`     | Fast NAND dump tool for AIPC            |
+| `aipc-nand-extract`  | Extract partitions from a raw NAND dump |
 
 ### Website ([`website/`](website/))
 
@@ -75,8 +59,7 @@ Source for [aipc-os.catme0w.org](https://aipc-os.catme0w.org/).
 uv sync
 ```
 
-This installs all Python tools into a shared virtualenv. CLI entry points
-are available immediately:
+This installs all Python tools into a shared virtualenv. CLI entry points are available immediately:
 
 ```
 uv run ak7802-usbboot --help
@@ -96,5 +79,4 @@ To build ARM stubs or the DOOM binary, you need `arm-none-eabi-gcc`.
 
 ## License
 
-See [LICENSE](LICENSE) for details. In short: tools and scripts are MIT,
-kernel patches are GPLv2, docs are CC-BY-SA 4.0, DOOM is GPLv2.
+See [LICENSE](LICENSE) for details. In short: tools and scripts are MIT, kernel patches are GPLv2, docs are CC-BY-SA 4.0, DOOM is GPLv2.

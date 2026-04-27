@@ -2,13 +2,9 @@
 
 Full NAND dump tool for AIPC.
 
-Dumps the entire 512 MB NAND flash including OOB/ECC data in about 15
-minutes via USB boot mode. The dump can be used to restore the factory
-system or as a backup before flashing custom firmware. Keep it safe.
+Dumps the entire 512 MB NAND flash including OOB/ECC data in about 15 minutes via USB boot mode. The dump can be used to restore the factory system or as a backup before flashing custom firmware. Keep it safe.
 
-This tool is AIPC-specific (requires DDR init and uses AIPC's NAND header
-for timing). For a chip-generic AK7802 NAND dump tool, see
-[`tools/nand-dump-min`](../nand-dump-min).
+This tool is AIPC-specific (requires DDR init and uses AIPC's NAND header for timing). For a chip-generic AK7802 NAND dump tool, see [`tools/nand-dump-min`](../nand-dump-min).
 
 ## Building the stubs
 
@@ -41,8 +37,7 @@ Options:
 ## How it works
 
 1. Connect to the device and initialize DDR via `aipc-ddr-init`.
-2. Upload and execute `nand_id` stub: reads the 8-byte NAND ID and
-   probes page 0 for the "ANYKA382" header to extract factory NFC timing.
+2. Upload and execute `nand_id` stub: reads the 8-byte NAND ID and probes page 0 for the "ANYKA382" header to extract factory NFC timing.
 3. Auto-detect NAND geometry from the ID bytes (or use manual overrides).
 4. Upload `nand_copy` stub once. For each batch:
    - Write parameters (start page, count, DDR address, timing) to L2 SRAM.
@@ -50,8 +45,7 @@ Options:
    - Read the DDR buffer back to the host via `read_mem`.
 5. Write the raw dump to file.
 
-Each batch fills ~61 MB of DDR (~31K pages for a 2KB-page NAND).
-A 512 MB NAND completes in 9 batches.
+Each batch fills ~61 MB of DDR (~31K pages for a 2KB-page NAND). A 512 MB NAND completes in 9 batches.
 
 ## Raw dump format
 
@@ -77,16 +71,15 @@ _TODO: decode the OOB/ECC data and correct errors where possible._
 
 ## Memory layout
 
-The stubs run in L2 buffer SRAM (5504 bytes at `0x48000000`).
-DDR at `0x30000000` is used as a large read buffer after initialization.
+The stubs run in L2 buffer SRAM (5504 bytes at `0x48000000`). DDR at `0x30000000` is used as a large read buffer after initialization.
 
-| Address range               | Size    | Usage                          |
-| --------------------------- | ------- | ------------------------------ |
-| `0x48000000 - 0x4800003F`   | 64 B    | USB TX staging (HW-managed)    |
-| `0x48000040 - 0x4800007F`   | 64 B    | Parameter / result block       |
-| `0x48000200 - 0x4800023F`   | 64 B    | USB RX DMA target (HW-managed) |
-| `0x48000240 - 0x48000BFF`   | 2.5 KB  | Stub code / rodata / bss       |
-| `0x48000C00 - 0x48000E6F`   | 624 B   | I/O scratch buffer             |
-| `0x48000E70 - 0x48000FFC`   | ~400 B  | Bootrom call chain stack       |
-| `0x48001100 - 0x4800157B`   | ~1.1 KB | Stub stack                     |
-| `0x30000000 - 0x33FFFFFF`   | 64 MB   | DDR read buffer (63 MB usable) |
+| Address range             | Size    | Usage                          |
+| ------------------------- | ------- | ------------------------------ |
+| `0x48000000 - 0x4800003F` | 64 B    | USB TX staging (HW-managed)    |
+| `0x48000040 - 0x4800007F` | 64 B    | Parameter / result block       |
+| `0x48000200 - 0x4800023F` | 64 B    | USB RX DMA target (HW-managed) |
+| `0x48000240 - 0x48000BFF` | 2.5 KB  | Stub code / rodata / bss       |
+| `0x48000C00 - 0x48000E6F` | 624 B   | I/O scratch buffer             |
+| `0x48000E70 - 0x48000FFC` | ~400 B  | Bootrom call chain stack       |
+| `0x48001100 - 0x4800157B` | ~1.1 KB | Stub stack                     |
+| `0x30000000 - 0x33FFFFFF` | 64 MB   | DDR read buffer (63 MB usable) |
