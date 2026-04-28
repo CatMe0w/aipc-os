@@ -18,7 +18,7 @@ Current EBOOT code actively uses physical `0x20024000`. `ch374_init` reaches it 
 EBOOT touches several SYSCTRL offsets beyond the bootrom's set. The new ones are listed below; the clock/interrupt/GPIO groups `+0x7C..+0xFC` are covered in detail in [gpio-driver.md](gpio-driver.md).
 
 | Offset | Usage |
-| --- | --- | --- |
+| --- | --- |
 | +0x04 | CPU PLL configuration (see _CPU Clock Formula_ below) |
 | +0x0C | Peripheral reset / clock gate; bit 3 = LCD clock enable (inverted polarity, clear to enable), bit 19 = LCD reset pulse |
 | +0x2C | PWM high/low time: `(high_ticks << 16) | low_ticks`; base tick = 12 MHz |

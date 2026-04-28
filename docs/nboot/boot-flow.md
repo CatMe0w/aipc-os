@@ -67,7 +67,7 @@ loop:
     BCC   loop
 ```
 
-After relocation, nboot runs entirely from `0x30E00000`, leaving `0x30000000` free for eboot. The handoff target is `0x30038000`, but nboot actually starts copying the `IPL` container at `0x30037FD4`, so the `0x2C`-byte `IMG` header lands immediately before the entry point and the first payload instruction (`IPL.raw+0x2C`) ends up at `0x30038000`.
+After relocation, nboot runs entirely from `0x30E00000`, leaving `0x30000000` free for EBOOT. The handoff target is `0x30038000`, but nboot actually starts copying the `IPL` container at `0x30037FD4`, so the `0x2C`-byte `IMG` header lands immediately before the entry point and the first payload instruction (`IPL.raw+0x2C`) ends up at `0x30038000`.
 
 **3. Set up CPU mode and stack pointers, then jump:**
 
@@ -91,9 +91,9 @@ void __noreturn nboot_main()
     uart_init();
     uart_putc('S');           // UART ready, NAND init starting
     nboot_init_nand_params();
-    uart_putc('L');           // NAND ready, loading eboot
+    uart_putc('L');           // NAND ready, loading EBOOT
     nboot_load_eboot(0x30037FD4, /*start_block=*/2, /*max_bytes=*/0x64000);
-    uart_putc('B');           // eboot loaded, jumping
+    uart_putc('B');           // EBOOT loaded, jumping
     ((void(*)(void))0x30038000)();
     // never returns
 }
@@ -104,13 +104,13 @@ void __noreturn nboot_main()
 | Character | Hex | Meaning |
 | --- | --- | --- |
 | `S` | 0x53 | UART initialized; NAND parameter init starting |
-| `L` | 0x4C | NAND initialized; eboot load starting |
-| `B` | 0x42 | eboot loaded; jumping to eboot |
+| `L` | 0x4C | NAND initialized; EBOOT load starting |
+| `B` | 0x42 | EBOOT loaded; jumping to EBOOT |
 | `e` | 0x65 | Bad block skipped (printed per bad block) |
 | `E` | 0x45 | Page read error; skipping ahead 2 blocks (v1.58.2) or 1 block (v1.88) |
 | `V` | 0x56 | NAND parameter sanity check failed; nboot halts (v1.88 only) |
 
-A successful boot with no bad blocks or read errors prints exactly `SLB` on the UART before handing off to eboot.
+A successful boot with no bad blocks or read errors prints exactly `SLB` on the UART before handing off to EBOOT.
 
 ### NAND Parameter Initialization
 
@@ -151,7 +151,7 @@ Both versions program the same NAND controller registers:
 | `0x2002A160` | NAND controller timing reg B     |
 | `0x2002B000` | ECC/DMA control (set to 0x10000) |
 
-## Phase 3: eboot Loading (`nboot_load_eboot`)
+## Phase 3: EBOOT Loading (`nboot_load_eboot`)
 
 `nboot_load_eboot(dst=0x30037FD4, start_block=2, max_bytes=0x64000)` loads up to 400 KB from NAND starting at block 2 into DDR. The fixed start block matches the current `PTB` `IPL` entry, but nboot does not parse `PTB` at runtime.
 
@@ -178,6 +178,6 @@ This means nboot loads only the first `0x64000` bytes of the `IPL` partition sli
 - If OOB byte at offset 1 is not `0xFF`, the block is marked bad (return 2).
 - Otherwise reads the page metadata. Bits 0 and 1 of the metadata byte encode additional flags (returned in the low nibble).
 
-## Phase 4: Jump to eboot
+## Phase 4: Jump to EBOOT
 
-After loading completes, nboot jumps directly to `0x30038000`, which is where the first payload word from `IPL.raw+0x2C` was placed. No parsing of the `IMG` header is performed; the header is handled only by the shifted destination address. nboot does not consult the `PTB` load address and does not set up page tables or enable the MMU before the handoff. eboot is responsible for all subsequent hardware initialization.
+After loading completes, nboot jumps directly to `0x30038000`, which is where the first payload word from `IPL.raw+0x2C` was placed. No parsing of the `IMG` header is performed; the header is handled only by the shifted destination address. nboot does not consult the `PTB` load address and does not set up page tables or enable the MMU before the handoff. EBOOT is responsible for all subsequent hardware initialization.
