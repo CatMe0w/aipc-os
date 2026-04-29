@@ -3,9 +3,9 @@
  *
  * Display: 800x480 RGB565
  *
- * For the current no-MMU/no-D-cache baseline, stick to the original EBOOT
- * framebuffer pair at 0x33B00000/0x07B00000 to keep the display path as
- * simple as possible while input support is being brought up.
+ * Stick to the original EBOOT framebuffer pair at 0x33B00000/0x07B00000.
+ * The MMU setup keeps this framebuffer section uncached while the rest of DDR
+ * can use D-cache.
  */
 
 #include <stdint.h>
@@ -22,6 +22,8 @@
 
 #define LCD_BASE      0x20010000u
 #define LCD(off)      REG32(LCD_BASE + (off))
+
+#define RAMCTRL_AHB_PRIORITY 0x2002D014u
 
 /* Timing
  *
@@ -95,7 +97,7 @@ uint32_t DG_GetTicksMs(void)
 /* Display */
 
 #define FB_BOOT_VIRT        0x33B00000u
-#define FB_BOOT_DMA_BASE    0x07B00000u
+#define FB_BOOT_DMA_BASE    0x03B00000u
 #define FB_RUNTIME_VIRT     0x33ED3C00u
 #define FB_WIDTH    800
 #define FB_HEIGHT   480
@@ -110,7 +112,6 @@ uint32_t DG_GetTicksMs(void)
 #define X_OFFSET    ((FB_WIDTH  - DG_OUT_W) / 2)   /* 80 */
 #define Y_OFFSET    ((FB_HEIGHT - DG_OUT_H) / 2)   /* 40 */
 
-static int s_first_frame_logged;
 static volatile uint16_t *s_fb_base = (volatile uint16_t *)FB_BOOT_VIRT;
 
 static void busy_wait(volatile int count)
@@ -119,29 +120,15 @@ static void busy_wait(volatile int count)
         ;
 }
 
-static uint32_t diag_hash32(const uint32_t *buf, size_t words)
+static void lcd_set_ahb_priority(void)
 {
-    uint32_t hash = 2166136261u;
-
-    for (size_t i = 0; i < words; i++) {
-        hash ^= buf[i];
-        hash *= 16777619u;
-    }
-
-    return hash;
-}
-
-static void log_lcd_state(const char *stage)
-{
-    printf("LCD state %s: ctrl=0x%08x fb=0x%08x stride=0x%08x size=0x%08x b8=0x%08x c8=0x%08x s3c=0x%08x\n",
-           stage,
-           (unsigned int)LCD(0x00),
-           (unsigned int)LCD(0x14),
-           (unsigned int)LCD(0xAC),
-           (unsigned int)LCD(0x18),
-           (unsigned int)LCD(0xB8),
-           (unsigned int)LCD(0xC8),
-           (unsigned int)LCD(0x3C));
+    /*
+     * The AK88/AK98 LCD setup clears the low 7 bits so DMA masters outrank
+     * the ARM core on the AHB. Without this, D-cache burst traffic can starve
+     * LCD scanout.
+     */
+    REG32(RAMCTRL_AHB_PRIORITY) &= ~0x0000007Fu;
+    aipc_drain_write_buffer();
 }
 
 static void gpio_set_output(int pin, int value)
@@ -189,6 +176,8 @@ static void lcd_init(void)
     SYSCTRL(0x0C) = clk_gate | SYSCTRL_LCD_RESET;
     SYSCTRL(0x0C) = clk_gate;
 
+    lcd_set_ahb_priority();
+
     /* Clear both candidate framebuffers while we stay on the EBOOT base. */
     memset((void *)FB_BOOT_VIRT, 0, FB_WIDTH * FB_HEIGHT * 2);
     memset((void *)FB_RUNTIME_VIRT, 0, FB_WIDTH * FB_HEIGHT * 2);
@@ -212,6 +201,8 @@ static void lcd_init(void)
     LCD(0xB0) = 0x000C81E0;
     LCD(0x14) = FB_BOOT_DMA_BASE;
     LCD(0x18) = 0x032001E0;
+    LCD(0x1C) = 0x00000000;
+    LCD(0x20) = 0x00000000;
     LCD(0xA8) = 0x00000000;
     LCD(0xAC) = 0x000C81E0;
 
@@ -255,10 +246,10 @@ void DG_Init(void)
     timer_init();
     aipc_mmu_cache_init();
     s_fb_base = (volatile uint16_t *)FB_BOOT_VIRT;
-    printf("DG_Init: framebuffer va=0x%08x dma=0x%08x (MMU off, D-cache off)\n",
+    memset((void *)(uintptr_t)s_fb_base, 0, FB_WIDTH * FB_HEIGHT * 2);
+    printf("DG_Init: framebuffer va=0x%08x dma=0x%08x\n",
            (unsigned int)(uintptr_t)s_fb_base,
            (unsigned int)FB_BOOT_DMA_BASE);
-    log_lcd_state("after init");
     aipc_keyboard_init();
 }
 
@@ -266,16 +257,6 @@ void DG_DrawFrame(void)
 {
     /* With write buffer enabled, drain stores before reading/writing buffers. */
     aipc_drain_write_buffer();
-
-    if (!s_first_frame_logged) {
-        s_first_frame_logged = 1;
-        log_lcd_state("at first draw");
-        printf("DG_DrawFrame diag: fb_base=0x%08x dg0=%08x dg1=%08x hash=0x%08x\n",
-               (unsigned int)(uintptr_t)s_fb_base,
-               (unsigned int)DG_ScreenBuffer[0],
-               (unsigned int)DG_ScreenBuffer[1],
-               (unsigned int)diag_hash32((const uint32_t *)DG_ScreenBuffer, 256));
-    }
 
     /* DG_ScreenBuffer is 320x200 ARGB8888. Scale 2x to 640x400 RGB565. */
     for (int y = 0; y < DG_SRC_H; y++) {

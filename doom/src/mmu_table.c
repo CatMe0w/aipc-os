@@ -24,6 +24,7 @@
 #define DDR_SIZE                   0x04000000u
 #define SYSCTRL_BASE               0x08000000u
 #define LCD_BASE                   0x20000000u
+#define FB_BOOT_VIRT               0x33B00000u
 
 static uint32_t s_arm926_l1_table[ARM926_L1_ENTRIES]
     __attribute__((aligned(16384)));
@@ -47,14 +48,17 @@ void aipc_mmu_cache_init(void)
     for (phys = DDR_BASE; phys < DDR_BASE + DDR_SIZE; phys += ARM926_SECTION_SIZE)
         arm926_map_section(phys, phys, ARM926_SECTION_RW_CACHED);
 
+    /*
+     * The LCD controller does not snoop the ARM926 D-cache. Keep the scanout
+     * framebuffer uncached until we have explicit cache-cleaning in the draw
+     * path. Section granularity is 1 MiB; the active 800x480x16bpp buffer fits
+     * entirely inside 0x33B00000..0x33BFFFFF.
+     */
+    arm926_map_section(FB_BOOT_VIRT, FB_BOOT_VIRT, ARM926_SECTION_RW);
+
     /* MMIO stays uncached. */
     arm926_map_section(SYSCTRL_BASE, SYSCTRL_BASE, ARM926_SECTION_RW);
     arm926_map_section(LCD_BASE, LCD_BASE, ARM926_SECTION_RW);
 
-    aipc_enable_mmu_cache((uint32_t)s_arm926_l1_table);
-}
-
-uint32_t aipc_mmu_get_l1_entry(uint32_t va)
-{
-    return s_arm926_l1_table[va >> ARM926_SECTION_SHIFT];
+    aipc_enable_mmu_cache((uint32_t)(uintptr_t)s_arm926_l1_table);
 }

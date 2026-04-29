@@ -3,8 +3,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "doomkeys.h"
-#include "doomgeneric.h"
+#include "../doomgeneric/doomgeneric/doomkeys.h"
+#include "../doomgeneric/doomgeneric/doomgeneric.h"
 
 #include "ch374_keyboard.h"
 
