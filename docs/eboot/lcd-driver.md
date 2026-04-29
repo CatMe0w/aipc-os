@@ -13,7 +13,7 @@ The LCD controller base is physical `0x20010000`, uncached virtual `0xA8010000` 
 | +0x00 | `0x80A80058` (final) | Main control register; see _Control Register_ below |
 | +0x10 | `0x00300006` | H timing config 1 `[partial]` |
 | +0x14 | `0x07B00000` | Framebuffer base register literal (see note) |
-| +0x18 | `0x032001E0` | Stride / per-line layout word `[partial]` |
+| +0x18 | `0x032001E0` | Active size word: `(width << 16) | height` |
 | +0x3C | `0x00000000` | Cleared during init |
 | +0x40 | `0x00080003` | V timing `[partial]` |
 | +0x44 | `0x00058320` | H sync `[partial]` |
@@ -23,13 +23,13 @@ The LCD controller base is physical `0x20010000`, uncached virtual `0xA8010000` 
 | +0x54 | `0x00F00000` | Resolution-related `[partial]` |
 | +0x58 | `0x000001F9` | 505 (V total) |
 | +0xA8 | `0x00000000` | Cleared |
-| +0xAC | `0x000C81E0` | `[partial]` |
-| +0xB0 | `0x000C81E0` | `[partial]` |
+| +0xAC | `0x000C81E0` | Packed active size: `(width << 10) | height` |
+| +0xB0 | `0x000C81E0` | Packed active size: `(width << 10) | height` |
 | +0xB8 | bit 0 clear, bit 2 set | `[partial]` |
 | +0xC8 | bit 11 set | `[partial]` |
 | +0xE8 | `0x00000111` | Pixel clock divider (see below) |
 
-Most fields marked `[partial]` have the correct literal value listed but their bit-level meaning has not been reverse-engineered from the LCD controller perspective. The values are directly lifted from EBOOT's `lcd_init` and are guaranteed to produce a working display for the on-board panel at 248 MHz CPU clock; changing the panel or the CPU clock would require deriving new values.
+Most fields marked `[partial]` have the correct literal value listed but their bit-level meaning has not been reverse-engineered from the LCD controller perspective. The values are directly lifted from EBOOT's `lcd_init` and are guaranteed to produce a working display for the on-board panel at 248 MHz CPU clock; changing the panel or the CPU clock would require deriving new values. The size words at `+0x18`, `+0xAC`, and `+0xB0` are corroborated by the WinCE display driver; see [NK Display Driver](../nk/display-driver.md).
 
 ### Control Register (+0x00)
 
@@ -37,8 +37,8 @@ The main control word is built up in three write phases. The final value is `0x8
 
 Known bit assignments in the final value:
 
-- bit 3 (`0x08`): start / refresh enable `[partial]`
-- bit 4 (`0x10`): DMA enable `[partial]`
+- bit 3 (`0x08`): set in the final phase to start the controller `[partial]`
+- bit 4 (`0x10`): display path enable bit `[partial]`
 - bit 6 (`0x40`): mode bit set during phase 1 `[partial]`
 - bits 19, 21, 23: set in the final value, meaning `[unknown]`
 - bit 31 (`0x80000000`): main controller enable
@@ -54,7 +54,7 @@ EBOOT writes the literal `0x07B00000` into `+0x14` after first masking off the p
 - CPU-side framebuffer clears target cached virtual `0x87B00000`
 - the LCD controller register receives `0x07B00000`
 
-The commonly used physical interpretation `0x33B00000` comes from the platform's 64 MB DDR wrap behavior and observed working display state, not from an explicit comment or symbolic field decode inside `lcd_init` itself.
+The WinCE display driver later uses the same low-28-bit form when programming framebuffer bases, so the high nibble should not be treated as part of the framebuffer address. The commonly used physical interpretation `0x33B00000` comes from the platform's 64 MB DDR wrap behavior and observed working display state, not from an explicit comment or symbolic field decode inside `lcd_init` itself.
 
 On current hardware, the effective framebuffer region is treated as a 5 MB area starting at `0x33B00000`: `800 * 480 * 2 = 768000` bytes are live pixels, and the region is rounded up to 5 MB to give some headroom.
 
@@ -196,14 +196,14 @@ EBOOT clears 5 MB at cached virtual `0x87B00000` and programs the LCD controller
 
 Pixel format is RGB565 (16 bpp), so one line is `800 * 2 = 1600` bytes and the whole active framebuffer is `1600 * 480 = 768000` bytes.
 
-This framebuffer location is valid only for the boot path that runs EBOOT to completion and hands off to software that inherits the LCD controller state. Once WinCE's display driver takes over, it allocates its own framebuffer at a runtime-determined address and writes a new value into `LCD+0x14`. A Linux consumer that observes the LCD state after EBOOT will see `0x33B00000`; a Linux consumer that boots via HaRET warmboot after WinCE will see whatever NK allocated (observed as `0x33ED3C00` on test units).
+This framebuffer location is valid only for the boot path that runs EBOOT to completion and hands off to software that inherits the LCD controller state. Once WinCE's display driver takes over, it allocates its own framebuffer and writes a new value into `LCD+0x14`. The WinCE-side address model is documented separately in [NK Display Driver](../nk/display-driver.md).
 
 Shipping a stable framebuffer layout for Linux requires a real driver that owns the LCD controller and programs `+0x14` itself, rather than inheriting whatever `lcd_init` or WinCE left behind.
 
 ## Unresolved
 
-- The meaning of `+0x10`, `+0x18`, `+0x40..+0x58`, `+0xA8..+0xC8`, and `+0xE8` bits is only known to the extent of "these values work for the 800x480 panel at 25.5 MHz pixel clock with CPU 248 MHz". The individual bit assignments were not reverse-engineered.
+- The meaning of `+0x10`, `+0x40..+0x58`, `+0xA8..+0xC8`, and `+0xE8` bits is only known to the extent of "these values work for the 800x480 panel at 25.5 MHz pixel clock with CPU 248 MHz". The individual bit assignments were not reverse-engineered.
 - The alt function ID `20` routing: inferred to drive `GPIO1[9] = WLED_PWM` but not confirmed by walking the per-alt stub for that ID and cross-referencing the sharepin bit against a pin mapping. See [gpio-driver.md](gpio-driver.md) for the alt-ID-to-physical-pin problem in general.
 - The exact meaning of PAL IOCTL `0x010120EC` with payload `0x30` during LCD clock setup is not yet decoded. A conservative reading is that EBOOT performs two separate clock-related steps for LCD bring-up: this PAL IOCTL plus the controller-local divider write at `LCD+0xE8`. Their precise division of responsibility is not yet confirmed.
-- Whether the LCD controller uses bit 31 of `+0x14` for anything, and whether writing the full 32-bit `0x07B00000` is necessary or whether the low 28 bits alone suffice, is not confirmed.
+- Whether the LCD controller uses the high nibble of `+0x14` for anything outside the framebuffer address field is not confirmed.
 - Stable stuck-pixel test patterns, blanking behavior, and dynamic resolution changes have not been exercised. The documentation describes steady-state operation only.

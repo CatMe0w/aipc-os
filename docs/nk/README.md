@@ -19,6 +19,7 @@ Mask ROM bootrom -> nboot -> EBOOT -> NK (WinCE kernel)
 - [Partition and ECEC Layout](partition-and-ecec-layout.md): NK child partition table, ECEC image header, periodic metadata pages, logical-to-raw-offset formula, and chain information record.
 - [ROMHDR and TOC](romhdr-and-toc.md): WinCE `ROMHDR` structure, ROM module table, ROM file table, compact `e32_rom` header, and compact `o32_rom` section descriptors.
 - [Module Rebuild](module-rebuild.md): Converting ROM module descriptors into decompiler-oriented PE files — image base selection, section byte extraction, in-image pointer relocation, export directory synthesis, and import directory exposure.
+- [Display Driver](display-driver.md): LCD MMIO mapping, framebuffer address model, and confirmed LCD register fields.
 
 ## Conventions
 
