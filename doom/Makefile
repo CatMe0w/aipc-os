@@ -68,6 +68,7 @@ TARGET  = doom$(TARGET_SUFFIX)
 SRCS_S  = src/start.S \
           src/mmu_arm926.S
 SRCS_C  = src/doomgeneric_aipc.c \
+          src/ch374_keyboard.c \
           src/mmu_table.c \
           src/syscalls.c
 

@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "../doomgeneric/doomgeneric/doomgeneric.h"
+#include "ch374_keyboard.h"
 
 #define REG32(addr)  (*(volatile uint32_t *)(uintptr_t)(addr))
 
@@ -258,6 +259,7 @@ void DG_Init(void)
            (unsigned int)(uintptr_t)s_fb_base,
            (unsigned int)FB_BOOT_DMA_BASE);
     log_lcd_state("after init");
+    aipc_keyboard_init();
 }
 
 void DG_DrawFrame(void)
@@ -304,9 +306,7 @@ void DG_DrawFrame(void)
 
 int DG_GetKey(int *pressed, unsigned char *key)
 {
-    (void)pressed;
-    (void)key;
-    return 0;
+    return aipc_keyboard_get_event(pressed, key);
 }
 
 void DG_SetWindowTitle(const char *title)
