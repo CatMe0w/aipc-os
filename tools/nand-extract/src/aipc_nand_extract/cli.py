@@ -993,7 +993,6 @@ def parse_e32_rom(raw: bytes, offset: int, o32_offset: int | None = None) -> E32
         return None
 
     sections: list[O32RomSection] = []
-    previous_rva = -1
     for index in range(object_count):
         (
             virtual_size_section,
@@ -1007,8 +1006,6 @@ def parse_e32_rom(raw: bytes, offset: int, o32_offset: int | None = None) -> E32
         if virtual_size_section > 0x02000000 or physical_size > 0x02000000:
             return None
         if rva % PE_SECTION_ALIGNMENT:
-            return None
-        if rva < previous_rva:
             return None
         if flags == 0:
             return None
@@ -1024,7 +1021,6 @@ def parse_e32_rom(raw: bytes, offset: int, o32_offset: int | None = None) -> E32
                 flags=flags,
             )
         )
-        previous_rva = rva
 
     return E32Rom(
         offset=offset,
@@ -1155,11 +1151,21 @@ def section_name(index: int, section: O32RomSection) -> bytes:
     if section.flags & 0x80:
         return b".bss"
     if section.flags & 0x40:
-        if index == 1:
+        if section.flags & 0x80000000:
             return b".data"
-        if index == 2:
-            return b".rdata"
+        return b".rdata"
     return f".sec{index}".encode("ascii")
+
+
+def should_emit_pe_section(section: O32RomSection, sections: tuple[O32RomSection, ...]) -> bool:
+    if section.physical_size != 0:
+        return True
+    return not any(
+        other.index != section.index
+        and other.physical_size > 0
+        and other.rva == section.rva
+        for other in sections
+    )
 
 
 def module_section_file_offset(
@@ -1281,6 +1287,8 @@ def build_direct_pe_sections(raw: bytes, image: ECECImage, module: ROMModuleEntr
     export = find_module_export(raw, module_name, e32) if e32.export_rva else None
     sections: list[PEImageSection] = []
     for index, section in enumerate(e32.sections):
+        if not should_emit_pe_section(section, e32.sections):
+            continue
         data = read_module_section_data(raw, image, section)
         data = relocate_in_image_pointers(data, e32.image_base, module.load_pointer, e32.virtual_size)
         sections.append(
