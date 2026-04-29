@@ -1,6 +1,6 @@
 # AIPC OS
 
-Reverse engineering and bare-metal development for the **AIPC netbook**, a retro WinCE-based handheld netbook built on the **Anyka AK7802** SoC (ARM926EJ-S). The long-term goal is a working Linux port.
+Reverse engineering and bare-metal development for the **AIPC netbook**, a retro WinCE-based handheld netbook built on the **Anyka AK7802** SoC (ARM926EJ-S). The long-term goal is a working Linux _(and DOOM)_ port.
 
 See [https://aipc-os.catme0w.org/](https://aipc-os.catme0w.org/) for the project homepage.
 
@@ -19,6 +19,7 @@ Three layers of the boot chain, reverse-engineered from scratch:
 - **[bootrom](docs/bootrom/README.md)** -- The mask ROM baked into the AK7802 die. USB boot mode, NAND/SPI boot, UART console, GPIO naming crosswalk, full memory map.
 - **[nboot](docs/nboot/README.md)** -- First-stage NAND bootloader. DDR init script, self-relocation to upper DDR, EBOOT loading.
 - **[EBOOT](docs/eboot/README.md)** -- WinCE second-stage bootloader. LCD bring-up (800x480, register-level cookbook), ENC28J60 SPI Ethernet, CH374 USB HID keyboard, NAND driver (4x528-byte interleaved ECC layout), vendor partition table (PTB), TFTP/EDBG download protocol, maintenance mode password and menu, GPIO driver with two independent pin numbering systems, CPU PLL formula.
+- **[NK](docs/nk/README.md)** -- WinCE kernel and vendor drivers.
 
 ### Bare-metal DOOM ([`doom/`](doom/))
 
