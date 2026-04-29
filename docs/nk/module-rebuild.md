@@ -26,6 +26,17 @@ data        = image_blob[blob_offset : blob_offset + o32.physical_size]
 
 Sections are not assumed to be contiguous. An `o32_rom.data_pointer` from one section may belong to a completely different scatter-load segment of the ECEC image than the module name string or the `e32_rom` header.
 
+When `flags & 0x2000` is set and the stored bytes begin with a valid CECOMPRESS block table, the extractor decompresses the section before writing the rebuilt PE. The CECOMPRESS wrapper stores a 24-bit uncompressed size followed by 24-bit block-end offsets. Each block has a 16-byte ROM-LZX header:
+
+```
+u32 window_bits        // observed: 16
+u32 uncompressed_size  // normally 0x1000, shorter for the final block
+u32 compressed_size
+u32 uncompressed_size_copy
+```
+
+The rebuilt PE section keeps the original `o32_rom.virtual_size`, writes the decompressed bytes as raw section data, and clears the `0x2000` compressed flag from the PE section characteristics. Some sections carry `0x2000` even though their stored bytes do not pass the CECOMPRESS block-header checks; those sections are left unchanged rather than being forced through the decompressor.
+
 Section names assigned in the rebuilt PE:
 
 | Condition | Name |
@@ -122,11 +133,9 @@ BX  R12
 
 - The rebuilt PE is an analysis artifact and is not intended to load in a running WinCE system.
 - IAT slots contain ROM-resolved addresses rather than disk-style ordinal thunks.
-- Sections whose `flags & 0x2000` (CECOMPRESS) are currently copied verbatim without decompression.
 - Debug directories, relocation tables, and version resources are not reconstructed.
 
 ## Unresolved
 
-- Decompressing sections with `IMAGE_SCN_COMPRESSED = 0x00002000` (CECOMPRESS algorithm).
 - Rewriting `FirstThunk` into canonical ordinal thunks for tools that require strict PE import tables.
 - Names and prototypes for unresolved CEDDK ordinals (e.g., ordinals 60 and 62 observed in `SPI.dll`).

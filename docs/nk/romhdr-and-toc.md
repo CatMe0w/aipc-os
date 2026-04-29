@@ -133,12 +133,11 @@ Common `flags` values observed:
 | `0x00000020` | executable code (`.text`)                    |
 | `0x00000040` | initialized data (`.data`, `.rdata`)         |
 | `0x00000080` | uninitialized data (`.bss`)                  |
-| `0x00002000` | compressed section (CECOMPRESS) [unverified] |
+| `0x00002000` | CECOMPRESS candidate; treated as compressed only when the section bytes pass block-header validation |
 
 ## Unresolved
 
 - Full semantics of `e32_rom` directory units 2–8.
 - The meaning of `sect14_rva` / `sect14_size` and how they relate to `o32_rom.real_address`.
 - One module per ECEC image fails to resolve in each observed firmware version; the cause is not yet determined.
-- Whether any module in the observed images uses compressed sections (`flags & 0x2000`).
 - Full extraction of ROM file table entries into usable files.

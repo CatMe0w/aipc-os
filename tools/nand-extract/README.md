@@ -30,7 +30,7 @@ The tool does one fixed extraction flow. It has no mode flags.
 8. Detect ECEC images in `NK.binfs.raw` by scanning for the `ECEC` magic at page-aligned offsets. Determine the global metadata-page period and per-image metadata-page index. Resolve logical sizes from the embedded `chain information` record when present.
 9. Write each ECEC image as `NK.ecec_NN.raw`.
 10. Parse each ECEC image's `ROMHDR` and ROM module/file tables. Convert all virtual-address pointers to blob offsets via the metadata-page skip formula.
-11. Rebuild ROM modules into decompiler-oriented PE files under `NK.ecec_NN.modules/`. `ImageBase` is set to `module.load_pointer`; section bytes are read from each section's own `o32_rom.data_pointer`; in-image absolute pointers are rebased from the compact descriptor's `image_base` to `load_pointer`; the export directory is synthesized into a new `.edata` section with adjusted RVAs from `e32_rom.units[0]`; the import directory from `e32_rom.units[1]` is exposed as the PE import data directory without modification.
+11. Rebuild ROM modules into decompiler-oriented PE files under `NK.ecec_NN.modules/`. `ImageBase` is set to `module.load_pointer`; section bytes are read from each section's own `o32_rom.data_pointer`; CECOMPRESS sections are decompressed when their block headers validate; in-image absolute pointers are rebased from the compact descriptor's `image_base` to `load_pointer`; the export directory is synthesized into a new `.edata` section with adjusted RVAs from `e32_rom.units[0]`; the import directory from `e32_rom.units[1]` is exposed only when it validates as PE-like import descriptors.
 12. Write NAND geometry, parsed PTB data, view provenance, ECEC metadata, ROMHDR tables, and rebuilt-module metadata to `nand_extract.json`.
 
 ## NAND Geometry
@@ -62,3 +62,7 @@ See [docs/eboot/nand-driver.md](../../docs/eboot/nand-driver.md) for the physica
 The rebuilt PE files under `NK.ecec_NN.modules/` are analysis artifacts. They prioritize correct decompiler layout over loader-canonical fidelity and are not intended to execute in a WinCE environment.
 
 See [docs/nk/](../../docs/nk/README.md) for detailed documentation of the NK partition structure, ECEC container format, ROM metadata layout, and module rebuild methodology.
+
+## Acknowledgments
+
+https://github.com/KodaSec/wince-decompr under the MIT License.

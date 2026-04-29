@@ -9,6 +9,8 @@ from pathlib import Path
 
 import click
 
+from .cecompress import CECOMPRESS_FLAG, CECompressError, maybe_decompress_cecompress
+
 PAGE_SIZE = 0x800
 CHUNK_SIZE = 0x200
 OOB_SIZE = 0x10
@@ -1175,18 +1177,100 @@ def module_section_file_offset(
     return ecec_pointer_to_offset(image, section.data_pointer)
 
 
+def read_module_section_payload(
+    raw: bytes,
+    image: ECECImage,
+    section: O32RomSection,
+) -> tuple[bytes, bool]:
+    size = section.physical_size
+    if size <= 0:
+        return b"", False
+    source_offset = module_section_file_offset(image, section)
+    if source_offset is None or source_offset < 0 or source_offset >= len(raw):
+        return b"", False
+    data = raw[source_offset : min(len(raw), source_offset + size)]
+    if section.flags & CECOMPRESS_FLAG:
+        try:
+            decompressed = maybe_decompress_cecompress(data, section.virtual_size)
+        except CECompressError as exc:
+            raise click.ClickException(
+                f"failed to decompress section {section.index} at 0x{source_offset:X}: {exc}"
+            ) from exc
+        if decompressed is not None:
+            return decompressed, True
+    return data, False
+
+
 def read_module_section_data(
     raw: bytes,
     image: ECECImage,
     section: O32RomSection,
 ) -> bytes:
-    size = section.physical_size
-    if size <= 0:
-        return b""
-    source_offset = module_section_file_offset(image, section)
-    if source_offset is None or source_offset < 0 or source_offset >= len(raw):
-        return b""
-    return raw[source_offset : min(len(raw), source_offset + size)]
+    data, _decompressed = read_module_section_payload(raw, image, section)
+    return data
+
+
+def pe_section_data_at(sections: list[PEImageSection], rva: int, size: int) -> bytes | None:
+    if size < 0:
+        return None
+    for section in sections:
+        span = max(section.virtual_size, len(section.data))
+        if section.rva <= rva and rva + size <= section.rva + span:
+            offset = rva - section.rva
+            if offset + size <= len(section.data):
+                return section.data[offset : offset + size]
+            return None
+    return None
+
+
+def pe_c_string_at(sections: list[PEImageSection], rva: int, max_len: int = 128) -> str | None:
+    for section in sections:
+        span = max(section.virtual_size, len(section.data))
+        if not (section.rva <= rva < section.rva + span):
+            continue
+        offset = rva - section.rva
+        if offset >= len(section.data):
+            return None
+        end_limit = min(len(section.data), offset + max_len)
+        end = section.data.find(b"\x00", offset, end_limit)
+        if end <= offset:
+            return None
+        value = section.data[offset:end]
+        if not all(0x20 <= byte < 0x7F for byte in value):
+            return None
+        return value.decode("ascii", errors="strict")
+    return None
+
+
+def is_valid_import_directory(sections: list[PEImageSection], import_rva: int, import_size: int, virtual_size: int) -> bool:
+    if import_rva <= 0 or import_size < 20 or import_rva >= virtual_size:
+        return False
+
+    descriptor_count = min(import_size // 20, 64)
+    valid_descriptors = 0
+    for index in range(descriptor_count):
+        descriptor = pe_section_data_at(sections, import_rva + index * 20, 20)
+        if descriptor is None:
+            return False
+        original_first_thunk, _timestamp, _forwarder_chain, name_rva, first_thunk = struct.unpack("<IIIII", descriptor)
+        if original_first_thunk == 0 and name_rva == 0 and first_thunk == 0:
+            return valid_descriptors > 0
+
+        name = pe_c_string_at(sections, name_rva)
+        if name is None or not name.lower().endswith(".dll"):
+            return False
+
+        thunk_rva = original_first_thunk or first_thunk
+        if thunk_rva <= 0 or thunk_rva >= virtual_size or first_thunk <= 0 or first_thunk >= virtual_size:
+            return False
+        if pe_section_data_at(sections, thunk_rva, 4) is None:
+            return False
+        if pe_section_data_at(sections, first_thunk, 4) is None:
+            return False
+
+        valid_descriptors += 1
+
+    return False
 
 
 def shift_export_rva(blob: bytearray, offset: int, old_rva: int, new_rva: int, size: int) -> None:
@@ -1289,14 +1373,15 @@ def build_direct_pe_sections(raw: bytes, image: ECECImage, module: ROMModuleEntr
     for index, section in enumerate(e32.sections):
         if not should_emit_pe_section(section, e32.sections):
             continue
-        data = read_module_section_data(raw, image, section)
+        data, decompressed = read_module_section_payload(raw, image, section)
         data = relocate_in_image_pointers(data, e32.image_base, module.load_pointer, e32.virtual_size)
+        characteristics = section.flags & ~CECOMPRESS_FLAG if decompressed else section.flags
         sections.append(
             PEImageSection(
                 name=section_name(index, section),
                 rva=section.rva,
-                virtual_size=max(section.virtual_size, section.physical_size),
-                characteristics=section.flags,
+                virtual_size=max(section.virtual_size, len(data)),
+                characteristics=characteristics,
                 data=data,
             )
         )
@@ -1322,7 +1407,7 @@ def build_direct_pe_sections(raw: bytes, image: ECECImage, module: ROMModuleEntr
             )
 
     import_rva, import_size = e32.units[1]
-    if import_rva >= e32.virtual_size:
+    if not is_valid_import_directory(sections, import_rva, import_size, e32.virtual_size):
         import_rva = 0
         import_size = 0
 
@@ -1443,9 +1528,22 @@ def build_pe_image_from_sections(
     return bytes(pe)
 
 
-def build_direct_pe_image(raw: bytes, image: ECECImage, module: ROMModuleEntry, e32: E32Rom, module_name: str) -> tuple[bytes, ROMExportDirectory | None]:
+def build_direct_pe_image(
+    raw: bytes,
+    image: ECECImage,
+    module: ROMModuleEntry,
+    e32: E32Rom,
+    module_name: str,
+) -> tuple[bytes, ROMExportDirectory | None, int, int, int, int]:
     sections, export, export_rva, export_size, import_rva, import_size = build_direct_pe_sections(raw, image, module, e32, module_name)
-    return build_pe_image_from_sections(e32, module.load_pointer, sections, export_rva, export_size, import_rva, import_size), export
+    return (
+        build_pe_image_from_sections(e32, module.load_pointer, sections, export_rva, export_size, import_rva, import_size),
+        export,
+        export_rva,
+        export_size,
+        import_rva,
+        import_size,
+    )
 
 
 def resolve_direct_modules(raw: bytes, image: ECECImage, romhdr: ROMHDR, modules: list[ROMModuleEntry]) -> list[DirectModuleBuild]:
@@ -1487,7 +1585,7 @@ def write_rebuilt_modules(raw: bytes, image: ECECImage, out_dir: Path, image_pat
         name = direct.name.name
         module_dir.mkdir(parents=True, exist_ok=True)
         path = unique_output_path(module_dir, name, used_names)
-        pe, export = build_direct_pe_image(raw, image, module, e32, name)
+        pe, export, pe_export_rva, pe_export_size, pe_import_rva, pe_import_size = build_direct_pe_image(raw, image, module, e32, name)
         image_raw_base = export.raw_offset - export.rva if export is not None else None
         path.write_bytes(pe)
         rebuilt.append(
@@ -1499,10 +1597,14 @@ def write_rebuilt_modules(raw: bytes, image: ECECImage, out_dir: Path, image_pat
                 "name_gap_bytes": direct.name.delta,
                 "e32_offset": direct.e32_offset,
                 "o32_offset": direct.o32_offset,
-                "export_rva": export.rva if export is not None else e32.export_rva,
-                "export_size": export.size if export is not None else e32.export_size,
-                "import_rva": e32.units[1][0],
-                "import_size": e32.units[1][1],
+                "export_rva": pe_export_rva,
+                "export_size": pe_export_size,
+                "rom_export_rva": export.rva if export is not None else e32.export_rva,
+                "rom_export_size": export.size if export is not None else e32.export_size,
+                "import_rva": pe_import_rva,
+                "import_size": pe_import_size,
+                "rom_import_rva": e32.units[1][0],
+                "rom_import_size": e32.units[1][1],
                 "export_name_count": len(export.export_names) if export is not None else 0,
                 "export_names": list(export.export_names) if export is not None else [],
                 "image_raw_base": image_raw_base,
