@@ -133,7 +133,7 @@ The PTB header's transport field at `+0x28` is copied into BOOTARGS `0xA0020844`
 
 ## NK Image Format
 
-The flash boot path does not treat `NK` as a plain `B000FF` stream. `sub_80065F54` reads the first `68` bytes of the kernel image into RAM, requires `*(base + 0x40) == 'ECEC'`, and then continues loading the rest of the image.
+The flash boot path does not treat `NK` as a plain `B000FF` stream. `sub_80065F54` reads the first `68` bytes of the kernel image into RAM, requires `*(base + 0x40) == 'ECEC'`, and then continues loading the rest of the image. The "kernel image" here is the NK BINFS sub-partition content, not `NK.raw` from byte 0: `NK.raw[0x40]` is the MBR page and contains no ECEC data [unverified - the exact load offset within the NK PTB partition is not yet confirmed from EBOOT disassembly].
 
 `sub_8005B3E8` performs a second check on the same image:
 

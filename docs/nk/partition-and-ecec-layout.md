@@ -6,7 +6,7 @@ The first 2048-byte page of the `NK` partition is an MBR-style sector. The WinCE
 
 | Field          | Offset  | Size | Notes                                     |
 | -------------- | ------- | ---- | ----------------------------------------- |
-| boot indicator | `+0x00` | 1    | `0x00` in observed dumps                  |
+| boot indicator | `+0x00` | 1    | opaque; not a standard MBR boot indicator |
 | partition type | `+0x04` | 1    | `0x21` = BINFS, `0x04` = FAT              |
 | `lba_start`    | `+0x08` | 4    | first sector of sub-partition (LE uint32) |
 | `sector_count` | `+0x0C` | 4    | sector count (LE uint32)                  |
@@ -27,7 +27,7 @@ Observed sub-partitions in both firmware versions:
 
 ## ECEC Images
 
-`NK.binfs.raw` consists of one or more ECEC images placed back-to-back. Each image begins on a page boundary and is identified by the magic `ECEC` at raw offset `+0x40` from the image start. The 64 bytes preceding the magic (`+0x00..+0x3F`) contain 16 little-endian DWORDs of currently uninterpreted data.
+`NK.binfs.raw` begins with one or more ECEC images placed back-to-back. The sub-partition may contain trailing space beyond the last detected ECEC image span. Each image begins on a page boundary and is identified by the magic `ECEC` at raw offset `+0x40` from the image start. The 64 bytes preceding the magic (`+0x00..+0x3F`) contain 16 little-endian DWORDs of currently uninterpreted data.
 
 | Offset | Size | Field | Meaning |
 | --- | --- | --- | --- |
@@ -136,4 +136,4 @@ Observed logical sizes:
 
 - The meaning of the 16 DWORDs at `+0x00..+0x3F` before the `ECEC` magic.
 - The content and purpose of the metadata pages beyond the recognized marker dwords.
-- The first page of the `NK` partition (before the child partition table page used as `NK.binfs.raw` offset 0) — its relationship to the MBR sector is not confirmed.
+- The full structure of the MBR page (`NK.raw[0x000..0x7FF]`): only the partition table at `+0x1BE` and the signature at `+0x1FE` are decoded; the preceding 446 bytes are unexamined.

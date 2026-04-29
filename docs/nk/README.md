@@ -11,7 +11,7 @@ Mask ROM bootrom -> nboot -> EBOOT -> NK (WinCE kernel)
 
 - **bootrom** loads nboot from block 0 into L2 SRAM. See [docs/bootrom/](../bootrom/README.md).
 - **nboot** initializes DDR and loads EBOOT. See [docs/nboot/](../nboot/README.md).
-- **EBOOT** reads the PTB, validates an `ECEC` magic at `NK+0x40`, and hands off to the WinCE kernel. See [docs/eboot/](../eboot/README.md) for the PTB format and EBOOT's ECEC verification.
+- **EBOOT** reads the PTB, validates an `ECEC` magic at the start of the BINFS sub-partition, and hands off to the WinCE kernel. See [docs/eboot/](../eboot/README.md) for the PTB format and EBOOT's ECEC verification.
 - **NK** is the subject of this directory.
 
 ## Document Index

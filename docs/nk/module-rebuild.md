@@ -28,13 +28,15 @@ Sections are not assumed to be contiguous. An `o32_rom.data_pointer` from one se
 
 Section names assigned in the rebuilt PE:
 
-| Condition                          | Name     |
-| ---------------------------------- | -------- |
-| `flags & 0x20`                     | `.text`  |
-| first section with `flags & 0x40`  | `.data`  |
-| second section with `flags & 0x40` | `.rdata` |
-| `flags & 0x80`                     | `.bss`   |
-| otherwise                          | `.secN`  |
+| Condition | Name |
+|---|---|
+| `flags & 0x20` | `.text` |
+| `flags & 0x80` | `.bss` |
+| `flags & 0x40` and `flags & 0x80000000` | `.data` |
+| `flags & 0x40` without `flags & 0x80000000` | `.rdata` |
+| otherwise | `.secN` (N = descriptor index) |
+
+This uses the normal PE read/write characteristic bits. It also covers `nk.exe`, whose `o32_rom` descriptors are not ordered as the usual `.text, .data, .rdata` sequence.
 
 ## In-Image Pointer Relocation
 
@@ -101,14 +103,18 @@ BX  R12
 
 ## Verified Result: SPI.dll (v1.88)
 
-| Item        | Value                                   |
-| ----------- | --------------------------------------- |
-| `ImageBase` | `0x828E1000`                            |
-| `.text`     | `0x828E2000..0x828E4000`                |
-| `.data`     | `0x828E4000..0x828E5000`                |
-| `.rdata`    | `0x828E5000..0x828E6000`                |
-| Exports     | 9                                       |
-| Imports     | 27 (from `COREDLL.dll` and `CEDDK.dll`) |
+| Section | RVA | Virtual size |
+|---|--:|--:|
+| `.text` | `0x1000` | `0x1600` |
+| `.data` | `0x3000` | `0x7C` |
+| `.rdata` | `0x4000` | `0x108` |
+| `.edata` | `0x6000` | `0xE4` |
+
+| Item | Value |
+|---|---|
+| `ImageBase` | `0x828E1000` |
+| Exports | 9 |
+| Imports | 27 (from `COREDLL.dll` and `CEDDK.dll`) |
 
 `SPI_Init` resolves to named WinCE API calls (`CreateFileW`, `DeviceIoControl`, `CloseHandle`, `OpenDeviceKey`, `RegQueryValueExW`, `RegCloseKey`, `MmMapIoSpace`) and maps physical register bases `0x20024000` (SPI0) and `0x20025000` (SPI1).
 

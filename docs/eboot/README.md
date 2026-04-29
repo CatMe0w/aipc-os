@@ -49,7 +49,3 @@ EBOOT is linked for virtual `0x80038000` while executing from physical `0x300380
 - Addresses are **physical** unless explicitly noted as virtual. EBOOT runs with a WinCE OEMAddressTable that maps all peripherals to two virtual regions (`0x8xxx_xxxx` cached, `0xAxxx_xxxx` uncached), but register tables list the physical addresses for cross-referencing with the bootrom docs.
 - Function names used in this documentation (`enc28j60_init`, `ptb_build_default_in_ram`, etc.) are the names applied to the IDA database for `eboot.clean.nb0`; they are not symbols present in the original binary.
 - Items marked `[unverified]`, `[hypothesis]`, or `[partial]` are inline warnings. Each document also has an `Unresolved` section at the end that aggregates all open questions for that topic.
-
-## Verifying the Analyzed EBOOT
-
-The current IDA database is `confidential/gray_extracted/eboot.clean.nb0.i64`, whose module payload is `confidential/gray_extracted/eboot.clean.nb0`. Its size is `0x64000` bytes (400 KB), matching the fixed load size nboot uses. This is the wrapper-stripped EBOOT payload: byte 0 is the first ARM instruction at virtual `0x80038000`, not the preceding `IMG` header that nboot leaves at `0x30037FD4..0x30037FFF`.
