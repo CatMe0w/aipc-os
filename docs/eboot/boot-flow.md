@@ -29,6 +29,8 @@ After the ARM entry prepares BSS, stack, and a preliminary MMU configuration, it
 
 6. **Never returns.** The final handoff to NK is terminal from EBOOT's point of view.
 
+The final helper `eboot_handoff_to_launch_addr_mmu_off` is an image-handoff helper, not a watchdog setup routine. It receives the virtual launch address in `R0`, translates it to the corresponding physical address via the OEM address table, writes CP15 control register value `0x70` to leave the MMU/cache state suitable for the physical jump, invalidates TLBs, and branches to the translated address. Passing `0x80200000` therefore jumps to physical `0x30200000`.
+
 ## `oem_platform_init`
 
 `oem_platform_init` is EBOOT's full platform bring-up function. It runs all hardware drivers' init routines in a fixed order and then enters the interactive menu loop. The top-level structure:
@@ -171,7 +173,7 @@ When `fmd_mount` returns to `eboot_main` in KITL / download mode, `eboot_main` c
 2. Registers the SimpleTFTP server on UDP port `0xD403`.
 3. Runs `EbootSendBootmeAndWaitForTftp`, which sends BOOTME packets and waits for the host to open the TFTP transfer.
 
-Once the host has opened the transfer, `check_update_eboot_request()` returns `0`, and `eboot_main` immediately calls `nk_partition_load`. Despite the historic name, this function is the **download-stream parser**: it reads from `sub_8005A4AC -> sub_8005BFBC` (the already-open SimpleTFTP source), understands `N000FF` / `B000FF` records, and explicitly rejects `X000FF`.
+Once the host has opened the transfer, `check_update_eboot_request()` returns `0`, and `eboot_main` immediately calls `nk_partition_load`. Despite the historic name, this function is the **download-stream parser**: it reads from the already-open SimpleTFTP source through `sub_8005A4AC` and `sub_8005BFBC`, understands `N000FF` / `B000FF` records, and explicitly rejects `X000FF`.
 
 If an `EDBG_CMD_JUMPIMG` command has already populated the launch-state globals, `check_update_eboot_request()` returns `1` instead, and `eboot_main` skips `nk_partition_load` and goes straight to `jump_to_nk_kernel`.
 

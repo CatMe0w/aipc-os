@@ -1,6 +1,6 @@
 # AK7802 Bootrom Overview
 
-The AK7802 bootrom is a mask ROM program (~19 KB, 0x4A60 bytes) embedded in the SoC. After reset, the ARM926EJ-S begins execution at address `0x00000000`; the instruction there is the reset vector, which immediately branches to the main bootrom entry at `0x00000020`. The bootrom then selects a boot source, loads the first-stage payload, and transfers execution to it.
+The AK7802 bootrom is a mask ROM program (~19 KB, 0x4A60 bytes) embedded in the SoC. When the ARM926EJ-S is released to execute from boot ROM, it begins at address `0x00000000`; the instruction there is the reset vector, which immediately branches to the main bootrom entry at `0x00000020`. The bootrom then selects a boot source, loads the first-stage payload, and transfers execution to it.
 
 ## Verifying the Analyzed BootROM
 
@@ -16,7 +16,7 @@ If the hash differs, do not assume the offsets and behavior documented here are 
 
 ## Exception Vector Table
 
-The ROM begins at address `0x00000000` with the standard ARM exception vector table. The CPU's first fetch after reset is the instruction at `0x00000000`, and that reset vector immediately jumps to `bootrom_entry` at `0x00000020`. The bytes between `0x00000000` and `0x00000020` are not dead space; they are the rest of the exception vector table. The other vectors (Undefined Instruction, SVC, Prefetch Abort, Data Abort, IRQ, FIQ) redirect to addresses in DDR at `0x30000004..0x3000001C`, allowing a loaded program to install its own handlers.
+The ROM begins at address `0x00000000` with the standard ARM exception vector table. The first fetch in this ROM entry path is the instruction at `0x00000000`, and that reset vector immediately jumps to `bootrom_entry` at `0x00000020`. The bytes between `0x00000000` and `0x00000020` are not dead space; they are the rest of the exception vector table. The other vectors (Undefined Instruction, SVC, Prefetch Abort, Data Abort, IRQ, FIQ) redirect to addresses in DDR at `0x30000004..0x3000001C`, allowing a loaded program to install its own handlers.
 
 | Vector           | Mechanism     | Target     |
 | ---------------- | ------------- | ---------- |
@@ -28,6 +28,10 @@ The ROM begins at address `0x00000000` with the standard ARM exception vector ta
 | Reserved         | LDR PC, [lit] | 0x30000014 |
 | IRQ              | LDR PC, [lit] | 0x30000018 |
 | FIQ              | LDR PC, [lit] | 0x3000001C |
+
+## External Reset Pin
+
+The AK7802 specification describes `#RST` as an external active-low reset input. When asserted, it resets all internal states except the RTC module. This describes the behavior of the external reset pin only; it is not evidence that normal cold startup necessarily enters bootrom through `#RST`.
 
 ## Boot Paths
 

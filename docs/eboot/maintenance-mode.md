@@ -95,7 +95,7 @@ Note: `NBT` is not rewritten by this handler. Failure after erasing `IPL` and be
 
 ### 6. Reboot
 
-Calls `system_reboot_watchdog`, a `__noreturn` function that triggers a watchdog or software reset. A 500 ms delay precedes the call.
+Prints `"Reboot\r\n"`, waits 500 ms, then calls `eboot_handoff_to_launch_addr_mmu_off` with launch address `0x80200000`. Despite the legacy `system_reboot_watchdog` name seen in older notes, the helper does not program a watchdog. It translates the launch address to a physical address, disables the MMU/cache state needed for handoff, invalidates TLBs, and jumps to the translated address.
 
 ### ESC. Exit
 

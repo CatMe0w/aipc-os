@@ -1,6 +1,12 @@
 # Boot Flow
 
-This document describes the complete decision tree executed by the bootrom entry point after reset.
+This document describes the complete decision tree executed by the bootrom entry point after the CPU begins executing from boot ROM.
+
+## CPU Entry
+
+The flow starts when the ARM926EJ-S fetches from address `0x00000000`. That address is the bootrom reset vector, and it immediately branches to the main bootrom entry at `0x00000020`.
+
+The upstream cause that releases the CPU into this path may be power-on, RTC wake, external `#RST`, or another SoC-specific path. This document only describes the bootrom control flow after execution has reached the ROM vector; it does not assume that normal cold startup necessarily passes through the external `#RST` pin.
 
 ## Initialization
 

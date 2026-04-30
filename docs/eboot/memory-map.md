@@ -25,10 +25,10 @@ EBOOT touches several SYSCTRL offsets beyond the bootrom's set. The new ones are
 | +0x74 | Sharepin mux register 0 (bootrom docs its existence, EBOOT uses new bits) |
 | +0x78 | Sharepin mux register 1 (mixed polarity; see `gpio-driver.md`) |
 | +0x9C | GPIO bank 0 auxiliary config (32-bit, 1 bit per GPIO1 pin) `[partial]` |
-| +0xA0 | GPIO bank 1 auxiliary config (pin - 32 -> bit) `[partial]` |
-| +0xA4 | GPIO bank 2 auxiliary config (pin - 64 -> bit) `[partial]` |
-| +0xA8 | GPIO bank 3 auxiliary config (pin - 96 -> bit) `[partial]` |
-| +0xDC | SYSCTRL soft reset; nboot's DDR init script writes 0 here |
+| +0xA0 | GPIO bank 1 auxiliary config, using `pin - 32` as the bit index `[partial]` |
+| +0xA4 | GPIO bank 2 auxiliary config, using `pin - 64` as the bit index `[partial]` |
+| +0xA8 | GPIO bank 3 auxiliary config, using `pin - 96` as the bit index `[partial]` |
+| +0xDC | Written with `0` by nboot's DDR init script. EBOOT maps this register during clock/reset setup but no confirmed EBOOT path writes it. Older AK88 Linux headers name the analogous offset `N configuration register`, so a whole-chip soft-reset meaning is unconfirmed. |
 | +0xE0 | GPIO1 interrupt status `[hypothesis]` |
 | +0xE4 | GPIO2 interrupt status `[hypothesis]` |
 | +0xE8 | GPIO3 interrupt status `[hypothesis]` |
@@ -128,7 +128,7 @@ EBOOT uses a small set of fixed-address globals in `.data` / `.bss`. The importa
 | 0x80104A5C | ENC28J60 SPI virtual base pointer |
 | 0x80104A60 | Cached ENC28J60 bank-select bits (`0x00`, `0x20`, `0x40`, `0x60`) |
 | 0x80107768 | Generic SPI virtual base pointer used by the CH374 path |
-| 0x80107798 | Selected generic SPI controller index (`0` -> `0x20024000`, `1` -> `0x20025000`) |
+| 0x80107798 | Selected generic SPI controller index (`0` selects `0x20024000`, `1` selects `0x20025000`) |
 | 0x80106E14 | SYSCTRL virtual base pointer (populated by early init) |
 | 0x80106E40 | First slot of the Ethernet HAL dispatch block |
 | 0x80106E44 | Vtable: RX-ready helper |
