@@ -9,6 +9,7 @@ Requires `arm-none-eabi-gcc` with newlib.
 Put the device in USB boot mode (DGPIO[2] high at power-on), then:
 
 ```sh
+git submodule update --init doomgeneric # acquire doomgeneric sources, only needed for the first time
 make
 ./boot.sh
 ```
