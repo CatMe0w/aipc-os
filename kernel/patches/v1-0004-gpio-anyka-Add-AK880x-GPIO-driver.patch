@@ -1,6 +1,6 @@
-From 9a8f431c6b8669991246436bb26c1aadf87bd9fa Mon Sep 17 00:00:00 2001
+From dc40e500450e39c16ce227b67de719988323cedb Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
-Date: Wed, 15 Apr 2026 00:28:25 +0800
+Date: Fri, 1 May 2026 10:42:24 +0800
 Subject: [PATCH v1 4/6] gpio: anyka: Add AK880x GPIO driver
 
 ---
@@ -11,7 +11,7 @@ Subject: [PATCH v1 4/6] gpio: anyka: Add AK880x GPIO driver
  create mode 100644 drivers/gpio/gpio-anyka.c
 
 diff --git a/drivers/gpio/Kconfig b/drivers/gpio/Kconfig
-index b45fb799e36c..1d676d3eb07b 100644
+index b45fb799e..1d676d3eb 100644
 --- a/drivers/gpio/Kconfig
 +++ b/drivers/gpio/Kconfig
 @@ -173,6 +173,14 @@ config GPIO_AMDPT
@@ -30,7 +30,7 @@ index b45fb799e36c..1d676d3eb07b 100644
  	tristate "Aspeed GPIO support"
  	depends on (ARCH_ASPEED || COMPILE_TEST) && OF_GPIO
 diff --git a/drivers/gpio/Makefile b/drivers/gpio/Makefile
-index c05f7d795c43..9b20e6745b58 100644
+index c05f7d795..9b20e6745 100644
 --- a/drivers/gpio/Makefile
 +++ b/drivers/gpio/Makefile
 @@ -38,6 +38,7 @@ obj-$(CONFIG_GPIO_ALTERA)  		+= gpio-altera.o
@@ -43,7 +43,7 @@ index c05f7d795c43..9b20e6745b58 100644
  obj-$(CONFIG_GPIO_ASPEED_SGPIO)		+= gpio-aspeed-sgpio.o
 diff --git a/drivers/gpio/gpio-anyka.c b/drivers/gpio/gpio-anyka.c
 new file mode 100644
-index 000000000000..cb4912150c50
+index 000000000..cb4912150
 --- /dev/null
 +++ b/drivers/gpio/gpio-anyka.c
 @@ -0,0 +1,487 @@
@@ -535,5 +535,5 @@ index 000000000000..cb4912150c50
 +MODULE_DESCRIPTION("Anyka AK78/AK88/AK98 GPIO driver");
 +MODULE_LICENSE("GPL");
 -- 
-2.50.1 (Apple Git-155)
+2.47.3
 

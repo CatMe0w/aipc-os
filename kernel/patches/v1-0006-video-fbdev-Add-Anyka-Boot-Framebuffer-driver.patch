@@ -1,6 +1,6 @@
-From b49b868f2511936c514f635fe00ff5a905302d3f Mon Sep 17 00:00:00 2001
+From b835d7b53abad3a73133b3cec601f7bf7ef8591d Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
-Date: Wed, 15 Apr 2026 00:28:27 +0800
+Date: Fri, 1 May 2026 10:42:24 +0800
 Subject: [PATCH v1 6/6] video: fbdev: Add Anyka Boot Framebuffer driver
 
 ---
@@ -11,7 +11,7 @@ Subject: [PATCH v1 6/6] video: fbdev: Add Anyka Boot Framebuffer driver
  create mode 100644 drivers/video/fbdev/anyka-bootfb.c
 
 diff --git a/drivers/video/fbdev/Kconfig b/drivers/video/fbdev/Kconfig
-index ac9ac4287c6a..dd31552347b1 100644
+index ac9ac4287..dd3155234 100644
 --- a/drivers/video/fbdev/Kconfig
 +++ b/drivers/video/fbdev/Kconfig
 @@ -1787,6 +1787,13 @@ config FB_SIMPLE
@@ -29,7 +29,7 @@ index ac9ac4287c6a..dd31552347b1 100644
  	tristate "Solomon SSD1307 framebuffer support"
  	depends on FB && I2C
 diff --git a/drivers/video/fbdev/Makefile b/drivers/video/fbdev/Makefile
-index 36a18d958ba0..3b4c5e2876f6 100644
+index 36a18d958..3b4c5e287 100644
 --- a/drivers/video/fbdev/Makefile
 +++ b/drivers/video/fbdev/Makefile
 @@ -121,6 +121,7 @@ obj-$(CONFIG_FB_EFI)              += efifb.o
@@ -42,7 +42,7 @@ index 36a18d958ba0..3b4c5e2876f6 100644
  # the test framebuffer is last
 diff --git a/drivers/video/fbdev/anyka-bootfb.c b/drivers/video/fbdev/anyka-bootfb.c
 new file mode 100644
-index 000000000000..320cc845bf7b
+index 000000000..320cc845b
 --- /dev/null
 +++ b/drivers/video/fbdev/anyka-bootfb.c
 @@ -0,0 +1,265 @@
@@ -312,5 +312,5 @@ index 000000000000..320cc845bf7b
 +MODULE_DESCRIPTION("Anyka boot framebuffer handoff driver");
 +MODULE_LICENSE("GPL");
 -- 
-2.50.1 (Apple Git-155)
+2.47.3
 

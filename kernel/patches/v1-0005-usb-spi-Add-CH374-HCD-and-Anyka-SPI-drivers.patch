@@ -1,20 +1,20 @@
-From 1e7e1c1b61b27cba1107eec263cee610d2aaa8da Mon Sep 17 00:00:00 2001
+From 30c787cf37b8b34f2976fdeb5be1c4890a2a69d5 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
-Date: Wed, 15 Apr 2026 00:28:26 +0800
+Date: Fri, 1 May 2026 10:42:24 +0800
 Subject: [PATCH v1 5/6] usb: spi: Add CH374 HCD and Anyka SPI drivers
 
 ---
  drivers/spi/Kconfig            |   14 +
  drivers/spi/Makefile           |    2 +
  drivers/spi/spi-ak88-test.c    |   59 +
- drivers/spi/spi-ak88.c         |  333 ++++
+ drivers/spi/spi-ak88.c         |  477 ++++++
  drivers/usb/host/Kconfig       |   24 +
  drivers/usb/host/Makefile      |    2 +
  drivers/usb/host/ak98-fs-hcd.c | 1881 +++++++++++++++++++++++
  drivers/usb/host/ak98-fs-hcd.h |  768 ++++++++++
- drivers/usb/host/ch37x-hcd.c   | 2601 ++++++++++++++++++++++++++++++++
- drivers/usb/host/ch37x.h       |  168 +++
- 10 files changed, 5852 insertions(+)
+ drivers/usb/host/ch37x-hcd.c   | 2609 ++++++++++++++++++++++++++++++++
+ drivers/usb/host/ch37x.h       |  168 ++
+ 10 files changed, 6004 insertions(+)
  create mode 100644 drivers/spi/spi-ak88-test.c
  create mode 100644 drivers/spi/spi-ak88.c
  create mode 100644 drivers/usb/host/ak98-fs-hcd.c
@@ -23,7 +23,7 @@ Subject: [PATCH v1 5/6] usb: spi: Add CH374 HCD and Anyka SPI drivers
  create mode 100644 drivers/usb/host/ch37x.h
 
 diff --git a/drivers/spi/Kconfig b/drivers/spi/Kconfig
-index c3b2f02f5912..c036b35b927b 100644
+index c3b2f02f5..c036b35b9 100644
 --- a/drivers/spi/Kconfig
 +++ b/drivers/spi/Kconfig
 @@ -60,6 +60,20 @@ config SPI_OFFLOAD
@@ -48,7 +48,7 @@ index c3b2f02f5912..c036b35b927b 100644
  	tristate "Airoha SPI NAND Flash Interface"
  	depends on ARCH_AIROHA || COMPILE_TEST
 diff --git a/drivers/spi/Makefile b/drivers/spi/Makefile
-index 9d36190a9884..cc9acf30a1f0 100644
+index 9d36190a9..cc9acf30a 100644
 --- a/drivers/spi/Makefile
 +++ b/drivers/spi/Makefile
 @@ -15,6 +15,8 @@ obj-$(CONFIG_SPI_SPIDEV)		+= spidev.o
@@ -62,7 +62,7 @@ index 9d36190a9884..cc9acf30a1f0 100644
  obj-$(CONFIG_SPI_ALTERA_CORE)		+= spi-altera-core.o
 diff --git a/drivers/spi/spi-ak88-test.c b/drivers/spi/spi-ak88-test.c
 new file mode 100644
-index 000000000000..d06f179f08ce
+index 000000000..d06f179f0
 --- /dev/null
 +++ b/drivers/spi/spi-ak88-test.c
 @@ -0,0 +1,59 @@
@@ -127,17 +127,17 @@ index 000000000000..d06f179f08ce
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/spi/spi-ak88.c b/drivers/spi/spi-ak88.c
 new file mode 100644
-index 000000000000..f79b1c2a919c
+index 000000000..8dc61e4cc
 --- /dev/null
 +++ b/drivers/spi/spi-ak88.c
-@@ -0,0 +1,333 @@
+@@ -0,0 +1,477 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Minimal SPI master support for Anyka AK78/AK88/AK98 SoCs.
 + *
-+ * This first slice is intentionally small: polling only, 8-bit transfers
-+ * only, and just enough controller support to reach the board's CH374U.
-+ * 
++ * Polling-only for now, but the register sequencing follows the vendor
++ * controller path used by board firmware and the old AK88 Linux driver.
++ *
 + * Copyright (C) 2026 CatMe0w
 + * Based on vendor kernel code provided by:
 + * Copyright (C) 2001-2010 ANYKA LTD.
@@ -167,26 +167,36 @@ index 000000000000..f79b1c2a919c
 +#define AK88_SPISTA			0x04
 +#define AK88_SPISTA_MPROC		BIT(9)
 +#define AK88_SPISTA_TRANSF		BIT(8)
++#define AK88_SPISTA_RXHFULL		BIT(6)
 +#define AK88_SPISTA_TXHEMP		BIT(2)
 +
++#define AK88_SPIINT			0x08
 +#define AK88_SPICNT			0x0c
++#define AK88_SPIEXTX			0x10
++#define AK88_SPIEXRX			0x14
 +#define AK88_SPIOUT			0x18
 +#define AK88_SPIIN			0x1c
++#define AK88_SPITOUT			0x20
 +
 +#define AK88_CLOCK_CTRL_REG		0x0c
 +#define AK88_CLOCK_CTRL_SPI		BIT(2)
 +#define AK88_SHAREPIN_CON1		0x78
-+#define AK88_SHAREPIN_SPI0		BIT(30)
++#define AK88_SHAREPIN_SPI_CLK		BIT(30)
++#define AK88_SHAREPIN_SPI_DATA		GENMASK(2, 1)
++#define AK88_SHAREPIN_WLED_PWM		BIT(4)
 +#define AK88_PPU_PPD3			0xa4
 +#define AK88_SPI0_GPIO_MASK		GENMASK(15, 12)
 +
-+#define AK88_SPI_INPUT_CLOCK_HZ		124000000
-+#define AK88_DEFAULT_DIV		(0x7f << 8)
++#define AK88_DEFAULT_INPUT_CLOCK_HZ	248000000
++#define AK88_SPICON_CLKDIV_MASK		(0x7f << 8)
 +#define AK88_XFER_TIMEOUT_US		10000
++#define AK88_FIFO_WORD_BYTES		4
++#define AK88_SPI_TIMEOUT_VALUE		0x00ffffff
 +
 +struct ak88_spi {
 +	void __iomem *base;
 +	struct regmap *sysctrl;
++	u32 input_clock_hz;
 +};
 +
 +static int ak88_spi_enable_clock(struct ak88_spi *hw)
@@ -201,13 +211,18 @@ index 000000000000..f79b1c2a919c
 +
 +static int ak88_spi_config_pins(struct ak88_spi *hw)
 +{
++	u32 mask = AK88_SHAREPIN_SPI_CLK | AK88_SHAREPIN_SPI_DATA |
++		   AK88_SHAREPIN_WLED_PWM;
 +	int ret;
 +
 +	/*
-+	 * AK7802 SPI pins are shared with GPIO[76:79] and require function mux.
++	 * AK7802 routes this controller with bit30 set, bit4 set, and bits 1:2
++	 * cleared in SHAREPIN_CON1. GPIO chip-select muxing is handled by the
++	 * GPIO driver when the CS descriptor is requested.
 +	 */
 +	ret = regmap_update_bits(hw->sysctrl, AK88_SHAREPIN_CON1,
-+				 AK88_SHAREPIN_SPI0, AK88_SHAREPIN_SPI0);
++				 mask,
++				 AK88_SHAREPIN_SPI_CLK | AK88_SHAREPIN_WLED_PWM);
 +	if (ret)
 +		return ret;
 +
@@ -231,14 +246,14 @@ index 000000000000..f79b1c2a919c
 +	if (!speed_hz)
 +		return;
 +
-+	div = DIV_ROUND_UP(AK88_SPI_INPUT_CLOCK_HZ, speed_hz * 2);
++	div = DIV_ROUND_UP(hw->input_clock_hz, speed_hz * 2);
 +	if (!div)
 +		div = 1;
 +	if (div > 128)
 +		div = 128;
 +
 +	ctrl = readl(hw->base + AK88_SPICON);
-+	ctrl &= ~AK88_DEFAULT_DIV;
++	ctrl &= ~AK88_SPICON_CLKDIV_MASK;
 +	ctrl |= (div - 1) << 8;
 +	writel(ctrl, hw->base + AK88_SPICON);
 +}
@@ -247,7 +262,7 @@ index 000000000000..f79b1c2a919c
 +
 +u32 ak88_spi_build_ctrl(u32 ctrl, u32 mode, bool tx, bool rx)
 +{
-+	ctrl &= AK88_SPICON_CS_FORCE | AK88_DEFAULT_DIV;
++	ctrl &= AK88_SPICON_CS_FORCE | AK88_SPICON_CLKDIV_MASK;
 +
 +	ctrl |= AK88_SPICON_EN | AK88_SPICON_MS;
 +
@@ -283,6 +298,24 @@ index 000000000000..f79b1c2a919c
 +				  AK88_XFER_TIMEOUT_US);
 +}
 +
++static int ak88_spi_wait_rx_ready(struct ak88_spi *hw)
++{
++	u32 val;
++
++	return readl_poll_timeout(hw->base + AK88_SPISTA, val,
++				  val & AK88_SPISTA_RXHFULL, 1,
++				  AK88_XFER_TIMEOUT_US);
++}
++
++static int ak88_spi_wait_count_zero(struct ak88_spi *hw)
++{
++	u32 val;
++
++	return readl_poll_timeout(hw->base + AK88_SPICNT, val,
++				  !(val & 0xffff), 1,
++				  AK88_XFER_TIMEOUT_US);
++}
++
 +static int ak88_spi_wait_done(struct ak88_spi *hw)
 +{
 +	u32 val;
@@ -292,8 +325,92 @@ index 000000000000..f79b1c2a919c
 +				  AK88_XFER_TIMEOUT_US);
 +}
 +
-+static int ak88_spi_xfer_byte(struct ak88_spi *hw, bool tx_en, bool rx_en,
-+			      u8 tx, u8 *rx)
++static int ak88_spi_wait_transfer_complete(struct ak88_spi *hw)
++{
++	u32 val;
++
++	return readl_poll_timeout(hw->base + AK88_SPISTA, val,
++				  val & AK88_SPISTA_TRANSF, 1,
++				  AK88_XFER_TIMEOUT_US);
++}
++
++static u32 ak88_spi_pack_word(const u8 *buf, size_t len)
++{
++	u32 word = 0;
++	size_t i;
++
++	for (i = 0; i < len; i++)
++		word |= (u32)buf[i] << (i * 8);
++
++	return word;
++}
++
++static void ak88_spi_unpack_word(u8 *buf, u32 word, size_t len)
++{
++	size_t i;
++
++	for (i = 0; i < len; i++)
++		buf[i] = word >> (i * 8);
++}
++
++static int ak88_spi_tx(struct ak88_spi *hw, const u8 *tx, size_t len)
++{
++	size_t pos = 0;
++	int ret;
++
++	writel(0, hw->base + AK88_SPIEXTX);
++	writel(len, hw->base + AK88_SPICNT);
++
++	while (pos < len) {
++		size_t chunk = min_t(size_t, AK88_FIFO_WORD_BYTES, len - pos);
++
++		ret = ak88_spi_wait_tx_empty(hw);
++		if (ret)
++			return ret;
++
++		writel(ak88_spi_pack_word(tx + pos, chunk),
++		       hw->base + AK88_SPIOUT);
++		pos += chunk;
++	}
++
++	ret = ak88_spi_wait_count_zero(hw);
++	if (ret)
++		return ret;
++
++	return ak88_spi_wait_transfer_complete(hw);
++}
++
++static int ak88_spi_rx(struct ak88_spi *hw, u8 *rx, size_t len)
++{
++	size_t full_words = len / AK88_FIFO_WORD_BYTES;
++	size_t rem = len % AK88_FIFO_WORD_BYTES;
++	size_t pos = 0;
++	int ret;
++
++	writel(0, hw->base + AK88_SPIEXRX);
++	writel(len, hw->base + AK88_SPICNT);
++
++	while (full_words--) {
++		ret = ak88_spi_wait_rx_ready(hw);
++		if (ret)
++			return ret;
++
++		ak88_spi_unpack_word(rx + pos, readl(hw->base + AK88_SPIIN),
++				     AK88_FIFO_WORD_BYTES);
++		pos += AK88_FIFO_WORD_BYTES;
++	}
++
++	ret = ak88_spi_wait_count_zero(hw);
++	if (ret)
++		return ret;
++
++	if (rem)
++		ak88_spi_unpack_word(rx + pos, readl(hw->base + AK88_SPIIN), rem);
++
++	return 0;
++}
++
++static int ak88_spi_txrx_byte(struct ak88_spi *hw, u8 tx, u8 *rx)
 +{
 +	int ret;
 +
@@ -303,13 +420,13 @@ index 000000000000..f79b1c2a919c
 +	if (ret)
 +		return ret;
 +
-+	writel(tx_en ? tx : 0xff, hw->base + AK88_SPIOUT);
++	writel(tx, hw->base + AK88_SPIOUT);
 +
 +	ret = ak88_spi_wait_done(hw);
 +	if (ret)
 +		return ret;
 +
-+	if (rx_en && rx)
++	if (rx)
 +		*rx = readl(hw->base + AK88_SPIIN);
 +
 +	return 0;
@@ -331,12 +448,28 @@ index 000000000000..f79b1c2a919c
 +
 +	ak88_spi_set_speed(hw, speed_hz);
 +	ak88_spi_program_mode(hw, spi->mode, !!tx, !!rx);
++	if (!xfer->len)
++		return 0;
++
++	if (tx && !rx) {
++		ret = ak88_spi_tx(hw, tx, xfer->len);
++		if (ret)
++			dev_err(&spi->dev, "TX transfer timed out\n");
++		return ret;
++	}
++
++	if (!tx && rx) {
++		ret = ak88_spi_rx(hw, rx, xfer->len);
++		if (ret)
++			dev_err(&spi->dev, "RX transfer timed out\n");
++		return ret;
++	}
 +
 +	for (i = 0; i < xfer->len; i++) {
 +		u8 value = tx ? tx[i] : 0xff;
 +		u8 data;
 +
-+		ret = ak88_spi_xfer_byte(hw, !!tx, !!rx, value, &data);
++		ret = ak88_spi_txrx_byte(hw, value, rx ? &data : NULL);
 +		if (ret) {
 +			dev_err(&spi->dev,
 +				"byte transfer timed out at offset %u\n", i);
@@ -350,17 +483,19 @@ index 000000000000..f79b1c2a919c
 +	return 0;
 +}
 +
-+static void ak88_spi_set_cs(struct spi_device *spi, bool level)
++static void ak88_spi_set_cs(struct spi_device *spi, bool inactive)
 +{
 +	struct ak88_spi *hw = spi_controller_get_devdata(spi->controller);
++	bool asserted = spi->mode & SPI_CS_HIGH ? inactive : !inactive;
 +	u32 ctrl = readl(hw->base + AK88_SPICON);
 +
 +	/*
-+	 * The SPI core passes the physical chip-select line level after
-+	 * applying SPI_CS_HIGH policy. AK88 SPICON bit5 polarity differs across
-+	 * vendor docs/ports; keep this mapping to drive requested line level.
++	 * The SPI core passes the inverse of its logical activate argument here.
++	 * Board firmware asserts the external GPIO low and sets SPICON bit5 for
++	 * the same transaction, then clears bit5 when CS is released. Keep the
++	 * native CS gate in the same asserted state after SPI_CS_HIGH handling.
 +	 */
-+	if (level)
++	if (asserted)
 +		ctrl |= AK88_SPICON_CS_FORCE;
 +	else
 +		ctrl &= ~AK88_SPICON_CS_FORCE;
@@ -405,8 +540,12 @@ index 000000000000..f79b1c2a919c
 +		return dev_err_probe(&pdev->dev, PTR_ERR(hw->sysctrl),
 +				     "failed to map sysctrl\n");
 +
++	hw->input_clock_hz = AK88_DEFAULT_INPUT_CLOCK_HZ;
++	device_property_read_u32(&pdev->dev, "anyka,input-clock-hz",
++				 &hw->input_clock_hz);
++
 +	keep_preinit_state = device_property_read_bool(&pdev->dev,
-+						      "anyka,keep-preinit-state");
++						       "anyka,keep-preinit-state");
 +
 +	ret = ak88_spi_enable_clock(hw);
 +	if (ret)
@@ -426,11 +565,14 @@ index 000000000000..f79b1c2a919c
 +	ret = regmap_read(hw->sysctrl, AK88_SHAREPIN_CON1, &sharepin);
 +	if (!ret)
 +		dev_info(&pdev->dev,
-+			 "sharepin_con1=0x%08x spi_mux_bit30=%u\n",
-+			 sharepin, !!(sharepin & AK88_SHAREPIN_SPI0));
++			 "sharepin_con1=0x%08x spi_clk=%u spi_data_gpio=%u\n",
++			 sharepin, !!(sharepin & AK88_SHAREPIN_SPI_CLK),
++			 !!(sharepin & AK88_SHAREPIN_SPI_DATA));
 +
 +	ctlr->mode_bits = SPI_CPOL | SPI_CPHA | SPI_CS_HIGH;
 +	ctlr->bits_per_word_mask = SPI_BPW_MASK(8);
++	ctlr->flags = SPI_CONTROLLER_GPIO_SS;
++	ctlr->use_gpio_descriptors = true;
 +	ctlr->num_chipselect = 1;
 +	ctlr->setup = ak88_spi_setup;
 +	ctlr->set_cs = ak88_spi_set_cs;
@@ -439,8 +581,10 @@ index 000000000000..f79b1c2a919c
 +
 +	platform_set_drvdata(pdev, ctlr);
 +
++	writel(0, hw->base + AK88_SPIINT);
++	writel(AK88_SPI_TIMEOUT_VALUE, hw->base + AK88_SPITOUT);
 +	ak88_spi_set_speed(hw, 1000000);
-+	ak88_spi_program_mode(hw, 0, true, true);
++	ak88_spi_program_mode(hw, 0, true, false);
 +
 +	dev_info(&pdev->dev, "Anyka SPI controller ready\n");
 +
@@ -465,7 +609,7 @@ index 000000000000..f79b1c2a919c
 +MODULE_DESCRIPTION("Anyka AK88/98 minimal SPI master");
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/usb/host/Kconfig b/drivers/usb/host/Kconfig
-index 0a277a07cf70..41354c9aba9b 100644
+index 0a277a07c..41354c9ab 100644
 --- a/drivers/usb/host/Kconfig
 +++ b/drivers/usb/host/Kconfig
 @@ -4,6 +4,16 @@
@@ -507,7 +651,7 @@ index 0a277a07cf70..41354c9aba9b 100644
  	bool "partial ISO support"
  	depends on USB_SL811_HCD
 diff --git a/drivers/usb/host/Makefile b/drivers/usb/host/Makefile
-index a07e7ba9cd53..4343001f83dc 100644
+index a07e7ba9c..4343001f8 100644
 --- a/drivers/usb/host/Makefile
 +++ b/drivers/usb/host/Makefile
 @@ -37,6 +37,7 @@ ifneq ($(CONFIG_USB_XHCI_SIDEBAND),)
@@ -525,7 +669,7 @@ index a07e7ba9cd53..4343001f83dc 100644
 +obj-$(CONFIG_USB_AK98_FS_HCD)	+= ak98-fs-hcd.o
 diff --git a/drivers/usb/host/ak98-fs-hcd.c b/drivers/usb/host/ak98-fs-hcd.c
 new file mode 100644
-index 000000000000..4c5160c74cfb
+index 000000000..4c5160c74
 --- /dev/null
 +++ b/drivers/usb/host/ak98-fs-hcd.c
 @@ -0,0 +1,1881 @@
@@ -2412,7 +2556,7 @@ index 000000000000..4c5160c74cfb
 +module_platform_driver(ak98fsh_driver);
 diff --git a/drivers/usb/host/ak98-fs-hcd.h b/drivers/usb/host/ak98-fs-hcd.h
 new file mode 100644
-index 000000000000..5df4f647288f
+index 000000000..5df4f6472
 --- /dev/null
 +++ b/drivers/usb/host/ak98-fs-hcd.h
 @@ -0,0 +1,768 @@
@@ -3186,10 +3330,10 @@ index 000000000000..5df4f647288f
 +#endif /* __AK98_FS_HCD_H */
 diff --git a/drivers/usb/host/ch37x-hcd.c b/drivers/usb/host/ch37x-hcd.c
 new file mode 100644
-index 000000000000..86f5fa91e00e
+index 000000000..5c95b0ac9
 --- /dev/null
 +++ b/drivers/usb/host/ch37x-hcd.c
-@@ -0,0 +1,2601 @@
+@@ -0,0 +1,2609 @@
 +/*
 + * USB host controller driver for SPI to USB chip ch370/ch374.
 + *
@@ -5475,26 +5619,14 @@ index 000000000000..86f5fa91e00e
 +		return ERR_PTR(-ENOMEM);
 +	}
 +
-+	if (of_property_read_u32(dev->of_node, "poll_mode", &temp)) {
-+		dev_warn(dev, "fail to get poll_mode, default set 0\n");
-+		spi_chip_data->poll_mode = 0;
-+	} else {
++	if (!of_property_read_u32(dev->of_node, "poll_mode", &temp))
 +		spi_chip_data->poll_mode = temp;
-+	}
 +
-+	if (of_property_read_u32(dev->of_node, "type", &temp)) {
-+		dev_warn(dev, "fail to get type, default set 0\n");
-+		spi_chip_data->type = 0;
-+	} else {
++	if (!of_property_read_u32(dev->of_node, "type", &temp))
 +		spi_chip_data->type = temp;
-+	}
 +
-+	if (of_property_read_u32(dev->of_node, "enable_dma", &temp)) {
-+		dev_warn(dev, "fail to get enable_dma, default set 0\n");
-+		spi_chip_data->enable_dma = 0;
-+	} else {
++	if (!of_property_read_u32(dev->of_node, "enable_dma", &temp))
 +		spi_chip_data->enable_dma = temp;
-+	}
 +
 +	ch37x_hcd_dbg(ch37x_hcd, "%s: poll_mode=%d, type=%d, enable_dma=%d\n", __func__, spi_chip_data->poll_mode,
 +		      spi_chip_data->type, spi_chip_data->enable_dma);
@@ -5558,18 +5690,19 @@ index 000000000000..86f5fa91e00e
 +{
 +	struct ch37x_hcd_data *ch37x_hcd;
 +	struct usb_hcd *hcd = NULL;
-+	int irq;
-+	int gpio_num = GPIO_NUMBER;
++	struct gpio_desc *irq_gpiod = NULL;
++	bool hcd_added = false;
++	int irq = -EINVAL;
++	int gpio_num = -1;
 +	int irq_gpio_value = -1;
 +	int cs_gpio_num = -1;
 +	int cs_gpio_raw = -1;
 +	unsigned long flags = IRQF_TRIGGER_LOW;
 +#ifdef CONFIG_OF
-+	static struct xgold_spi_chip *spi_chip_data;
++	struct xgold_spi_chip *spi_chip_data = NULL;
 +#else
-+	struct spi_board_info *spi_chip_data;
++	struct spi_board_info *spi_chip_data = NULL;
 +#endif
-+	struct device_node *np = of_node_get(spi->dev.of_node);
 +	int retval = -ENOMEM;
 +
 +	if (!spi)
@@ -5591,10 +5724,12 @@ index 000000000000..86f5fa91e00e
 +	init_waitqueue_head(&ch37x_hcd->wthread);
 +	spin_lock_init(&spilock);
 +
-+	if (!spi_chip_data && np) {
++	if (spi->dev.of_node) {
 +		spi_chip_data = spi_ch37x_hcd_parse_dt(hcd, &spi->dev);
-+		if (IS_ERR(spi_chip_data))
-+			return -ENOMEM;
++		if (IS_ERR(spi_chip_data)) {
++			retval = PTR_ERR(spi_chip_data);
++			goto error;
++		}
 +	}
 +
 +	spi->bits_per_word = 8;
@@ -5610,29 +5745,43 @@ index 000000000000..86f5fa91e00e
 +#ifdef USE_IRQ_FROM_DTS
 +	irq = spi->irq;
 +#else
-+	if (np)
-+		gpio_num = of_get_named_gpio(np, "int-gpios", 0);
-+	if (gpio_num < 0)
-+		gpio_num = GPIO_NUMBER;
++	irq_gpiod = devm_gpiod_get_optional(&spi->dev, "int", GPIOD_IN);
++	if (IS_ERR(irq_gpiod)) {
++		retval = PTR_ERR(irq_gpiod);
++		dev_err_probe(&spi->dev, retval, "failed to get INT GPIO\n");
++		goto error;
++	}
 +
-+	retval = devm_gpio_request_one(&spi->dev, gpio_num, GPIOF_IN, "gpioint");
-+	if (retval) {
-+		dev_err(&spi->dev, "gpio_request\n");
++	if (irq_gpiod) {
++		gpio_num = desc_to_gpio(irq_gpiod);
++		irq_gpio_value = gpiod_get_raw_value_cansleep(irq_gpiod);
++		irq = gpiod_to_irq(irq_gpiod);
++	} else if (spi->dev.of_node) {
++		dev_err(&spi->dev, "missing int-gpios property\n");
++		retval = -EINVAL;
 +		goto error;
++	} else {
++		gpio_num = GPIO_NUMBER;
++		retval = devm_gpio_request_one(&spi->dev, gpio_num,
++						GPIOF_IN, "gpioint");
++		if (retval) {
++			dev_err(&spi->dev, "gpio_request\n");
++			goto error;
++		}
++		retval = gpio_direction_input(gpio_num);
++		if (retval) {
++			dev_err(&spi->dev, "gpio_direction_input\n");
++			goto error;
++		}
++		irq_gpio_value = gpio_get_value(gpio_num);
++		irq = gpio_to_irq(gpio_num);
 +	}
-+	retval = gpio_direction_input(gpio_num);
-+	if (retval) {
-+		dev_err(&spi->dev, "gpio_direction_input\n");
-+		goto error;
-+	}
-+	irq = gpio_to_irq(gpio_num);
 +	if (irq < 0) {
 +		dev_err(&spi->dev, "gpio_to_irq(%d) failed: %d\n", gpio_num, irq);
 +		retval = irq;
 +		goto error;
 +	}
 +	irq_set_irq_type(irq, flags);
-+	irq_gpio_value = gpio_get_value(gpio_num);
 +#endif
 +
 +	ch37x_hcd->spi = spi;
@@ -5682,6 +5831,7 @@ index 000000000000..86f5fa91e00e
 +		dev_err(&spi->dev, "failed to add HCD\n");
 +		goto error;
 +	}
++	hcd_added = true;
 +
 +	spi_set_drvdata(spi, ch37x_hcd);
 +	atomic_set(&ch37x_hcd->suspend_flag, 0);
@@ -5704,6 +5854,8 @@ index 000000000000..86f5fa91e00e
 +
 +error:
 +	if (hcd) {
++		if (hcd_added)
++			usb_remove_hcd(hcd);
 +		if (ch37x_hcd->spi_thread)
 +			kthread_stop(ch37x_hcd->spi_thread);
 +		usb_put_hcd(hcd);
@@ -5793,7 +5945,7 @@ index 000000000000..86f5fa91e00e
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/usb/host/ch37x.h b/drivers/usb/host/ch37x.h
 new file mode 100644
-index 000000000000..314ec751cd83
+index 000000000..314ec751c
 --- /dev/null
 +++ b/drivers/usb/host/ch37x.h
 @@ -0,0 +1,168 @@
@@ -5966,5 +6118,5 @@ index 000000000000..314ec751cd83
 +#define	BIT_HOST_RECV_TOG	0x80		/* 仅USB主机方式: 主机接收同步标志: 0-DATA0, 1-DATA1 */
 +
 -- 
-2.50.1 (Apple Git-155)
+2.47.3
 

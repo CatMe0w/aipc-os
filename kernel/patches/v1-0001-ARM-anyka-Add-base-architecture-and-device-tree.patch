@@ -1,18 +1,19 @@
-From 65a693b6118e6c02f3f5e92794692d5b4b9e5884 Mon Sep 17 00:00:00 2001
+From fb4702dbb61fe0158cf1991da2a8c45166fa1428 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
-Date: Wed, 15 Apr 2026 00:28:23 +0800
+Date: Fri, 1 May 2026 10:42:24 +0800
 Subject: [PATCH v1 1/6] ARM: anyka: Add base architecture and device tree
 
 ---
  arch/arm/Kconfig                           |  2 +
  arch/arm/Makefile                          |  1 +
+ arch/arm/boot/dts/Makefile                 |  1 +
  arch/arm/boot/dts/anyka/Makefile           |  3 +
- arch/arm/boot/dts/anyka/ak7802-netbook.dts | 81 ++++++++++++++++++++++
- arch/arm/boot/dts/anyka/ak7802.dtsi        | 75 ++++++++++++++++++++
+ arch/arm/boot/dts/anyka/ak7802-netbook.dts | 72 ++++++++++++++++++++
+ arch/arm/boot/dts/anyka/ak7802.dtsi        | 76 ++++++++++++++++++++++
  arch/arm/mach-anyka/Kconfig                | 20 ++++++
  arch/arm/mach-anyka/Makefile               |  2 +
  arch/arm/mach-anyka/anyka.c                | 17 +++++
- 8 files changed, 201 insertions(+)
+ 9 files changed, 194 insertions(+)
  create mode 100644 arch/arm/boot/dts/anyka/Makefile
  create mode 100644 arch/arm/boot/dts/anyka/ak7802-netbook.dts
  create mode 100644 arch/arm/boot/dts/anyka/ak7802.dtsi
@@ -21,7 +22,7 @@ Subject: [PATCH v1 1/6] ARM: anyka: Add base architecture and device tree
  create mode 100644 arch/arm/mach-anyka/anyka.c
 
 diff --git a/arch/arm/Kconfig b/arch/arm/Kconfig
-index ec33376f8e2b..d5ca6c5afbeb 100644
+index ec33376f8..d5ca6c5af 100644
 --- a/arch/arm/Kconfig
 +++ b/arch/arm/Kconfig
 @@ -360,6 +360,8 @@ source "arch/arm/Kconfig.platforms"
@@ -34,7 +35,7 @@ index ec33376f8e2b..d5ca6c5afbeb 100644
  
  source "arch/arm/mach-artpec/Kconfig"
 diff --git a/arch/arm/Makefile b/arch/arm/Makefile
-index b7de4b6b284c..8f81b7956be8 100644
+index b7de4b6b2..8f81b7956 100644
 --- a/arch/arm/Makefile
 +++ b/arch/arm/Makefile
 @@ -173,6 +173,7 @@ textofs-$(CONFIG_ARCH_AXXIA) := 0x00308000
@@ -45,9 +46,21 @@ index b7de4b6b284c..8f81b7956be8 100644
  machine-$(CONFIG_ARCH_ALPINE)		+= alpine
  machine-$(CONFIG_ARCH_ARTPEC)		+= artpec
  machine-$(CONFIG_ARCH_ASPEED)           += aspeed
+diff --git a/arch/arm/boot/dts/Makefile b/arch/arm/boot/dts/Makefile
+index efe38eb25..6a1f71dae 100644
+--- a/arch/arm/boot/dts/Makefile
++++ b/arch/arm/boot/dts/Makefile
+@@ -5,6 +5,7 @@ subdir-y += allwinner
+ subdir-y += alphascale
+ subdir-y += amazon
+ subdir-y += amlogic
++subdir-y += anyka
+ subdir-y += arm
+ subdir-y += aspeed
+ subdir-y += axis
 diff --git a/arch/arm/boot/dts/anyka/Makefile b/arch/arm/boot/dts/anyka/Makefile
 new file mode 100644
-index 000000000000..f13fe76accc7
+index 000000000..f13fe76ac
 --- /dev/null
 +++ b/arch/arm/boot/dts/anyka/Makefile
 @@ -0,0 +1,3 @@
@@ -56,10 +69,10 @@ index 000000000000..f13fe76accc7
 +	ak7802-netbook.dtb
 diff --git a/arch/arm/boot/dts/anyka/ak7802-netbook.dts b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
 new file mode 100644
-index 000000000000..cd0f1d659bd6
+index 000000000..e99ecf96f
 --- /dev/null
 +++ b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
-@@ -0,0 +1,81 @@
+@@ -0,0 +1,72 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/dts-v1/;
 +
@@ -106,32 +119,6 @@ index 000000000000..cd0f1d659bd6
 +			reg = <0x33ed3c00 0x000bb800>;
 +		};
 +	};
-+
-+	spi_gpio: spi-gpio {
-+		compatible = "spi-gpio";
-+		#address-cells = <1>;
-+		#size-cells = <0>;
-+		num-chipselects = <1>;
-+		sck-gpios = <&gpio 77 GPIO_ACTIVE_HIGH>;
-+		mosi-gpios = <&gpio 78 GPIO_ACTIVE_HIGH>;
-+		miso-gpios = <&gpio 79 GPIO_ACTIVE_HIGH>;
-+		cs-gpios = <&gpio 84 GPIO_ACTIVE_LOW>;
-+
-+		ch374: ch374@0 {
-+			compatible = "wch,ch37x_hcd";
-+			reg = <0>;
-+			spi-max-frequency = <10000000>;
-+			spi-cpol;
-+			spi-cpha;
-+			poll-interval-ms = <250>;
-+			int-gpios = <&gpio 71 GPIO_ACTIVE_LOW>;
-+			/*
-+			 * reset-gpios = <&gpio N GPIO_ACTIVE_LOW>;
-+			 * reset-pulse-ms = <5>;
-+			 * reset-settle-ms = <20>;
-+			 */
-+		};
-+	};
 +};
 +
 +&usb0 {
@@ -139,14 +126,31 @@ index 000000000000..cd0f1d659bd6
 +};
 +
 +&spi0 {
-+	status = "disabled";
++	cs-gpios = <&gpio 84 GPIO_ACTIVE_LOW>;
++	anyka,input-clock-hz = <248000000>;
++	status = "okay";
++
++	ch374: ch374@0 {
++		compatible = "wch,ch37x_hcd";
++		reg = <0>;
++		spi-max-frequency = <18000000>;
++		poll_mode = <0>;
++		type = <0>;
++		enable_dma = <0>;
++		int-gpios = <&gpio 71 GPIO_ACTIVE_LOW>;
++		/*
++		 * reset-gpios = <&gpio N GPIO_ACTIVE_LOW>;
++		 * reset-pulse-ms = <5>;
++		 * reset-settle-ms = <20>;
++		 */
++	};
 +};
 diff --git a/arch/arm/boot/dts/anyka/ak7802.dtsi b/arch/arm/boot/dts/anyka/ak7802.dtsi
 new file mode 100644
-index 000000000000..0d3023dd9545
+index 000000000..54edca299
 --- /dev/null
 +++ b/arch/arm/boot/dts/anyka/ak7802.dtsi
-@@ -0,0 +1,75 @@
+@@ -0,0 +1,76 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +#include <dt-bindings/interrupt-controller/irq.h>
 +
@@ -198,7 +202,8 @@ index 000000000000..0d3023dd9545
 +
 +	timer@80000018 {
 +		compatible = "anyka,ak880x-timer";
-+		reg = <0x8000018 0x08>;
++		reg = <0x8000018 0x08>, <0x8000100 0x08>;
++		reg-names = "ctrl", "readback";
 +		interrupt-parent = <&sysctrl_intc>;
 +		interrupts = <5>, <4>;
 +		clocks = <&xin12m>;
@@ -224,7 +229,7 @@ index 000000000000..0d3023dd9545
 +};
 diff --git a/arch/arm/mach-anyka/Kconfig b/arch/arm/mach-anyka/Kconfig
 new file mode 100644
-index 000000000000..428c6e21b974
+index 000000000..428c6e21b
 --- /dev/null
 +++ b/arch/arm/mach-anyka/Kconfig
 @@ -0,0 +1,20 @@
@@ -250,7 +255,7 @@ index 000000000000..428c6e21b974
 +	  interrupt controller and timer drivers.
 diff --git a/arch/arm/mach-anyka/Makefile b/arch/arm/mach-anyka/Makefile
 new file mode 100644
-index 000000000000..4c1f0d88e5d7
+index 000000000..4c1f0d88e
 --- /dev/null
 +++ b/arch/arm/mach-anyka/Makefile
 @@ -0,0 +1,2 @@
@@ -258,7 +263,7 @@ index 000000000000..4c1f0d88e5d7
 +obj-$(CONFIG_ARCH_ANYKA) += anyka.o
 diff --git a/arch/arm/mach-anyka/anyka.c b/arch/arm/mach-anyka/anyka.c
 new file mode 100644
-index 000000000000..b569d8dcea18
+index 000000000..b569d8dce
 --- /dev/null
 +++ b/arch/arm/mach-anyka/anyka.c
 @@ -0,0 +1,17 @@
@@ -280,5 +285,5 @@ index 000000000000..b569d8dcea18
 +	.dt_compat = anyka_dt_compat,
 +MACHINE_END
 -- 
-2.50.1 (Apple Git-155)
+2.47.3
 

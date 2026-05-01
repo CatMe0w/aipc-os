@@ -1,6 +1,6 @@
-From 2aa209e69dc80d8815d6da83e81b5e7de96ae38c Mon Sep 17 00:00:00 2001
+From a88dae23b873843092be5902ae574c57ba5a830d Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
-Date: Wed, 15 Apr 2026 00:28:24 +0800
+Date: Fri, 1 May 2026 10:42:24 +0800
 Subject: [PATCH v1 2/6] irqchip: anyka: Add AK880x/AK7802 interrupt controller
  driver
 
@@ -11,7 +11,7 @@ Subject: [PATCH v1 2/6] irqchip: anyka: Add AK880x/AK7802 interrupt controller
  create mode 100644 drivers/irqchip/irq-anyka.c
 
 diff --git a/drivers/irqchip/Makefile b/drivers/irqchip/Makefile
-index 26aa3b6ec99f..a58afaf1ded2 100644
+index 26aa3b6ec..a58afaf1d 100644
 --- a/drivers/irqchip/Makefile
 +++ b/drivers/irqchip/Makefile
 @@ -8,6 +8,7 @@ obj-$(CONFIG_ATH79)			+= irq-ath79-misc.o
@@ -24,7 +24,7 @@ index 26aa3b6ec99f..a58afaf1ded2 100644
  obj-$(CONFIG_ECONET_EN751221_INTC)	+= irq-econet-en751221.o
 diff --git a/drivers/irqchip/irq-anyka.c b/drivers/irqchip/irq-anyka.c
 new file mode 100644
-index 000000000000..eddcb9b97dda
+index 000000000..eddcb9b97
 --- /dev/null
 +++ b/drivers/irqchip/irq-anyka.c
 @@ -0,0 +1,249 @@
@@ -278,5 +278,5 @@ index 000000000000..eddcb9b97dda
 +IRQCHIP_DECLARE(anyka_sysctrl_intc, "anyka,ak880x-sysctrl-intc",
 +		anyka_sysctrl_of_init);
 -- 
-2.50.1 (Apple Git-155)
+2.47.3
 
