@@ -1,4 +1,4 @@
-From dc40e500450e39c16ce227b67de719988323cedb Mon Sep 17 00:00:00 2001
+From 0268836be10e3cd66e5e50bc4bf90060bd964d57 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Fri, 1 May 2026 10:42:24 +0800
 Subject: [PATCH v1 4/6] gpio: anyka: Add AK880x GPIO driver

@@ -1,4 +1,4 @@
-From fb4702dbb61fe0158cf1991da2a8c45166fa1428 Mon Sep 17 00:00:00 2001
+From 624569f354bc5fe9d7c396349583d9364bf2065c Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Fri, 1 May 2026 10:42:24 +0800
 Subject: [PATCH v1 1/6] ARM: anyka: Add base architecture and device tree
@@ -8,12 +8,12 @@ Subject: [PATCH v1 1/6] ARM: anyka: Add base architecture and device tree
  arch/arm/Makefile                          |  1 +
  arch/arm/boot/dts/Makefile                 |  1 +
  arch/arm/boot/dts/anyka/Makefile           |  3 +
- arch/arm/boot/dts/anyka/ak7802-netbook.dts | 72 ++++++++++++++++++++
- arch/arm/boot/dts/anyka/ak7802.dtsi        | 76 ++++++++++++++++++++++
- arch/arm/mach-anyka/Kconfig                | 20 ++++++
+ arch/arm/boot/dts/anyka/ak7802-netbook.dts | 72 ++++++++++++++++++
+ arch/arm/boot/dts/anyka/ak7802.dtsi        | 86 ++++++++++++++++++++++
+ arch/arm/mach-anyka/Kconfig                | 20 +++++
  arch/arm/mach-anyka/Makefile               |  2 +
  arch/arm/mach-anyka/anyka.c                | 17 +++++
- 9 files changed, 194 insertions(+)
+ 9 files changed, 204 insertions(+)
  create mode 100644 arch/arm/boot/dts/anyka/Makefile
  create mode 100644 arch/arm/boot/dts/anyka/ak7802-netbook.dts
  create mode 100644 arch/arm/boot/dts/anyka/ak7802.dtsi
@@ -69,7 +69,7 @@ index 000000000..f13fe76ac
 +	ak7802-netbook.dtb
 diff --git a/arch/arm/boot/dts/anyka/ak7802-netbook.dts b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
 new file mode 100644
-index 000000000..e99ecf96f
+index 000000000..0dea79362
 --- /dev/null
 +++ b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
 @@ -0,0 +1,72 @@
@@ -84,7 +84,7 @@ index 000000000..e99ecf96f
 +	compatible = "anyka,ak7802-netbook", "anyka,ak7802";
 +
 +	aliases {
-+		display0 = &framebuffer0;
++		display0 = &lcd0;
 +	};
 +
 +	chosen {
@@ -93,16 +93,6 @@ index 000000000..e99ecf96f
 +		ranges;
 +
 +		stdout-path = "display0";
-+	};
-+
-+	framebuffer0: framebuffer@33ed3c00 {
-+		compatible = "anyka,ak7802-bootfb";
-+		reg = <0x33ed3c00 0x000bb800>;
-+		memory-region = <&display_reserved>;
-+		width = <800>;
-+		height = <480>;
-+		stride = <1600>;
-+		format = "r5g6b5";
 +	};
 +
 +	memory@30000000 {
@@ -115,10 +105,20 @@ index 000000000..e99ecf96f
 +		#size-cells = <1>;
 +		ranges;
 +
-+		display_reserved: framebuffer@33ed3c00 {
-+			reg = <0x33ed3c00 0x000bb800>;
++		display_reserved: framebuffer@33b00000 {
++			reg = <0x33b00000 0x00100000>;
++			no-map;
 +		};
 +	};
++};
++
++&lcd0 {
++	status = "okay";
++	memory-region = <&display_reserved>;
++	width = <800>;
++	height = <480>;
++	stride = <1600>;
++	format = "r5g6b5";
 +};
 +
 +&usb0 {
@@ -147,10 +147,10 @@ index 000000000..e99ecf96f
 +};
 diff --git a/arch/arm/boot/dts/anyka/ak7802.dtsi b/arch/arm/boot/dts/anyka/ak7802.dtsi
 new file mode 100644
-index 000000000..54edca299
+index 000000000..dbdf85842
 --- /dev/null
 +++ b/arch/arm/boot/dts/anyka/ak7802.dtsi
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,86 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +#include <dt-bindings/interrupt-controller/irq.h>
 +
@@ -207,6 +207,16 @@ index 000000000..54edca299
 +		interrupt-parent = <&sysctrl_intc>;
 +		interrupts = <5>, <4>;
 +		clocks = <&xin12m>;
++	};
++
++	lcd0: lcd-controller@20010000 {
++		compatible = "anyka,ak7802-lcd";
++		reg = <0x20010000 0x1000>, <0x2002d014 0x4>;
++		reg-names = "lcd", "ahb-priority";
++		syscon = <&sysctrl>;
++		#address-cells = <1>;
++		#size-cells = <0>;
++		status = "disabled";
 +	};
 +
 +	spi0: spi@20024000 {

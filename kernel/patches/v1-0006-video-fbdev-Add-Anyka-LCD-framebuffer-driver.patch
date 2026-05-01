@@ -1,0 +1,521 @@
+From e3796e0b6b9763bbc037ebbbfca61fc73f7adaf1 Mon Sep 17 00:00:00 2001
+From: CatMe0w <CatMe0w@live.cn>
+Date: Fri, 1 May 2026 10:42:24 +0800
+Subject: [PATCH v1 6/6] video: fbdev: Add Anyka LCD framebuffer driver
+
+---
+ drivers/video/fbdev/Kconfig       |  11 +
+ drivers/video/fbdev/Makefile      |   1 +
+ drivers/video/fbdev/anyka-lcdfb.c | 466 ++++++++++++++++++++++++++++++
+ 3 files changed, 478 insertions(+)
+ create mode 100644 drivers/video/fbdev/anyka-lcdfb.c
+
+diff --git a/drivers/video/fbdev/Kconfig b/drivers/video/fbdev/Kconfig
+index ac9ac4287..fdde3536d 100644
+--- a/drivers/video/fbdev/Kconfig
++++ b/drivers/video/fbdev/Kconfig
+@@ -1787,6 +1787,17 @@ config FB_SIMPLE
+ 	  Configuration re: surface address, size, and format must be provided
+ 	  through device tree, or plain old platform data.
+ 
++config FB_ANYKA_LCD
++	bool
++	depends on FB && OF && ARM && ARCH_ANYKA
++	default y
++	select APERTURE_HELPERS
++	select FB_IOMEM_HELPERS
++	select MFD_SYSCON
++	help
++	  Say Y here to enable the native AK7802 LCD controller framebuffer
++	  driver used by the AIPC netbook.
++
+ config FB_SSD1307
+ 	tristate "Solomon SSD1307 framebuffer support"
+ 	depends on FB && I2C
+diff --git a/drivers/video/fbdev/Makefile b/drivers/video/fbdev/Makefile
+index 36a18d958..ea091a1fc 100644
+--- a/drivers/video/fbdev/Makefile
++++ b/drivers/video/fbdev/Makefile
+@@ -121,6 +121,7 @@ obj-$(CONFIG_FB_EFI)              += efifb.o
+ obj-$(CONFIG_FB_VGA16)            += vga16fb.o
+ obj-$(CONFIG_FB_OF)               += offb.o
+ obj-$(CONFIG_FB_SSD1307)	  += ssd1307fb.o
++obj-$(CONFIG_FB_ANYKA_LCD)        += anyka-lcdfb.o
+ obj-$(CONFIG_FB_SIMPLE)           += simplefb.o
+ 
+ # the test framebuffer is last
+diff --git a/drivers/video/fbdev/anyka-lcdfb.c b/drivers/video/fbdev/anyka-lcdfb.c
+new file mode 100644
+index 000000000..6585ad75d
+--- /dev/null
++++ b/drivers/video/fbdev/anyka-lcdfb.c
+@@ -0,0 +1,466 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Anyka AK7802 LCD controller framebuffer driver
++ *
++ * Copyright (C) 2026 CatMe0w
++ */
++
++#include <linux/aperture.h>
++#include <linux/delay.h>
++#include <linux/errno.h>
++#include <linux/fb.h>
++#include <linux/io.h>
++#include <linux/ioport.h>
++#include <linux/mfd/syscon.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/of_reserved_mem.h>
++#include <linux/platform_data/simplefb.h>
++#include <linux/platform_device.h>
++#include <linux/regmap.h>
++
++#define ANYKA_LCD_WIDTH			800
++#define ANYKA_LCD_HEIGHT		480
++#define ANYKA_LCD_STRIDE		1600
++#define ANYKA_LCD_ACTIVE_SIZE		(ANYKA_LCD_STRIDE * ANYKA_LCD_HEIGHT)
++#define ANYKA_LCD_DMA_MASK		0x0fffffff
++#define ANYKA_LCD_PSEUDOCMAP_SIZE	16
++
++#define LCD_CTRL			0x000
++#define LCD_RGB_CTRL1		0x010
++#define LCD_RGB_BASE		0x014
++#define LCD_RGB_PAGE_SIZE	0x018
++#define LCD_RGB_PAGE_OFFSET	0x01c
++#define LCD_OSD_BASE		0x020
++#define LCD_BACKGROUND		0x03c
++#define LCD_RGB_CTRL3		0x040
++#define LCD_RGB_CTRL4		0x044
++#define LCD_RGB_CTRL5		0x048
++#define LCD_RGB_CTRL6		0x04c
++#define LCD_RGB_CTRL7		0x050
++#define LCD_RGB_CTRL8		0x054
++#define LCD_RGB_CTRL9		0x058
++#define LCD_RGB_OFFSET		0x0a8
++#define LCD_RGB_SIZE		0x0ac
++#define LCD_DISPLAY_SIZE	0x0b0
++#define LCD_OPER		0x0b8
++#define LCD_SOFT_CTRL		0x0c8
++#define LCD_CLOCK_CONF		0x0e8
++
++#define SYSCTRL_CLOCK_GATE	0x00c
++#define SYSCTRL_PWM		0x02c
++#define SYSCTRL_SHAREPIN0	0x074
++#define SYSCTRL_SHAREPIN1	0x078
++#define SYSCTRL_GPIO_DIR_BASE	0x07c
++#define SYSCTRL_GPIO_OUT_BASE	0x080
++#define SYSCTRL_LCD_CLK_EN_N	BIT(3)
++#define SYSCTRL_LCD_RESET	BIT(19)
++
++#define AHB_LCD_PRIORITY_MASK	0x0000007f
++#define BACKLIGHT_PWM_1KHZ_70	0x20d00e10
++
++static const struct fb_fix_screeninfo anyka_lcdfb_fix = {
++	.id		= "anyka-lcdfb",
++	.type		= FB_TYPE_PACKED_PIXELS,
++	.visual		= FB_VISUAL_TRUECOLOR,
++	.accel		= FB_ACCEL_NONE,
++};
++
++static const struct fb_var_screeninfo anyka_lcdfb_var = {
++	.height		= -1,
++	.width		= -1,
++	.activate	= FB_ACTIVATE_NOW,
++	.vmode		= FB_VMODE_NONINTERLACED,
++};
++
++struct anyka_lcdfb_par {
++	u32 palette[ANYKA_LCD_PSEUDOCMAP_SIZE];
++	struct regmap *sysctrl;
++	void __iomem *lcd;
++	void __iomem *ahb_priority;
++	struct resource *mem;
++	resource_size_t dma_base;
++	u32 active_size;
++	u32 width;
++	u32 height;
++	u32 stride;
++};
++
++struct anyka_lcdfb_params {
++	u32 width;
++	u32 height;
++	u32 stride;
++	struct simplefb_format *format;
++	struct resource memory;
++};
++
++static struct simplefb_format anyka_lcdfb_formats[] = SIMPLEFB_FORMATS;
++
++static void anyka_lcdfb_writel(struct anyka_lcdfb_par *par, u32 offset, u32 value)
++{
++	writel(value, par->lcd + offset);
++}
++
++static int anyka_lcdfb_setcolreg(unsigned int regno, unsigned int red,
++				 unsigned int green, unsigned int blue,
++				 unsigned int transp, struct fb_info *info)
++{
++	u32 *palette = info->pseudo_palette;
++	u32 cr = red >> (16 - info->var.red.length);
++	u32 cg = green >> (16 - info->var.green.length);
++	u32 cb = blue >> (16 - info->var.blue.length);
++	u32 value;
++
++	if (regno >= ANYKA_LCD_PSEUDOCMAP_SIZE)
++		return -EINVAL;
++
++	value = (cr << info->var.red.offset) |
++		(cg << info->var.green.offset) |
++		(cb << info->var.blue.offset);
++
++	if (info->var.transp.length > 0) {
++		u32 mask = (1 << info->var.transp.length) - 1;
++
++		value |= mask << info->var.transp.offset;
++	}
++
++	palette[regno] = value;
++	return 0;
++}
++
++static int anyka_lcdfb_check_var(struct fb_var_screeninfo *var,
++				 struct fb_info *info)
++{
++	if (var->xres != ANYKA_LCD_WIDTH || var->yres != ANYKA_LCD_HEIGHT ||
++	    var->xres_virtual != ANYKA_LCD_WIDTH ||
++	    var->yres_virtual != ANYKA_LCD_HEIGHT ||
++	    var->bits_per_pixel != 16)
++		return -EINVAL;
++
++	return 0;
++}
++
++static int anyka_lcdfb_blank(int blank, struct fb_info *info)
++{
++	struct anyka_lcdfb_par *par = info->par;
++	u32 pwm = blank == FB_BLANK_UNBLANK ? BACKLIGHT_PWM_1KHZ_70 : 0;
++
++	return regmap_write(par->sysctrl, SYSCTRL_PWM, pwm);
++}
++
++static void anyka_lcdfb_destroy(struct fb_info *info)
++{
++	struct anyka_lcdfb_par *par = info->par;
++
++	if (info->screen_base)
++		iounmap(info->screen_base);
++
++	framebuffer_release(info);
++
++	if (par->mem)
++		release_mem_region(par->mem->start, resource_size(par->mem));
++}
++
++static const struct fb_ops anyka_lcdfb_ops = {
++	.owner		= THIS_MODULE,
++	FB_DEFAULT_IOMEM_OPS,
++	.fb_destroy	= anyka_lcdfb_destroy,
++	.fb_setcolreg	= anyka_lcdfb_setcolreg,
++	.fb_check_var	= anyka_lcdfb_check_var,
++	.fb_blank	= anyka_lcdfb_blank,
++};
++
++static int anyka_lcdfb_parse_dt(struct platform_device *pdev,
++				struct anyka_lcdfb_params *params)
++{
++	struct device_node *np = pdev->dev.of_node;
++	const char *format;
++	int i;
++	int ret;
++
++	ret = of_property_read_u32(np, "width", &params->width);
++	if (ret)
++		return dev_err_probe(&pdev->dev, ret, "missing width property\n");
++
++	ret = of_property_read_u32(np, "height", &params->height);
++	if (ret)
++		return dev_err_probe(&pdev->dev, ret, "missing height property\n");
++
++	ret = of_property_read_u32(np, "stride", &params->stride);
++	if (ret)
++		return dev_err_probe(&pdev->dev, ret, "missing stride property\n");
++
++	ret = of_property_read_string(np, "format", &format);
++	if (ret)
++		return dev_err_probe(&pdev->dev, ret, "missing format property\n");
++
++	params->format = NULL;
++	for (i = 0; i < ARRAY_SIZE(anyka_lcdfb_formats); i++) {
++		if (strcmp(format, anyka_lcdfb_formats[i].name))
++			continue;
++
++		params->format = &anyka_lcdfb_formats[i];
++		break;
++	}
++
++	if (!params->format)
++		return dev_err_probe(&pdev->dev, -EINVAL,
++				     "unsupported format '%s'\n", format);
++
++	if (params->width != ANYKA_LCD_WIDTH ||
++	    params->height != ANYKA_LCD_HEIGHT ||
++	    params->stride != ANYKA_LCD_STRIDE ||
++	    params->format->bits_per_pixel != 16)
++		return dev_err_probe(&pdev->dev, -EINVAL,
++				     "unsupported AK7802 LCD mode\n");
++
++	ret = of_reserved_mem_region_to_resource(np, 0, &params->memory);
++	if (ret)
++		return dev_err_probe(&pdev->dev, ret,
++				     "missing framebuffer memory-region\n");
++
++	if (resource_size(&params->memory) < ANYKA_LCD_ACTIVE_SIZE)
++		return dev_err_probe(&pdev->dev, -EINVAL,
++				     "framebuffer memory-region too small\n");
++
++	return 0;
++}
++
++static void anyka_lcdfb_set_gpio_output(struct anyka_lcdfb_par *par,
++					unsigned int pin, bool value)
++{
++	unsigned int bank = (pin >> 5) & 3;
++	u32 bit = BIT(pin & 0x1f);
++	u32 dir = SYSCTRL_GPIO_DIR_BASE + 8 * bank;
++	u32 out = SYSCTRL_GPIO_OUT_BASE + 8 * bank;
++
++	regmap_update_bits(par->sysctrl, dir, bit, 0);
++	regmap_update_bits(par->sysctrl, out, bit, value ? bit : 0);
++}
++
++static int anyka_lcdfb_init_sysctrl(struct anyka_lcdfb_par *par)
++{
++	u32 clk_gate;
++	int ret;
++
++	ret = regmap_write(par->sysctrl, SYSCTRL_SHAREPIN0, 0x00000008);
++	if (ret)
++		return ret;
++
++	ret = regmap_write(par->sysctrl, SYSCTRL_SHAREPIN1, 0x564f0010);
++	if (ret)
++		return ret;
++
++	anyka_lcdfb_set_gpio_output(par, 104, true);
++	anyka_lcdfb_set_gpio_output(par, 69, false);
++	anyka_lcdfb_set_gpio_output(par, 4, false);
++
++	ret = regmap_read(par->sysctrl, SYSCTRL_CLOCK_GATE, &clk_gate);
++	if (ret)
++		return ret;
++
++	clk_gate &= ~SYSCTRL_LCD_CLK_EN_N;
++
++	ret = regmap_write(par->sysctrl, SYSCTRL_CLOCK_GATE,
++			   clk_gate | SYSCTRL_LCD_RESET);
++	if (ret)
++		return ret;
++
++	return regmap_write(par->sysctrl, SYSCTRL_CLOCK_GATE, clk_gate);
++}
++
++static void anyka_lcdfb_set_ahb_priority(struct anyka_lcdfb_par *par)
++{
++	u32 value;
++
++	value = readl(par->ahb_priority);
++	value &= ~AHB_LCD_PRIORITY_MASK;
++	writel(value, par->ahb_priority);
++	readl(par->ahb_priority);
++}
++
++static void anyka_lcdfb_program_controller(struct anyka_lcdfb_par *par)
++{
++	anyka_lcdfb_writel(par, LCD_BACKGROUND, 0x00000000);
++	anyka_lcdfb_writel(par, LCD_CLOCK_CONF, 0x00000111);
++	anyka_lcdfb_writel(par, LCD_CTRL, 0x00000040);
++
++	anyka_lcdfb_writel(par, LCD_RGB_CTRL1, 0x00300006);
++	anyka_lcdfb_writel(par, LCD_RGB_CTRL3, 0x00080003);
++	anyka_lcdfb_writel(par, LCD_RGB_CTRL4, 0x00058320);
++	anyka_lcdfb_writel(par, LCD_RGB_CTRL5, 0x00050420);
++	anyka_lcdfb_writel(par, LCD_RGB_CTRL6, 0x00000018);
++	anyka_lcdfb_writel(par, LCD_RGB_CTRL7, 0x00000001);
++	anyka_lcdfb_writel(par, LCD_RGB_CTRL8, 0x00f00000);
++	anyka_lcdfb_writel(par, LCD_RGB_CTRL9, 0x000001f9);
++
++	anyka_lcdfb_writel(par, LCD_CTRL, 0x80a80050);
++
++	anyka_lcdfb_writel(par, LCD_DISPLAY_SIZE, 0x000c81e0);
++	anyka_lcdfb_writel(par, LCD_RGB_BASE, par->dma_base);
++	anyka_lcdfb_writel(par, LCD_RGB_PAGE_SIZE, 0x032001e0);
++	anyka_lcdfb_writel(par, LCD_RGB_PAGE_OFFSET, 0x00000000);
++	anyka_lcdfb_writel(par, LCD_OSD_BASE, 0x00000000);
++	anyka_lcdfb_writel(par, LCD_RGB_OFFSET, 0x00000000);
++	anyka_lcdfb_writel(par, LCD_RGB_SIZE, 0x000c81e0);
++
++	anyka_lcdfb_writel(par, LCD_CTRL, 0x80a80058);
++	anyka_lcdfb_writel(par, LCD_SOFT_CTRL, 0x00000800);
++	anyka_lcdfb_writel(par, LCD_OPER, 0x00000004);
++}
++
++static int anyka_lcdfb_probe(struct platform_device *pdev)
++{
++	struct anyka_lcdfb_params params;
++	struct anyka_lcdfb_par *par;
++	struct fb_info *info;
++	struct resource *mem;
++	struct resource *res;
++	int ret;
++
++	ret = anyka_lcdfb_parse_dt(pdev, &params);
++	if (ret)
++		return ret;
++
++	res = &params.memory;
++	mem = request_mem_region(res->start, resource_size(res), "anyka-lcdfb");
++	if (!mem) {
++		dev_warn(&pdev->dev,
++			 "cannot reserve framebuffer memory at %pR\n", res);
++		mem = res;
++	}
++
++	info = framebuffer_alloc(sizeof(*par), &pdev->dev);
++	if (!info) {
++		ret = -ENOMEM;
++		goto err_release_mem;
++	}
++
++	platform_set_drvdata(pdev, info);
++	par = info->par;
++	par->width = params.width;
++	par->height = params.height;
++	par->stride = params.stride;
++	par->active_size = params.stride * params.height;
++	par->dma_base = mem->start & ANYKA_LCD_DMA_MASK;
++
++	par->lcd = devm_platform_ioremap_resource_byname(pdev, "lcd");
++	if (IS_ERR(par->lcd)) {
++		ret = PTR_ERR(par->lcd);
++		goto err_release_fb;
++	}
++
++	par->ahb_priority = devm_platform_ioremap_resource_byname(pdev,
++								  "ahb-priority");
++	if (IS_ERR(par->ahb_priority)) {
++		ret = PTR_ERR(par->ahb_priority);
++		goto err_release_fb;
++	}
++
++	par->sysctrl = syscon_regmap_lookup_by_phandle(pdev->dev.of_node,
++						       "syscon");
++	if (IS_ERR(par->sysctrl)) {
++		ret = PTR_ERR(par->sysctrl);
++		goto err_release_fb;
++	}
++
++	info->fix = anyka_lcdfb_fix;
++	info->fix.smem_start = mem->start;
++	info->fix.smem_len = resource_size(mem);
++	info->fix.line_length = params.stride;
++
++	info->var = anyka_lcdfb_var;
++	info->var.xres = params.width;
++	info->var.yres = params.height;
++	info->var.xres_virtual = params.width;
++	info->var.yres_virtual = params.height;
++	info->var.bits_per_pixel = params.format->bits_per_pixel;
++	info->var.red = params.format->red;
++	info->var.green = params.format->green;
++	info->var.blue = params.format->blue;
++	info->var.transp = params.format->transp;
++
++	info->fbops = &anyka_lcdfb_ops;
++	info->pseudo_palette = par->palette;
++	info->screen_size = par->active_size;
++	info->screen_base = ioremap_wc(info->fix.smem_start,
++				       info->fix.smem_len);
++	if (!info->screen_base) {
++		ret = -ENOMEM;
++		goto err_release_fb;
++	}
++
++	ret = devm_aperture_acquire_for_platform_device(pdev,
++							info->fix.smem_start,
++							info->fix.smem_len);
++	if (ret) {
++		dev_err(&pdev->dev, "unable to acquire framebuffer aperture: %d\n",
++			ret);
++		goto err_unmap;
++	}
++
++	if (mem != res)
++		par->mem = mem;
++
++	memset_io(info->screen_base, 0, par->active_size);
++
++	ret = anyka_lcdfb_init_sysctrl(par);
++	if (ret)
++		goto err_unmap;
++
++	anyka_lcdfb_set_ahb_priority(par);
++	anyka_lcdfb_program_controller(par);
++	mdelay(30);
++	ret = anyka_lcdfb_blank(FB_BLANK_UNBLANK, info);
++	if (ret)
++		goto err_unmap;
++
++	ret = register_framebuffer(info);
++	if (ret < 0) {
++		dev_err(&pdev->dev, "unable to register framebuffer: %d\n", ret);
++		goto err_unmap;
++	}
++
++	dev_info(&pdev->dev,
++		 "framebuffer at %pa, dma 0x%08llx, %u bytes, %ux%ux%u\n",
++		 &info->fix.smem_start, (unsigned long long)par->dma_base,
++		 par->active_size, info->var.xres, info->var.yres,
++		 info->var.bits_per_pixel);
++
++	return 0;
++
++err_unmap:
++	iounmap(info->screen_base);
++err_release_fb:
++	framebuffer_release(info);
++err_release_mem:
++	if (mem != res)
++		release_mem_region(mem->start, resource_size(mem));
++	return ret;
++}
++
++static void anyka_lcdfb_remove(struct platform_device *pdev)
++{
++	struct fb_info *info = platform_get_drvdata(pdev);
++
++	unregister_framebuffer(info);
++}
++
++static const struct of_device_id anyka_lcdfb_of_match[] = {
++	{ .compatible = "anyka,ak7802-lcd" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, anyka_lcdfb_of_match);
++
++static struct platform_driver anyka_lcdfb_driver = {
++	.driver = {
++		.name = "anyka-lcdfb",
++		.of_match_table = anyka_lcdfb_of_match,
++	},
++	.probe = anyka_lcdfb_probe,
++	.remove = anyka_lcdfb_remove,
++};
++module_platform_driver(anyka_lcdfb_driver);
++
++MODULE_DESCRIPTION("Anyka AK7802 LCD framebuffer driver");
++MODULE_LICENSE("GPL");
+-- 
+2.47.3
+

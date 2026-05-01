@@ -1,4 +1,4 @@
-From ea023b462ba2f1f6cce5bd5170afba8f7ac6c3db Mon Sep 17 00:00:00 2001
+From 0b180b2ab90e655060d945731470a018f2198bf5 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Fri, 1 May 2026 10:42:24 +0800
 Subject: [PATCH v1 3/6] clocksource: anyka: Add AK880x/AK7802 timer driver

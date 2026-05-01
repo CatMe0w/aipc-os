@@ -1,4 +1,4 @@
-From 30c787cf37b8b34f2976fdeb5be1c4890a2a69d5 Mon Sep 17 00:00:00 2001
+From 10bdd8a4a4fa2e599a81c9a99129059a9449ba73 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Fri, 1 May 2026 10:42:24 +0800
 Subject: [PATCH v1 5/6] usb: spi: Add CH374 HCD and Anyka SPI drivers
