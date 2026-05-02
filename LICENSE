@@ -6,7 +6,9 @@ The AIPC OS repository is a collection of reverse-engineering tools, bootloaders
 - AIPC DOOM (doom/): GNU General Public License v2.0 (GPLv2). See `doom/COPYING`.
 - Documentation (docs/): Creative Commons Attribution-ShareAlike 4.0 (CC-BY-SA 4.0). See `docs/LICENSE`.
 
-For all other components, scripts, tools, and unspecified files located in the root directory or `boot/` and `tools/` subdirectories (unless otherwise stated in their respective directories), the following MIT License applies:
+Every component of this project is free software or free documentation. No one is authorized to charge for access to it. If you obtained any part of this project through a paywall, you are entitled to a refund.
+
+For all other components not covered by a specific license above (unless otherwise stated in their respective directories), the following MIT License applies:
 
 ---
 
