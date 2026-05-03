@@ -474,18 +474,23 @@ class ECCStats:
     corrected: int = 0
     uncorrectable: int = 0
     raw_write: int = 0       # oob_all_ff: data present, ECC never written
+    corrected_chunks: list[dict] = field(default_factory=list)
+    uncorrectable_chunks: list[dict] = field(default_factory=list)
 
     def merge(self, other: "ECCStats") -> None:
         self.ok += other.ok
         self.corrected += other.corrected
         self.uncorrectable += other.uncorrectable
         self.raw_write += other.raw_write
+        self.corrected_chunks.extend(other.corrected_chunks)
+        self.uncorrectable_chunks.extend(other.uncorrectable_chunks)
 
 
-def _ecc_correct_chunk(data: bytes, oob: bytes) -> tuple[bytes, str]:
-    """Return (corrected_data_512, status).
+def _ecc_correct_chunk(data: bytes, oob: bytes) -> tuple[bytes, str, int]:
+    """Return (corrected_data_512, status, n_bits).
 
-    status is one of: 'ok', 'corrected', 'raw_write', 'uncorrectable'.
+    status: 'ok', 'corrected', 'raw_write', 'mirror_mismatch', 'ecc_uncorrectable'.
+    n_bits is the flip count for 'corrected', 0 otherwise.
     Uncorrectable chunks are returned as-is (original bytes preserved).
     """
     stored_ecc = oob[9:16]
@@ -493,22 +498,25 @@ def _ecc_correct_chunk(data: bytes, oob: bytes) -> tuple[bytes, str]:
     computed = _bch.encode(bytes(inp))
 
     if computed == stored_ecc:
-        return data, "ok"
+        return data, "ok", 0
 
     if oob == b"\xFF" * OOB_SIZE:
-        # OOB was never written; data is raw-written without ECC. Treat as valid.
-        return data, "raw_write"
+        # OOB was never written; data is raw-written without ECC.  Treat as valid.
+        return data, "raw_write", 0
 
     n = _bch.decode(inp, stored_ecc)
     if n > 0:
         # errloc holds bit positions; correct() flips them in inp.
         _bch.correct(inp)
-        return bytes(inp[:CHUNK_SIZE]), "corrected"
+        return bytes(inp[:CHUNK_SIZE]), "corrected", n
     if n == 0:
         # Syndrome is zero: only ECC padding bits differ, data is fine.
-        return data, "ok"
-    # n < 0: beyond correction capability, pass through unchanged.
-    return data, "uncorrectable"
+        return data, "ok", 0
+    # n < 0: beyond correction capability.
+    # Distinguish OOB mirror corruption (oob[4:9] should equal data[4:9]).
+    if oob[4:9] != data[4:9]:
+        return data, "mirror_mismatch", 0
+    return data, "ecc_uncorrectable", 0
 
 
 def normalize_plain(page: bytes) -> bytes:
@@ -519,7 +527,7 @@ def normalize_interleaved(page: bytes) -> bytes:
     return b"".join(page[i * RAW_CHUNK_SIZE : i * RAW_CHUNK_SIZE + CHUNK_SIZE] for i in range(CHUNKS_PER_PAGE))
 
 
-def normalize_interleaved_ecc(page: bytes, stats: ECCStats) -> bytes:
+def normalize_interleaved_ecc(page: bytes, page_index: int, stats: ECCStats) -> bytes:
     chunks = []
     for i in range(CHUNKS_PER_PAGE):
         off = i * RAW_CHUNK_SIZE
@@ -527,23 +535,25 @@ def normalize_interleaved_ecc(page: bytes, stats: ECCStats) -> bytes:
         if raw == _ERASED_CHUNK:
             chunks.append(raw[:CHUNK_SIZE])
             continue
-        data, status = _ecc_correct_chunk(raw[:CHUNK_SIZE], raw[CHUNK_SIZE:])
+        data, status, n_bits = _ecc_correct_chunk(raw[:CHUNK_SIZE], raw[CHUNK_SIZE:])
         chunks.append(data)
         if status == "ok":
             stats.ok += 1
         elif status == "corrected":
             stats.corrected += 1
+            stats.corrected_chunks.append({"page": page_index, "chunk": i, "n_bits": n_bits})
         elif status == "raw_write":
             stats.raw_write += 1
         else:
             stats.uncorrectable += 1
+            stats.uncorrectable_chunks.append({"page": page_index, "chunk": i, "type": status})
     return b"".join(chunks)
 
 
-def normalize_nbt_page(page: bytes, stats: ECCStats) -> bytes:
+def normalize_nbt_page(page: bytes, page_index: int, stats: ECCStats) -> bytes:
     if page[PAGE_SIZE:] == b"\xFF" * (RAW_PAGE_SIZE - PAGE_SIZE):
         return normalize_plain(page)
-    return normalize_interleaved_ecc(page, stats)
+    return normalize_interleaved_ecc(page, page_index, stats)
 
 
 def parse_ptb_entry(raw: bytes, index: int) -> PTBEntry:
@@ -706,9 +716,9 @@ def normalize_raw_nand(raw_path: Path, clean_path: Path, candidate: PTBCandidate
             if len(page) != RAW_PAGE_SIZE:
                 raise click.ClickException(f"short read at raw page {page_index}")
             if nbt_start_page <= page_index < nbt_end_page:
-                fo.write(normalize_nbt_page(page, stats))
+                fo.write(normalize_nbt_page(page, page_index, stats))
             else:
-                fo.write(normalize_interleaved_ecc(page, stats))
+                fo.write(normalize_interleaved_ecc(page, page_index, stats))
     return stats
 
 
@@ -1827,7 +1837,7 @@ def write_analysis_views(out_dir: Path) -> list[dict]:
     return views
 
 
-def write_metadata(raw_path: Path, out_dir: Path, candidate: PTBCandidate, views: list[dict]) -> None:
+def write_metadata(raw_path: Path, out_dir: Path, candidate: PTBCandidate, views: list[dict], ecc_stats: ECCStats) -> None:
     metadata = {
         "input": str(raw_path),
         "geometry": candidate.geometry.to_json(),
@@ -1842,6 +1852,14 @@ def write_metadata(raw_path: Path, out_dir: Path, candidate: PTBCandidate, views
             "table_offset": candidate.table_offset,
             "raw_path": "ptb.raw",
             "entries": [entry.to_json(candidate.geometry) for entry in candidate.entries],
+        },
+        "normalize": {
+            "ok": ecc_stats.ok,
+            "corrected": ecc_stats.corrected,
+            "raw_write": ecc_stats.raw_write,
+            "uncorrectable": ecc_stats.uncorrectable,
+            "corrected_chunks": ecc_stats.corrected_chunks,
+            "uncorrectable_chunks": ecc_stats.uncorrectable_chunks,
         },
         "views": views,
     }
@@ -1891,7 +1909,7 @@ def main(raw_nand_image: str, output_dir: str | None) -> None:
     for view in views:
         click.echo(f"  -> {view['path']}")
 
-    write_metadata(raw_path, out_dir, candidate, views)
+    write_metadata(raw_path, out_dir, candidate, views, ecc_stats)
     click.echo("  -> nand_extract.json")
 
 
