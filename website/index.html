@@ -669,15 +669,19 @@
           <div class="driver-status ds-ok"><span>●</span>可用</div>
         </div>
         <div class="driver-cell">
-          <div class="driver-name">SPI控制器</div>
-          <div class="driver-status ds-wip"><span>●</span>进行中</div>
+          <div class="driver-name">USB（外挂控制器）</div>
+          <div class="driver-status ds-ok"><span>●</span>可用</div>
         </div>
         <div class="driver-cell">
-          <div class="driver-name">I2C控制器</div>
-          <div class="driver-status ds-wip"><span>●</span>进行中</div>
+          <div class="driver-name">SPI控制器</div>
+          <div class="driver-status ds-ok"><span>●</span>可用</div>
         </div>
         <div class="driver-cell">
           <div class="driver-name">键盘</div>
+          <div class="driver-status ds-ok"><span>●</span>可用</div>
+        </div>
+        <div class="driver-cell">
+          <div class="driver-name">I2C控制器</div>
           <div class="driver-status ds-wip"><span>●</span>进行中</div>
         </div>
         <div class="driver-cell">
@@ -685,7 +689,11 @@
           <div class="driver-status ds-wip"><span>●</span>进行中</div>
         </div>
         <div class="driver-cell">
-          <div class="driver-name">USB（外挂控制器）</div>
+          <div class="driver-name">NAND Flash</div>
+          <div class="driver-status ds-wip"><span>●</span>进行中</div>
+        </div>
+        <div class="driver-cell">
+          <div class="driver-name">SD / MMC</div>
           <div class="driver-status ds-wip"><span>●</span>进行中</div>
         </div>
         <div class="driver-cell">
@@ -694,14 +702,6 @@
         </div>
         <div class="driver-cell">
           <div class="driver-name">电源管理</div>
-          <div class="driver-status ds-no"><span>○</span>未开始</div>
-        </div>
-        <div class="driver-cell">
-          <div class="driver-name">NAND Flash</div>
-          <div class="driver-status ds-no"><span>○</span>未开始</div>
-        </div>
-        <div class="driver-cell">
-          <div class="driver-name">SD / MMC</div>
           <div class="driver-status ds-no"><span>○</span>未开始</div>
         </div>
         <div class="driver-cell">
@@ -749,7 +749,7 @@
     <div class="section" id="omt">
       <div class="section-eyebrow">// one more thing</div>
       <h2 class="section-title">远期规划</h2>
-      <p class="omt-lead">未来，AIPC OS将提供两种版本。</p>
+      <p class="omt-lead">AIPC OS将提供两种版本。</p>
 
       <div class="omt-flavors">
         <div class="flavor-card flavor-warm">
@@ -762,7 +762,7 @@
         <div class="flavor-card flavor-cold">
           <div class="flavor-title"><span style="color: var(--accent)">Coldboot</span>: 绕过Windows CE，直接引导</div>
           <div class="flavor-body">
-            <p>需要拆机并短接USB_BOOT引脚，无需经过Windows CE，上电即可进入AIPC OS。</p>
+            <p>需要短接DL_JUMP引脚，无需经过Windows CE，上电即可进入AIPC OS。</p>
             <p>也可将AIPC OS固化到板载Flash上，实现WinCE + Linux双系统，或完全移除原厂系统。</p>
           </div>
         </div>

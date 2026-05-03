@@ -671,15 +671,19 @@
           <div class="driver-status ds-ok"><span>●</span> working</div>
         </div>
         <div class="driver-cell">
-          <div class="driver-name">SPI controller</div>
-          <div class="driver-status ds-wip"><span>●</span> in progress</div>
+          <div class="driver-name">USB (CH374)</div>
+          <div class="driver-status ds-ok"><span>●</span> working</div>
         </div>
         <div class="driver-cell">
-          <div class="driver-name">I2C controller</div>
-          <div class="driver-status ds-wip"><span>●</span> in progress</div>
+          <div class="driver-name">SPI controller</div>
+          <div class="driver-status ds-ok"><span>●</span> working</div>
         </div>
         <div class="driver-cell">
           <div class="driver-name">Keyboard</div>
+          <div class="driver-status ds-ok"><span>●</span> working</div>
+        </div>
+        <div class="driver-cell">
+          <div class="driver-name">I2C controller</div>
           <div class="driver-status ds-wip"><span>●</span> in progress</div>
         </div>
         <div class="driver-cell">
@@ -687,7 +691,11 @@
           <div class="driver-status ds-wip"><span>●</span> in progress</div>
         </div>
         <div class="driver-cell">
-          <div class="driver-name">USB (CH374)</div>
+          <div class="driver-name">NAND Flash</div>
+          <div class="driver-status ds-wip"><span>●</span> in progress</div>
+        </div>
+        <div class="driver-cell">
+          <div class="driver-name">SD / MMC</div>
           <div class="driver-status ds-wip"><span>●</span> in progress</div>
         </div>
         <div class="driver-cell">
@@ -696,14 +704,6 @@
         </div>
         <div class="driver-cell">
           <div class="driver-name">Power management</div>
-          <div class="driver-status ds-no"><span>○</span> not started</div>
-        </div>
-        <div class="driver-cell">
-          <div class="driver-name">NAND Flash</div>
-          <div class="driver-status ds-no"><span>○</span> not started</div>
-        </div>
-        <div class="driver-cell">
-          <div class="driver-name">SD / MMC</div>
           <div class="driver-status ds-no"><span>○</span> not started</div>
         </div>
         <div class="driver-cell">
@@ -766,7 +766,7 @@
         <div class="flavor-card flavor-cold">
           <div class="flavor-title"><span style="color: var(--accent)">Coldboot</span>: Boot directly, bypassing Windows CE</div>
           <div class="flavor-body">
-            <p>Requires disassembly to short the USB_BOOT pads. Power on and enter the bootloader directly, with no pass through Windows CE.</p>
+            <p>Requires shorting the DL_JUMP pads. Power on and enter the bootloader directly, with no pass through Windows CE.</p>
             <p>AIPC OS can also be flashed to the onboard NAND, enabling a WinCE + Linux dual-boot, or a full replacement of the stock firmware.</p>
           </div>
         </div>
