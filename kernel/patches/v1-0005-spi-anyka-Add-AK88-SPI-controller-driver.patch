@@ -1,0 +1,603 @@
+From 6dc90ca4dc6d7c328c8906a20d07ab56969394ff Mon Sep 17 00:00:00 2001
+From: CatMe0w <CatMe0w@live.cn>
+Date: Fri, 1 May 2026 10:42:24 +0800
+Subject: [PATCH v1 5/8] spi: anyka: Add AK88 SPI controller driver
+
+---
+ drivers/spi/Kconfig         |  14 ++
+ drivers/spi/Makefile        |   2 +
+ drivers/spi/spi-ak88-test.c |  59 +++++
+ drivers/spi/spi-ak88.c      | 477 ++++++++++++++++++++++++++++++++++++
+ 4 files changed, 552 insertions(+)
+ create mode 100644 drivers/spi/spi-ak88-test.c
+ create mode 100644 drivers/spi/spi-ak88.c
+
+diff --git a/drivers/spi/Kconfig b/drivers/spi/Kconfig
+index c3b2f02f5..c036b35b9 100644
+--- a/drivers/spi/Kconfig
++++ b/drivers/spi/Kconfig
+@@ -60,6 +60,20 @@ config SPI_OFFLOAD
+ 
+ comment "SPI Master Controller Drivers"
+ 
++config SPI_AK88
++	bool "Anyka AK88/AK98 SPI controller"
++	depends on ARCH_ANYKA || COMPILE_TEST
++	default y if ARCH_ANYKA
++	help
++	  Minimal DT-only SPI master support for Anyka AK78/AK88/AK98
++	  controllers. The first implementation is polling-based and is
++	  primarily intended to reach board peripherals such as the CH374U.
++
++config SPI_AK88_KUNIT_TEST
++	tristate "KUnit tests for Anyka AK88 SPI controller" if !KUNIT_ALL_TESTS
++	depends on KUNIT && SPI_AK88
++	default KUNIT_ALL_TESTS
++
+ config SPI_AIROHA_SNFI
+ 	tristate "Airoha SPI NAND Flash Interface"
+ 	depends on ARCH_AIROHA || COMPILE_TEST
+diff --git a/drivers/spi/Makefile b/drivers/spi/Makefile
+index 9d36190a9..cc9acf30a 100644
+--- a/drivers/spi/Makefile
++++ b/drivers/spi/Makefile
+@@ -15,6 +15,8 @@ obj-$(CONFIG_SPI_SPIDEV)		+= spidev.o
+ obj-$(CONFIG_SPI_LOOPBACK_TEST)		+= spi-loopback-test.o
+ 
+ # SPI master controller drivers (bus)
++obj-$(CONFIG_SPI_AK88)			+= spi-ak88.o
++obj-$(CONFIG_SPI_AK88_KUNIT_TEST)	+= spi-ak88-test.o
+ obj-$(CONFIG_SPI_AIROHA_SNFI)		+= spi-airoha-snfi.o
+ obj-$(CONFIG_SPI_ALTERA)		+= spi-altera-platform.o
+ obj-$(CONFIG_SPI_ALTERA_CORE)		+= spi-altera-core.o
+diff --git a/drivers/spi/spi-ak88-test.c b/drivers/spi/spi-ak88-test.c
+new file mode 100644
+index 000000000..d06f179f0
+--- /dev/null
++++ b/drivers/spi/spi-ak88-test.c
+@@ -0,0 +1,59 @@
++// SPDX-License-Identifier: GPL-2.0-only
++
++#include <kunit/test.h>
++#include <linux/bitops.h>
++#include <linux/spi/spi.h>
++
++#define AK88_SPICON_CS_FORCE	BIT(5)
++#define AK88_SPICON_CPHA	BIT(3)
++#define AK88_SPICON_CPOL	BIT(2)
++#define AK88_SPICON_ARRM	BIT(1)
++#define AK88_SPICON_TGDM	BIT(0)
++
++extern u32 ak88_spi_build_ctrl(u32 ctrl, u32 mode, bool tx, bool rx);
++
++static void ak88_spi_ctrl_preserves_cs_for_duplex(struct kunit *test)
++{
++	u32 ctrl = ak88_spi_build_ctrl(AK88_SPICON_CS_FORCE, 0, true, true);
++
++	KUNIT_EXPECT_TRUE(test, ctrl & AK88_SPICON_CS_FORCE);
++	KUNIT_EXPECT_FALSE(test, ctrl & AK88_SPICON_ARRM);
++	KUNIT_EXPECT_FALSE(test, ctrl & AK88_SPICON_TGDM);
++}
++
++static void ak88_spi_ctrl_selects_write_only_mode(struct kunit *test)
++{
++	u32 ctrl = ak88_spi_build_ctrl(0, SPI_CPOL, true, false);
++
++	KUNIT_EXPECT_TRUE(test, ctrl & AK88_SPICON_ARRM);
++	KUNIT_EXPECT_FALSE(test, ctrl & AK88_SPICON_TGDM);
++	KUNIT_EXPECT_TRUE(test, ctrl & AK88_SPICON_CPOL);
++	KUNIT_EXPECT_FALSE(test, ctrl & AK88_SPICON_CPHA);
++}
++
++static void ak88_spi_ctrl_selects_read_only_mode(struct kunit *test)
++{
++	u32 ctrl = ak88_spi_build_ctrl(0, SPI_CPHA, false, true);
++
++	KUNIT_EXPECT_FALSE(test, ctrl & AK88_SPICON_ARRM);
++	KUNIT_EXPECT_TRUE(test, ctrl & AK88_SPICON_TGDM);
++	KUNIT_EXPECT_TRUE(test, ctrl & AK88_SPICON_CPHA);
++	KUNIT_EXPECT_FALSE(test, ctrl & AK88_SPICON_CPOL);
++}
++
++static struct kunit_case ak88_spi_test_cases[] = {
++	KUNIT_CASE(ak88_spi_ctrl_preserves_cs_for_duplex),
++	KUNIT_CASE(ak88_spi_ctrl_selects_write_only_mode),
++	KUNIT_CASE(ak88_spi_ctrl_selects_read_only_mode),
++	{}
++};
++
++static struct kunit_suite ak88_spi_test_suite = {
++	.name = "spi-ak88-test",
++	.test_cases = ak88_spi_test_cases,
++};
++
++kunit_test_suite(ak88_spi_test_suite);
++
++MODULE_DESCRIPTION("KUnit tests for Anyka AK88 SPI controller");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/spi/spi-ak88.c b/drivers/spi/spi-ak88.c
+new file mode 100644
+index 000000000..8dc61e4cc
+--- /dev/null
++++ b/drivers/spi/spi-ak88.c
+@@ -0,0 +1,477 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Minimal SPI master support for Anyka AK78/AK88/AK98 SoCs.
++ *
++ * Polling-only for now, but the register sequencing follows the vendor
++ * controller path used by board firmware and the old AK88 Linux driver.
++ *
++ * Copyright (C) 2026 CatMe0w
++ * Based on vendor kernel code provided by:
++ * Copyright (C) 2001-2010 ANYKA LTD.
++ */
++
++#include <linux/bitops.h>
++#include <linux/kernel.h>
++#include <linux/io.h>
++#include <linux/iopoll.h>
++#include <linux/mfd/syscon.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/of_device.h>
++#include <linux/platform_device.h>
++#include <linux/regmap.h>
++#include <linux/spi/spi.h>
++
++#define AK88_SPICON			0x00
++#define AK88_SPICON_EN			BIT(6)
++#define AK88_SPICON_CS_FORCE		BIT(5)
++#define AK88_SPICON_MS			BIT(4)
++#define AK88_SPICON_CPHA		BIT(3)
++#define AK88_SPICON_CPOL		BIT(2)
++#define AK88_SPICON_ARRM		BIT(1)
++#define AK88_SPICON_TGDM		BIT(0)
++
++#define AK88_SPISTA			0x04
++#define AK88_SPISTA_MPROC		BIT(9)
++#define AK88_SPISTA_TRANSF		BIT(8)
++#define AK88_SPISTA_RXHFULL		BIT(6)
++#define AK88_SPISTA_TXHEMP		BIT(2)
++
++#define AK88_SPIINT			0x08
++#define AK88_SPICNT			0x0c
++#define AK88_SPIEXTX			0x10
++#define AK88_SPIEXRX			0x14
++#define AK88_SPIOUT			0x18
++#define AK88_SPIIN			0x1c
++#define AK88_SPITOUT			0x20
++
++#define AK88_CLOCK_CTRL_REG		0x0c
++#define AK88_CLOCK_CTRL_SPI		BIT(2)
++#define AK88_SHAREPIN_CON1		0x78
++#define AK88_SHAREPIN_SPI_CLK		BIT(30)
++#define AK88_SHAREPIN_SPI_DATA		GENMASK(2, 1)
++#define AK88_SHAREPIN_WLED_PWM		BIT(4)
++#define AK88_PPU_PPD3			0xa4
++#define AK88_SPI0_GPIO_MASK		GENMASK(15, 12)
++
++#define AK88_DEFAULT_INPUT_CLOCK_HZ	248000000
++#define AK88_SPICON_CLKDIV_MASK		(0x7f << 8)
++#define AK88_XFER_TIMEOUT_US		10000
++#define AK88_FIFO_WORD_BYTES		4
++#define AK88_SPI_TIMEOUT_VALUE		0x00ffffff
++
++struct ak88_spi {
++	void __iomem *base;
++	struct regmap *sysctrl;
++	u32 input_clock_hz;
++};
++
++static int ak88_spi_enable_clock(struct ak88_spi *hw)
++{
++	/*
++	 * The vendor 2.6 driver explicitly enables spi_clk, which clears
++	 * CLK_CON bit 2 on AK78/AK88/AK98 parts.
++	 */
++	return regmap_update_bits(hw->sysctrl, AK88_CLOCK_CTRL_REG,
++				  AK88_CLOCK_CTRL_SPI, 0);
++}
++
++static int ak88_spi_config_pins(struct ak88_spi *hw)
++{
++	u32 mask = AK88_SHAREPIN_SPI_CLK | AK88_SHAREPIN_SPI_DATA |
++		   AK88_SHAREPIN_WLED_PWM;
++	int ret;
++
++	/*
++	 * AK7802 routes this controller with bit30 set, bit4 set, and bits 1:2
++	 * cleared in SHAREPIN_CON1. GPIO chip-select muxing is handled by the
++	 * GPIO driver when the CS descriptor is requested.
++	 */
++	ret = regmap_update_bits(hw->sysctrl, AK88_SHAREPIN_CON1,
++				 mask,
++				 AK88_SHAREPIN_SPI_CLK | AK88_SHAREPIN_WLED_PWM);
++	if (ret)
++		return ret;
++
++	/*
++	 * Datasheet default keeps pull-up/down enabled; disable it for SPI pins
++	 * so DIN is not biased low when the peripheral drives MISO.
++	 */
++	ret = regmap_update_bits(hw->sysctrl, AK88_PPU_PPD3,
++				 AK88_SPI0_GPIO_MASK, AK88_SPI0_GPIO_MASK);
++	if (ret)
++		return ret;
++
++	return 0;
++}
++
++static void ak88_spi_set_speed(struct ak88_spi *hw, u32 speed_hz)
++{
++	u32 ctrl;
++	u32 div;
++
++	if (!speed_hz)
++		return;
++
++	div = DIV_ROUND_UP(hw->input_clock_hz, speed_hz * 2);
++	if (!div)
++		div = 1;
++	if (div > 128)
++		div = 128;
++
++	ctrl = readl(hw->base + AK88_SPICON);
++	ctrl &= ~AK88_SPICON_CLKDIV_MASK;
++	ctrl |= (div - 1) << 8;
++	writel(ctrl, hw->base + AK88_SPICON);
++}
++
++u32 ak88_spi_build_ctrl(u32 ctrl, u32 mode, bool tx, bool rx);
++
++u32 ak88_spi_build_ctrl(u32 ctrl, u32 mode, bool tx, bool rx)
++{
++	ctrl &= AK88_SPICON_CS_FORCE | AK88_SPICON_CLKDIV_MASK;
++
++	ctrl |= AK88_SPICON_EN | AK88_SPICON_MS;
++
++	if (mode & SPI_CPHA)
++		ctrl |= AK88_SPICON_CPHA;
++	if (mode & SPI_CPOL)
++		ctrl |= AK88_SPICON_CPOL;
++
++	if (tx && !rx)
++		ctrl |= AK88_SPICON_ARRM;
++	else if (!tx && rx)
++		ctrl |= AK88_SPICON_TGDM;
++
++	return ctrl;
++}
++EXPORT_SYMBOL_GPL(ak88_spi_build_ctrl);
++
++static void ak88_spi_program_mode(struct ak88_spi *hw, u32 mode, bool tx, bool rx)
++{
++	u32 ctrl = readl(hw->base + AK88_SPICON);
++
++	ctrl = ak88_spi_build_ctrl(ctrl, mode, tx, rx);
++
++	writel(ctrl, hw->base + AK88_SPICON);
++}
++
++static int ak88_spi_wait_tx_empty(struct ak88_spi *hw)
++{
++	u32 val;
++
++	return readl_poll_timeout(hw->base + AK88_SPISTA, val,
++				  val & AK88_SPISTA_TXHEMP, 1,
++				  AK88_XFER_TIMEOUT_US);
++}
++
++static int ak88_spi_wait_rx_ready(struct ak88_spi *hw)
++{
++	u32 val;
++
++	return readl_poll_timeout(hw->base + AK88_SPISTA, val,
++				  val & AK88_SPISTA_RXHFULL, 1,
++				  AK88_XFER_TIMEOUT_US);
++}
++
++static int ak88_spi_wait_count_zero(struct ak88_spi *hw)
++{
++	u32 val;
++
++	return readl_poll_timeout(hw->base + AK88_SPICNT, val,
++				  !(val & 0xffff), 1,
++				  AK88_XFER_TIMEOUT_US);
++}
++
++static int ak88_spi_wait_done(struct ak88_spi *hw)
++{
++	u32 val;
++
++	return readl_poll_timeout(hw->base + AK88_SPISTA, val,
++				  !(val & AK88_SPISTA_MPROC), 1,
++				  AK88_XFER_TIMEOUT_US);
++}
++
++static int ak88_spi_wait_transfer_complete(struct ak88_spi *hw)
++{
++	u32 val;
++
++	return readl_poll_timeout(hw->base + AK88_SPISTA, val,
++				  val & AK88_SPISTA_TRANSF, 1,
++				  AK88_XFER_TIMEOUT_US);
++}
++
++static u32 ak88_spi_pack_word(const u8 *buf, size_t len)
++{
++	u32 word = 0;
++	size_t i;
++
++	for (i = 0; i < len; i++)
++		word |= (u32)buf[i] << (i * 8);
++
++	return word;
++}
++
++static void ak88_spi_unpack_word(u8 *buf, u32 word, size_t len)
++{
++	size_t i;
++
++	for (i = 0; i < len; i++)
++		buf[i] = word >> (i * 8);
++}
++
++static int ak88_spi_tx(struct ak88_spi *hw, const u8 *tx, size_t len)
++{
++	size_t pos = 0;
++	int ret;
++
++	writel(0, hw->base + AK88_SPIEXTX);
++	writel(len, hw->base + AK88_SPICNT);
++
++	while (pos < len) {
++		size_t chunk = min_t(size_t, AK88_FIFO_WORD_BYTES, len - pos);
++
++		ret = ak88_spi_wait_tx_empty(hw);
++		if (ret)
++			return ret;
++
++		writel(ak88_spi_pack_word(tx + pos, chunk),
++		       hw->base + AK88_SPIOUT);
++		pos += chunk;
++	}
++
++	ret = ak88_spi_wait_count_zero(hw);
++	if (ret)
++		return ret;
++
++	return ak88_spi_wait_transfer_complete(hw);
++}
++
++static int ak88_spi_rx(struct ak88_spi *hw, u8 *rx, size_t len)
++{
++	size_t full_words = len / AK88_FIFO_WORD_BYTES;
++	size_t rem = len % AK88_FIFO_WORD_BYTES;
++	size_t pos = 0;
++	int ret;
++
++	writel(0, hw->base + AK88_SPIEXRX);
++	writel(len, hw->base + AK88_SPICNT);
++
++	while (full_words--) {
++		ret = ak88_spi_wait_rx_ready(hw);
++		if (ret)
++			return ret;
++
++		ak88_spi_unpack_word(rx + pos, readl(hw->base + AK88_SPIIN),
++				     AK88_FIFO_WORD_BYTES);
++		pos += AK88_FIFO_WORD_BYTES;
++	}
++
++	ret = ak88_spi_wait_count_zero(hw);
++	if (ret)
++		return ret;
++
++	if (rem)
++		ak88_spi_unpack_word(rx + pos, readl(hw->base + AK88_SPIIN), rem);
++
++	return 0;
++}
++
++static int ak88_spi_txrx_byte(struct ak88_spi *hw, u8 tx, u8 *rx)
++{
++	int ret;
++
++	writel(1, hw->base + AK88_SPICNT);
++
++	ret = ak88_spi_wait_tx_empty(hw);
++	if (ret)
++		return ret;
++
++	writel(tx, hw->base + AK88_SPIOUT);
++
++	ret = ak88_spi_wait_done(hw);
++	if (ret)
++		return ret;
++
++	if (rx)
++		*rx = readl(hw->base + AK88_SPIIN);
++
++	return 0;
++}
++
++static int ak88_spi_transfer_one(struct spi_controller *ctlr,
++				 struct spi_device *spi,
++				 struct spi_transfer *xfer)
++{
++	struct ak88_spi *hw = spi_controller_get_devdata(ctlr);
++	const u8 *tx = xfer->tx_buf;
++	u8 *rx = xfer->rx_buf;
++	u32 speed_hz = xfer->speed_hz ? xfer->speed_hz : spi->max_speed_hz;
++	unsigned int i;
++	int ret;
++
++	if (xfer->bits_per_word && xfer->bits_per_word != 8)
++		return -EINVAL;
++
++	ak88_spi_set_speed(hw, speed_hz);
++	ak88_spi_program_mode(hw, spi->mode, !!tx, !!rx);
++	if (!xfer->len)
++		return 0;
++
++	if (tx && !rx) {
++		ret = ak88_spi_tx(hw, tx, xfer->len);
++		if (ret)
++			dev_err(&spi->dev, "TX transfer timed out\n");
++		return ret;
++	}
++
++	if (!tx && rx) {
++		ret = ak88_spi_rx(hw, rx, xfer->len);
++		if (ret)
++			dev_err(&spi->dev, "RX transfer timed out\n");
++		return ret;
++	}
++
++	for (i = 0; i < xfer->len; i++) {
++		u8 value = tx ? tx[i] : 0xff;
++		u8 data;
++
++		ret = ak88_spi_txrx_byte(hw, value, rx ? &data : NULL);
++		if (ret) {
++			dev_err(&spi->dev,
++				"byte transfer timed out at offset %u\n", i);
++			return ret;
++		}
++
++		if (rx)
++			rx[i] = data;
++	}
++
++	return 0;
++}
++
++static void ak88_spi_set_cs(struct spi_device *spi, bool inactive)
++{
++	struct ak88_spi *hw = spi_controller_get_devdata(spi->controller);
++	bool asserted = spi->mode & SPI_CS_HIGH ? inactive : !inactive;
++	u32 ctrl = readl(hw->base + AK88_SPICON);
++
++	/*
++	 * The SPI core passes the inverse of its logical activate argument here.
++	 * Board firmware asserts the external GPIO low and sets SPICON bit5 for
++	 * the same transaction, then clears bit5 when CS is released. Keep the
++	 * native CS gate in the same asserted state after SPI_CS_HIGH handling.
++	 */
++	if (asserted)
++		ctrl |= AK88_SPICON_CS_FORCE;
++	else
++		ctrl &= ~AK88_SPICON_CS_FORCE;
++
++	writel(ctrl, hw->base + AK88_SPICON);
++}
++
++static int ak88_spi_setup(struct spi_device *spi)
++{
++	if (!spi->bits_per_word)
++		spi->bits_per_word = 8;
++
++	if (spi->bits_per_word != 8)
++		return -EINVAL;
++
++	if (spi->mode & ~(SPI_CPOL | SPI_CPHA | SPI_CS_HIGH))
++		return -EINVAL;
++
++	return 0;
++}
++
++static int ak88_spi_probe(struct platform_device *pdev)
++{
++	struct spi_controller *ctlr;
++	struct ak88_spi *hw;
++	bool keep_preinit_state;
++	u32 sharepin;
++	int ret;
++
++	ctlr = devm_spi_alloc_host(&pdev->dev, sizeof(*hw));
++	if (!ctlr)
++		return -ENOMEM;
++
++	hw = spi_controller_get_devdata(ctlr);
++
++	hw->base = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(hw->base))
++		return PTR_ERR(hw->base);
++
++	hw->sysctrl = syscon_regmap_lookup_by_phandle(pdev->dev.of_node, "syscon");
++	if (IS_ERR(hw->sysctrl))
++		return dev_err_probe(&pdev->dev, PTR_ERR(hw->sysctrl),
++				     "failed to map sysctrl\n");
++
++	hw->input_clock_hz = AK88_DEFAULT_INPUT_CLOCK_HZ;
++	device_property_read_u32(&pdev->dev, "anyka,input-clock-hz",
++				 &hw->input_clock_hz);
++
++	keep_preinit_state = device_property_read_bool(&pdev->dev,
++						       "anyka,keep-preinit-state");
++
++	ret = ak88_spi_enable_clock(hw);
++	if (ret)
++		return dev_err_probe(&pdev->dev, ret,
++				     "failed to enable SPI clock\n");
++
++	if (!keep_preinit_state) {
++		ret = ak88_spi_config_pins(hw);
++		if (ret)
++			return dev_err_probe(&pdev->dev, ret,
++					     "failed to configure SPI pins\n");
++	} else {
++		dev_info(&pdev->dev,
++			 "keeping preinit pin state (HaRET/bootloader configured)\n");
++	}
++
++	ret = regmap_read(hw->sysctrl, AK88_SHAREPIN_CON1, &sharepin);
++	if (!ret)
++		dev_info(&pdev->dev,
++			 "sharepin_con1=0x%08x spi_clk=%u spi_data_gpio=%u\n",
++			 sharepin, !!(sharepin & AK88_SHAREPIN_SPI_CLK),
++			 !!(sharepin & AK88_SHAREPIN_SPI_DATA));
++
++	ctlr->mode_bits = SPI_CPOL | SPI_CPHA | SPI_CS_HIGH;
++	ctlr->bits_per_word_mask = SPI_BPW_MASK(8);
++	ctlr->flags = SPI_CONTROLLER_GPIO_SS;
++	ctlr->use_gpio_descriptors = true;
++	ctlr->num_chipselect = 1;
++	ctlr->setup = ak88_spi_setup;
++	ctlr->set_cs = ak88_spi_set_cs;
++	ctlr->transfer_one = ak88_spi_transfer_one;
++	ctlr->dev.of_node = pdev->dev.of_node;
++
++	platform_set_drvdata(pdev, ctlr);
++
++	writel(0, hw->base + AK88_SPIINT);
++	writel(AK88_SPI_TIMEOUT_VALUE, hw->base + AK88_SPITOUT);
++	ak88_spi_set_speed(hw, 1000000);
++	ak88_spi_program_mode(hw, 0, true, false);
++
++	dev_info(&pdev->dev, "Anyka SPI controller ready\n");
++
++	return devm_spi_register_controller(&pdev->dev, ctlr);
++}
++
++static const struct of_device_id ak88_spi_of_match[] = {
++	{ .compatible = "anyka,ak880x-spi" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, ak88_spi_of_match);
++
++static struct platform_driver ak88_spi_driver = {
++	.probe = ak88_spi_probe,
++	.driver = {
++		.name = "ak88-spi",
++		.of_match_table = ak88_spi_of_match,
++	},
++};
++module_platform_driver(ak88_spi_driver);
++
++MODULE_DESCRIPTION("Anyka AK88/98 minimal SPI master");
++MODULE_LICENSE("GPL");
+-- 
+2.47.3
+
