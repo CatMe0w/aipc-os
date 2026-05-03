@@ -81,5 +81,3 @@ To build ARM stubs or the DOOM binary, you need `arm-none-eabi-gcc`.
 ## License
 
 See [LICENSE](LICENSE) for details. In short: tools and scripts are MIT, kernel patches are GPLv2, docs are CC-BY-SA 4.0, DOOM is GPLv2.
-
-_Every component of this project is free software or free documentation. No one is authorized to charge for access to it. If you obtained any part of this project through a paywall, you are entitled to a refund._
