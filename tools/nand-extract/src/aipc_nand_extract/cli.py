@@ -4,9 +4,10 @@ import json
 import math
 import re
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
+import bchlib
 import click
 
 from .cecompress import CECOMPRESS_FLAG, CECompressError, maybe_decompress_cecompress
@@ -460,6 +461,56 @@ def unique_output_path(directory: Path, name: str, used_names: set[str]) -> Path
     raise click.ClickException(f"too many duplicate output names for {name}")
 
 
+_bch = bchlib.BCH(4, 0x201B)
+
+# BCH parameters: GF(2^13), t=4, primitive polynomial 0x201B (x^13+x^4+x^3+x+1).
+# ECC input: data[0:512] + oob[0:9] = 521 bytes. ECC parity stored at oob[9:16] (7 bytes).
+_ERASED_CHUNK = b"\xFF" * RAW_CHUNK_SIZE
+
+
+@dataclass
+class ECCStats:
+    ok: int = 0
+    corrected: int = 0
+    uncorrectable: int = 0
+    raw_write: int = 0       # oob_all_ff: data present, ECC never written
+
+    def merge(self, other: "ECCStats") -> None:
+        self.ok += other.ok
+        self.corrected += other.corrected
+        self.uncorrectable += other.uncorrectable
+        self.raw_write += other.raw_write
+
+
+def _ecc_correct_chunk(data: bytes, oob: bytes) -> tuple[bytes, str]:
+    """Return (corrected_data_512, status).
+
+    status is one of: 'ok', 'corrected', 'raw_write', 'uncorrectable'.
+    Uncorrectable chunks are returned as-is (original bytes preserved).
+    """
+    stored_ecc = oob[9:16]
+    inp = bytearray(data + oob[:9])
+    computed = _bch.encode(bytes(inp))
+
+    if computed == stored_ecc:
+        return data, "ok"
+
+    if oob == b"\xFF" * OOB_SIZE:
+        # OOB was never written; data is raw-written without ECC. Treat as valid.
+        return data, "raw_write"
+
+    n = _bch.decode(inp, stored_ecc)
+    if n > 0:
+        # errloc holds bit positions; correct() flips them in inp.
+        _bch.correct(inp)
+        return bytes(inp[:CHUNK_SIZE]), "corrected"
+    if n == 0:
+        # Syndrome is zero: only ECC padding bits differ, data is fine.
+        return data, "ok"
+    # n < 0: beyond correction capability, pass through unchanged.
+    return data, "uncorrectable"
+
+
 def normalize_plain(page: bytes) -> bytes:
     return page[:PAGE_SIZE]
 
@@ -468,10 +519,31 @@ def normalize_interleaved(page: bytes) -> bytes:
     return b"".join(page[i * RAW_CHUNK_SIZE : i * RAW_CHUNK_SIZE + CHUNK_SIZE] for i in range(CHUNKS_PER_PAGE))
 
 
-def normalize_nbt_page(page: bytes) -> bytes:
+def normalize_interleaved_ecc(page: bytes, stats: ECCStats) -> bytes:
+    chunks = []
+    for i in range(CHUNKS_PER_PAGE):
+        off = i * RAW_CHUNK_SIZE
+        raw = page[off : off + RAW_CHUNK_SIZE]
+        if raw == _ERASED_CHUNK:
+            chunks.append(raw[:CHUNK_SIZE])
+            continue
+        data, status = _ecc_correct_chunk(raw[:CHUNK_SIZE], raw[CHUNK_SIZE:])
+        chunks.append(data)
+        if status == "ok":
+            stats.ok += 1
+        elif status == "corrected":
+            stats.corrected += 1
+        elif status == "raw_write":
+            stats.raw_write += 1
+        else:
+            stats.uncorrectable += 1
+    return b"".join(chunks)
+
+
+def normalize_nbt_page(page: bytes, stats: ECCStats) -> bytes:
     if page[PAGE_SIZE:] == b"\xFF" * (RAW_PAGE_SIZE - PAGE_SIZE):
         return normalize_plain(page)
-    return normalize_interleaved(page)
+    return normalize_interleaved_ecc(page, stats)
 
 
 def parse_ptb_entry(raw: bytes, index: int) -> PTBEntry:
@@ -622,20 +694,22 @@ def find_entry(entries: list[PTBEntry], tag: str) -> PTBEntry:
     raise click.ClickException(f"PTB entry not found: {tag}")
 
 
-def normalize_raw_nand(raw_path: Path, clean_path: Path, candidate: PTBCandidate) -> None:
+def normalize_raw_nand(raw_path: Path, clean_path: Path, candidate: PTBCandidate) -> ECCStats:
     nbt_entry = find_entry(candidate.entries, "NBT")
     nbt_start_page = nbt_entry.start_block * candidate.geometry.pages_per_block
     nbt_end_page = (nbt_entry.start_block + nbt_entry.block_count) * candidate.geometry.pages_per_block
 
+    stats = ECCStats()
     with raw_path.open("rb") as fi, clean_path.open("wb") as fo:
         for page_index in range(candidate.geometry.total_pages):
             page = fi.read(RAW_PAGE_SIZE)
             if len(page) != RAW_PAGE_SIZE:
                 raise click.ClickException(f"short read at raw page {page_index}")
             if nbt_start_page <= page_index < nbt_end_page:
-                fo.write(normalize_nbt_page(page))
+                fo.write(normalize_nbt_page(page, stats))
             else:
-                fo.write(normalize_interleaved(page))
+                fo.write(normalize_interleaved_ecc(page, stats))
+    return stats
 
 
 def copy_partition(clean_path: Path, out_dir: Path, entry: PTBEntry, geometry: NANDGeometry) -> None:
@@ -1798,7 +1872,14 @@ def main(raw_nand_image: str, output_dir: str | None) -> None:
 
     clean_path = out_dir / "nand.clean.bin"
     click.echo(f"Normalizing -> {clean_path}")
-    normalize_raw_nand(raw_path, clean_path, candidate)
+    ecc_stats = normalize_raw_nand(raw_path, clean_path, candidate)
+    click.echo(
+        f"ECC: {ecc_stats.corrected} corrected, "
+        f"{ecc_stats.raw_write} raw-write (no ECC stored), "
+        f"{ecc_stats.uncorrectable} uncorrectable (passed through)"
+    )
+    if ecc_stats.uncorrectable:
+        click.echo(f"  Warning: {ecc_stats.uncorrectable} chunk(s) had unrecoverable bit errors and were passed through unchanged", err=True)
 
     click.echo("Splitting PTB partitions...")
     for entry in candidate.entries:
