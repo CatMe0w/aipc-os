@@ -23,7 +23,7 @@ The tool does one fixed extraction flow. It has no mode flags.
 1. Scan the raw dump for candidate `PTB` pages using temporary interleaved-page normalization.
 2. Parse the newest valid PTB snapshot. The PTB entry table is located by matching the strict tag sequence `NBT, IPL, BAK, UDR, NK, DSK, CFG, END` — not by a fixed offset — which covers both the v1.88 layout at `PTB+0x670` and the v1.58.2 layout at `PTB+0x230`.
 3. Derive NAND block geometry from the `END` entry and raw dump size.
-4. Normalize the full raw dump to `nand.clean.bin`. Most partitions use interleaved pages (`4 × (512 data + 16 OOB/ECC)` → 2048 bytes). `NBT` is special: pages whose final 64 raw bytes are all `0xFF` are treated as plain `2048B data + 64B OOB` pages; the rest are normalized as interleaved.
+4. Normalize the full raw dump to `nand.clean.bin`. Most partitions use interleaved pages (`4 × (512 data + 16 OOB/ECC)` -> 2048 bytes). `NBT` is special: pages whose final 64 raw bytes are all `0xFF` are treated as plain `2048B data + 64B OOB` pages; the rest are normalized as interleaved.
 5. Split the clean dump into PTB partitions named `<TAG>.raw`.
 6. Export analysis-ready views: `NBT.code.bin` (nboot payload), `IPL.eboot.bin` / `BAK.eboot.bin` (EBOOT payload, wrapper-stripped).
 7. Parse the `NK` partition's MBR child partition table and write `NK.binfs.raw` (type `0x21`) and `NK.fat.raw` (type `0x04`).
