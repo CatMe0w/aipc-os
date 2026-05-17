@@ -14,25 +14,25 @@ See [https://aipc-os.catme0w.org/](https://aipc-os.catme0w.org/) for the project
 
 ### Documentation ([`docs/`](docs/))
 
-Three layers of the boot chain, reverse-engineered from scratch:
-
 - **[bootrom](docs/bootrom/README.md)** -- The mask ROM baked into the AK7802 die. USB boot mode, NAND/SPI boot, UART console, GPIO naming crosswalk, full memory map.
-- **[nboot](docs/nboot/README.md)** -- First-stage NAND bootloader. DDR init script, self-relocation to upper DDR, EBOOT loading.
-- **[EBOOT](docs/eboot/README.md)** -- WinCE second-stage bootloader. LCD bring-up (800x480, register-level cookbook), ENC28J60 SPI Ethernet, CH374 USB HID keyboard, NAND driver (4x528-byte interleaved ECC layout), vendor partition table (PTB), TFTP/EDBG download protocol, maintenance mode password and menu, GPIO driver with two independent pin numbering systems, CPU PLL formula.
+- **[nboot](docs/nboot/README.md)** -- First-stage NAND bootloader. DDR init script, EBOOT loading.
+- **[EBOOT](docs/eboot/README.md)** -- WinCE second-stage bootloader. LCD bring-up, ENC28J60 SPI Ethernet, CH374 USB HID keyboard, NAND driver, vendor partition table, TFTP/EDBG download protocol, maintenance mode password and menu, GPIO driver with two independent pin numbering systems, CPU PLL formula.
 - **[NK](docs/nk/README.md)** -- WinCE kernel and vendor drivers.
+
+Reverse-engineered from scratch.
 
 ### Bare-metal DOOM ([`doom/`](doom/))
 
-A [doomgeneric](https://github.com/ozkl/doomgeneric)-based DOOM port that runs directly on AIPC. Loaded over USB boot mode.
+A [doomgeneric](https://github.com/ozkl/doomgeneric)-based DOOM port that runs directly on AIPC.
 
 ### Boot methods ([`boot/`](boot/))
 
-- `coldboot/` -- Boot Linux directly from internal disk, bypassing WinCE entirely (WIP).
+- `coldboot/` -- Boot Linux directly from internal disk, bypassing WinCE entirely.
 - `warmboot/` -- [HaRET](boot/warmboot/third_party/)-based Linux boot from within WinCE.
 
 ### Linux kernel ([`kernel/`](kernel/))
 
-Kernel sources and patches (work in progress).
+Kernel sources and patches.
 
 ### Tools ([`tools/`](tools/))
 
@@ -49,6 +49,11 @@ Python CLI tools (uv workspace) for talking to the device:
 | `aipc-ddr-init`      | Standalone DDR SDRAM init via USB boot  |
 | `aipc-nand-dump`     | Fast NAND dump tool for AIPC            |
 | `aipc-nand-extract`  | Extract partitions from a raw NAND dump |
+
+| Extra    | Purpose                                                               |
+| -------- | --------------------------------------------------------------------- |
+| `probes` | ARM assembly probes for investigating hardware behavior (e.g. SD/MMC) |
+| `old`    | Deprecated tools and scripts from early experimentation               |
 
 ### Website ([`website/`](website/))
 
