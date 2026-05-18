@@ -54,8 +54,9 @@ void *_sbrk(ptrdiff_t incr)
  * File size = dir_offset + num_lumps * 16 (each directory entry is 16 bytes).
  */
 
-#define DDR_WAD_BASE  0x30900000u
-#define WAD_FD        3
+#define DDR_WAD_BASE     0x30900000u
+#define DDR_WAD_MAX_SIZE 0x01400000u  /* 20 MB: region before log buffer at 0x31D00000 */
+#define WAD_FD           3
 
 static int    wad_open   = 0;
 static size_t wad_offset = 0;
@@ -68,7 +69,13 @@ static void wad_detect_size(void)
                         | ((uint32_t)hdr[6]  << 16) | ((uint32_t)hdr[7]  << 24);
     uint32_t dir_offset = (uint32_t)hdr[8]  | ((uint32_t)hdr[9]  << 8)
                         | ((uint32_t)hdr[10] << 16) | ((uint32_t)hdr[11] << 24);
-    wad_size = (size_t)dir_offset + (size_t)num_lumps * 16u;
+
+    /* Guard against integer overflow and out-of-DDR-region reads */
+    if (num_lumps > (DDR_WAD_MAX_SIZE / 16u)) { wad_size = 0; return; }
+    uint32_t lumps_size = num_lumps * 16u;
+    if (dir_offset > DDR_WAD_MAX_SIZE - lumps_size) { wad_size = 0; return; }
+    wad_size = (size_t)dir_offset + (size_t)lumps_size;
+    if (wad_size > DDR_WAD_MAX_SIZE) { wad_size = 0; }
 }
 
 int _open(const char *name, int flags, int mode)
