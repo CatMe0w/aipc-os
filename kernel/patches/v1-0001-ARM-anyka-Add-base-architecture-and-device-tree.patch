@@ -1,7 +1,7 @@
 From 6ef795e4267d8b6fea9ccf459b911b4469ba4067 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Fri, 1 May 2026 10:42:24 +0800
-Subject: [PATCH v1 1/8] ARM: anyka: Add base architecture and device tree
+Subject: [PATCH v1 01/10] ARM: anyka: Add base architecture and device tree
 
 ---
  arch/arm/Kconfig                           |  2 +

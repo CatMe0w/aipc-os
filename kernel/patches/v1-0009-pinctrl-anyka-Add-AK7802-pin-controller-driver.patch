@@ -1,0 +1,620 @@
+From cb758609cb229b699e63495b59473948d8b06426 Mon Sep 17 00:00:00 2001
+From: CatMe0w <CatMe0w@live.cn>
+Date: Sat, 1 Aug 2026 23:51:57 +0800
+Subject: [PATCH v1 09/10] pinctrl: anyka: Add AK7802 pin controller driver
+
+---
+ arch/arm/boot/dts/anyka/ak7802-netbook.dts |   4 +
+ arch/arm/boot/dts/anyka/ak7802.dtsi        |  33 ++
+ arch/arm/mach-anyka/Kconfig                |   2 +
+ drivers/pinctrl/Kconfig                    |  13 +
+ drivers/pinctrl/Makefile                   |   1 +
+ drivers/pinctrl/pinctrl-anyka.c            | 368 +++++++++++++++++++++
+ drivers/spi/spi-ak88.c                     |  46 ---
+ drivers/video/fbdev/anyka-lcdfb.c          |  10 -
+ 8 files changed, 421 insertions(+), 56 deletions(-)
+ create mode 100644 drivers/pinctrl/pinctrl-anyka.c
+
+diff --git a/arch/arm/boot/dts/anyka/ak7802-netbook.dts b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
+index 0dea79362..9656471ac 100644
+--- a/arch/arm/boot/dts/anyka/ak7802-netbook.dts
++++ b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
+@@ -38,6 +38,8 @@ display_reserved: framebuffer@33b00000 {
+ };
+ 
+ &lcd0 {
++	pinctrl-names = "default";
++	pinctrl-0 = <&lcd_pins>;
+ 	status = "okay";
+ 	memory-region = <&display_reserved>;
+ 	width = <800>;
+@@ -51,6 +53,8 @@ &usb0 {
+ };
+ 
+ &spi0 {
++	pinctrl-names = "default";
++	pinctrl-0 = <&spi1_pins>;
+ 	cs-gpios = <&gpio 84 GPIO_ACTIVE_LOW>;
+ 	anyka,input-clock-hz = <248000000>;
+ 	status = "okay";
+diff --git a/arch/arm/boot/dts/anyka/ak7802.dtsi b/arch/arm/boot/dts/anyka/ak7802.dtsi
+index dbdf85842..f3bafd793 100644
+--- a/arch/arm/boot/dts/anyka/ak7802.dtsi
++++ b/arch/arm/boot/dts/anyka/ak7802.dtsi
+@@ -19,6 +19,39 @@ sysctrl: system-controller@8000000 {
+ 		reg = <0x8000000 0x1000>;
+ 	};
+ 
++	pinctrl: pinctrl {
++		compatible = "anyka,ak7802-pinctrl";
++		syscon = <&sysctrl>;
++
++		lcd_pins: lcd-pins {
++			function = "lcd";
++			groups = "lcd";
++		};
++
++		spi1_pins: spi1-pins {
++			function = "spi1";
++			groups = "spi1";
++			bias-disable;
++		};
++
++		nand_pins: nand-pins {
++			function = "nand";
++			groups = "nand";
++		};
++
++		sdmmc_pins: sdmmc-pins {
++			function = "sdmmc";
++			groups = "sdmmc1", "sdmmc2";
++			bias-pull-up;
++		};
++
++		sdio_pins: sdio-pins {
++			function = "sdio";
++			groups = "sdio";
++			bias-pull-up;
++		};
++	};
++
+ 	gpio: gpio-controller@8000074 {
+ 		compatible = "anyka,ak880x-gpio";
+ 		reg = <0x8000074 0x8c>;
+diff --git a/arch/arm/mach-anyka/Kconfig b/arch/arm/mach-anyka/Kconfig
+index 428c6e21b..20c45c840 100644
+--- a/arch/arm/mach-anyka/Kconfig
++++ b/arch/arm/mach-anyka/Kconfig
+@@ -11,6 +11,8 @@ menuconfig ARCH_ANYKA
+ 	select GPIOLIB
+ 	select IRQ_DOMAIN
+ 	select MFD_SYSCON
++	select PINCTRL
++	select PINCTRL_ANYKA
+ 	select SPI
+ 	select USE_OF
+ 	help
+diff --git a/drivers/pinctrl/Kconfig b/drivers/pinctrl/Kconfig
+index afecd9407..515a25275 100644
+--- a/drivers/pinctrl/Kconfig
++++ b/drivers/pinctrl/Kconfig
+@@ -85,6 +85,19 @@ config PINCTRL_APPLE_GPIO
+ 	  This driver can also be built as a module. If so, the module
+ 	  will be called pinctrl-apple-gpio.
+ 
++config PINCTRL_ANYKA
++	bool "Anyka AK78/AK88/AK98 pin controller"
++	depends on OF && MFD_SYSCON
++	select PINMUX
++	select PINCONF
++	select GENERIC_PINCONF
++	select GENERIC_PINCTRL_GROUPS
++	select GENERIC_PINMUX_FUNCTIONS
++	help
++	  Say Y here to support the shared-pin mux controller found on
++	  Anyka AK78/AK88/AK98 SoCs. This controls the SYSCTRL sharepin
++	  and pull-up/down registers used by LCD, NAND, SPI, SD/MMC and SDIO.
++
+ config PINCTRL_ARTPEC6
+ 	bool "Axis ARTPEC-6 pin controller driver"
+ 	depends on MACH_ARTPEC6
+diff --git a/drivers/pinctrl/Makefile b/drivers/pinctrl/Makefile
+index f7d5d5f76..6becc7dff 100644
+--- a/drivers/pinctrl/Makefile
++++ b/drivers/pinctrl/Makefile
+@@ -13,6 +13,7 @@ obj-$(CONFIG_OF)		+= devicetree.o
+ obj-$(CONFIG_PINCTRL_AMD)	+= pinctrl-amd.o
+ obj-$(CONFIG_PINCTRL_AMDISP)	+= pinctrl-amdisp.o
+ obj-$(CONFIG_PINCTRL_APPLE_GPIO) += pinctrl-apple-gpio.o
++obj-$(CONFIG_PINCTRL_ANYKA)	+= pinctrl-anyka.o
+ obj-$(CONFIG_PINCTRL_ARTPEC6)	+= pinctrl-artpec6.o
+ obj-$(CONFIG_PINCTRL_AS3722)	+= pinctrl-as3722.o
+ obj-$(CONFIG_PINCTRL_AT91)	+= pinctrl-at91.o
+diff --git a/drivers/pinctrl/pinctrl-anyka.c b/drivers/pinctrl/pinctrl-anyka.c
+new file mode 100644
+index 000000000..19b2eef27
+--- /dev/null
++++ b/drivers/pinctrl/pinctrl-anyka.c
+@@ -0,0 +1,368 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * GPIO sharepin controller support for Anyka AK78/AK88/AK98 SoCs.
++ *
++ * Copyright (C) 2026 CatMe0w
++ * Based on vendor kernel code provided by:
++ * Copyright (C) 2001-2010 ANYKA LTD.
++ */
++
++#include <linux/bitops.h>
++#include <linux/kernel.h>
++#include <linux/mfd/syscon.h>
++#include <linux/mod_devicetable.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/pinctrl/pinconf.h>
++#include <linux/pinctrl/pinconf-generic.h>
++#include <linux/pinctrl/pinctrl.h>
++#include <linux/pinctrl/pinmux.h>
++#include <linux/platform_device.h>
++#include <linux/regmap.h>
++#include <linux/slab.h>
++
++#include "core.h"
++#include "pinmux.h"
++#include "pinctrl-utils.h"
++
++#define ANYKA_PINCTRL_PINS	117
++
++#define ANYKA_SHAREPIN_CON2	0x074
++#define ANYKA_SHAREPIN_CON1	0x078
++#define ANYKA_PULLDOWN1		0x09c
++#define ANYKA_PULLDOWN2		0x0a0
++#define ANYKA_PULLDOWN3		0x0a4
++
++struct anyka_pmx_reg {
++	u32 offset;
++	u32 mask;
++	u32 value;
++};
++
++struct anyka_pin_group {
++	const char *name;
++	const unsigned int *pins;
++	unsigned int npins;
++	const struct anyka_pmx_reg *regs;
++	unsigned int nregs;
++};
++
++struct anyka_pmx_func {
++	const char *name;
++	const char * const *groups;
++	unsigned int ngroups;
++};
++
++struct anyka_pinctrl {
++	struct device *dev;
++	struct regmap *syscon;
++	struct pinctrl_dev *pctldev;
++	struct pinctrl_desc desc;
++	struct mutex lock;
++};
++
++static const struct pinctrl_pin_desc anyka_pins[] = {
++	PINCTRL_PIN(0, "gpio0"), PINCTRL_PIN(1, "gpio1"),
++	PINCTRL_PIN(2, "gpio2"), PINCTRL_PIN(3, "gpio3"),
++	PINCTRL_PIN(4, "gpio4"), PINCTRL_PIN(5, "gpio5"),
++	PINCTRL_PIN(6, "gpio6"), PINCTRL_PIN(7, "gpio7"),
++	PINCTRL_PIN(8, "gpio8"), PINCTRL_PIN(9, "gpio9"),
++	PINCTRL_PIN(10, "gpio10"), PINCTRL_PIN(11, "gpio11"),
++	PINCTRL_PIN(12, "gpio12"), PINCTRL_PIN(13, "gpio13"),
++	PINCTRL_PIN(14, "gpio14"), PINCTRL_PIN(15, "gpio15"),
++	PINCTRL_PIN(16, "gpio16"), PINCTRL_PIN(17, "gpio17"),
++	PINCTRL_PIN(18, "gpio18"), PINCTRL_PIN(19, "gpio19"),
++	PINCTRL_PIN(20, "gpio20"), PINCTRL_PIN(21, "gpio21"),
++	PINCTRL_PIN(22, "gpio22"), PINCTRL_PIN(23, "gpio23"),
++	PINCTRL_PIN(24, "gpio24"), PINCTRL_PIN(25, "gpio25"),
++	PINCTRL_PIN(26, "gpio26"), PINCTRL_PIN(27, "gpio27"),
++	PINCTRL_PIN(28, "gpio28"), PINCTRL_PIN(29, "gpio29"),
++	PINCTRL_PIN(30, "gpio30"), PINCTRL_PIN(31, "gpio31"),
++	PINCTRL_PIN(32, "gpio32"), PINCTRL_PIN(33, "gpio33"),
++	PINCTRL_PIN(34, "gpio34"), PINCTRL_PIN(35, "gpio35"),
++	PINCTRL_PIN(36, "gpio36"), PINCTRL_PIN(37, "gpio37"),
++	PINCTRL_PIN(38, "gpio38"), PINCTRL_PIN(39, "gpio39"),
++	PINCTRL_PIN(40, "gpio40"), PINCTRL_PIN(41, "gpio41"),
++	PINCTRL_PIN(42, "gpio42"), PINCTRL_PIN(43, "gpio43"),
++	PINCTRL_PIN(44, "gpio44"), PINCTRL_PIN(45, "gpio45"),
++	PINCTRL_PIN(46, "gpio46"), PINCTRL_PIN(47, "gpio47"),
++	PINCTRL_PIN(48, "gpio48"), PINCTRL_PIN(49, "gpio49"),
++	PINCTRL_PIN(50, "gpio50"), PINCTRL_PIN(51, "gpio51"),
++	PINCTRL_PIN(52, "gpio52"), PINCTRL_PIN(53, "gpio53"),
++	PINCTRL_PIN(54, "gpio54"), PINCTRL_PIN(55, "gpio55"),
++	PINCTRL_PIN(56, "gpio56"), PINCTRL_PIN(57, "gpio57"),
++	PINCTRL_PIN(58, "gpio58"), PINCTRL_PIN(59, "gpio59"),
++	PINCTRL_PIN(60, "gpio60"), PINCTRL_PIN(61, "gpio61"),
++	PINCTRL_PIN(62, "gpio62"), PINCTRL_PIN(63, "gpio63"),
++	PINCTRL_PIN(64, "gpio64"), PINCTRL_PIN(65, "gpio65"),
++	PINCTRL_PIN(66, "gpio66"), PINCTRL_PIN(67, "gpio67"),
++	PINCTRL_PIN(68, "gpio68"), PINCTRL_PIN(69, "gpio69"),
++	PINCTRL_PIN(70, "gpio70"), PINCTRL_PIN(71, "gpio71"),
++	PINCTRL_PIN(72, "gpio72"), PINCTRL_PIN(73, "gpio73"),
++	PINCTRL_PIN(74, "gpio74"), PINCTRL_PIN(75, "gpio75"),
++	PINCTRL_PIN(76, "gpio76"), PINCTRL_PIN(77, "gpio77"),
++	PINCTRL_PIN(78, "gpio78"), PINCTRL_PIN(79, "gpio79"),
++	PINCTRL_PIN(80, "gpio80"), PINCTRL_PIN(81, "gpio81"),
++	PINCTRL_PIN(82, "gpio82"), PINCTRL_PIN(83, "gpio83"),
++	PINCTRL_PIN(84, "gpio84"), PINCTRL_PIN(85, "gpio85"),
++	PINCTRL_PIN(86, "gpio86"), PINCTRL_PIN(87, "gpio87"),
++	PINCTRL_PIN(88, "gpio88"), PINCTRL_PIN(89, "gpio89"),
++	PINCTRL_PIN(90, "gpio90"), PINCTRL_PIN(91, "gpio91"),
++	PINCTRL_PIN(92, "gpio92"), PINCTRL_PIN(93, "gpio93"),
++	PINCTRL_PIN(94, "gpio94"), PINCTRL_PIN(95, "gpio95"),
++	PINCTRL_PIN(96, "gpio96"), PINCTRL_PIN(97, "gpio97"),
++	PINCTRL_PIN(98, "gpio98"), PINCTRL_PIN(99, "gpio99"),
++	PINCTRL_PIN(100, "gpio100"), PINCTRL_PIN(101, "gpio101"),
++	PINCTRL_PIN(102, "gpio102"), PINCTRL_PIN(103, "gpio103"),
++	PINCTRL_PIN(104, "gpio104"), PINCTRL_PIN(105, "gpio105"),
++	PINCTRL_PIN(106, "gpio106"), PINCTRL_PIN(107, "gpio107"),
++	PINCTRL_PIN(108, "gpio108"), PINCTRL_PIN(109, "gpio109"),
++	PINCTRL_PIN(110, "gpio110"), PINCTRL_PIN(111, "gpio111"),
++	PINCTRL_PIN(112, "gpio112"), PINCTRL_PIN(113, "gpio113"),
++	PINCTRL_PIN(114, "gpio114"), PINCTRL_PIN(115, "gpio115"),
++	PINCTRL_PIN(116, "gpio116"),
++};
++
++static const unsigned int lcd_pins[] = {
++	61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71,
++};
++static const unsigned int nand_pins[] = { 30, 31, 32, 33, 34, 35, 36, 37 };
++static const unsigned int sdmmc1_pins[] = { 30, 31, 32, 33, 34, 35, 36, 37 };
++static const unsigned int sdmmc2_pins[] = { 72, 73, 74, 75 };
++static const unsigned int sdio_pins[] = { 14, 15, 16, 17, 28, 29 };
++static const unsigned int spi1_pins[] = { 76, 77, 78, 79 };
++
++static const struct anyka_pmx_reg lcd_regs[] = {
++	{ ANYKA_SHAREPIN_CON1, GENMASK(28, 25), GENMASK(28, 25) },
++};
++
++static const struct anyka_pmx_reg nand_regs[] = {
++	{ ANYKA_SHAREPIN_CON1, GENMASK(19, 16) | BIT(22),
++	  GENMASK(19, 16) | BIT(22) },
++	{ ANYKA_SHAREPIN_CON2, GENMASK(4, 3), BIT(3) },
++};
++
++static const struct anyka_pmx_reg sdmmc1_regs[] = {
++	{ ANYKA_SHAREPIN_CON1, GENMASK(18, 16), GENMASK(18, 16) },
++	{ ANYKA_SHAREPIN_CON2, GENMASK(4, 3), BIT(4) },
++};
++
++static const struct anyka_pmx_reg sdmmc2_regs[] = {
++	{ ANYKA_SHAREPIN_CON1, BIT(29), BIT(29) },
++};
++
++static const struct anyka_pmx_reg sdio_regs[] = {
++	{ ANYKA_SHAREPIN_CON1, GENMASK(15, 14), GENMASK(15, 14) },
++	{ ANYKA_SHAREPIN_CON2, GENMASK(2, 1), BIT(2) },
++};
++
++static const struct anyka_pmx_reg spi1_regs[] = {
++	{ ANYKA_SHAREPIN_CON1, BIT(30) | GENMASK(2, 1) | BIT(4),
++	  BIT(30) | BIT(4) },
++};
++
++static const struct anyka_pin_group anyka_groups[] = {
++	{ "lcd", lcd_pins, ARRAY_SIZE(lcd_pins), lcd_regs, ARRAY_SIZE(lcd_regs) },
++	{ "nand", nand_pins, ARRAY_SIZE(nand_pins), nand_regs, ARRAY_SIZE(nand_regs) },
++	{ "sdmmc1", sdmmc1_pins, ARRAY_SIZE(sdmmc1_pins), sdmmc1_regs, ARRAY_SIZE(sdmmc1_regs) },
++	{ "sdmmc2", sdmmc2_pins, ARRAY_SIZE(sdmmc2_pins), sdmmc2_regs, ARRAY_SIZE(sdmmc2_regs) },
++	{ "sdio", sdio_pins, ARRAY_SIZE(sdio_pins), sdio_regs, ARRAY_SIZE(sdio_regs) },
++	{ "spi1", spi1_pins, ARRAY_SIZE(spi1_pins), spi1_regs, ARRAY_SIZE(spi1_regs) },
++};
++
++static const char * const lcd_groups[] = { "lcd" };
++static const char * const nand_groups[] = { "nand" };
++static const char * const sdmmc_groups[] = { "sdmmc1", "sdmmc2" };
++static const char * const sdio_groups[] = { "sdio" };
++static const char * const spi1_groups[] = { "spi1" };
++
++static const struct anyka_pmx_func anyka_functions[] = {
++	{ "lcd", lcd_groups, ARRAY_SIZE(lcd_groups) },
++	{ "nand", nand_groups, ARRAY_SIZE(nand_groups) },
++	{ "sdmmc", sdmmc_groups, ARRAY_SIZE(sdmmc_groups) },
++	{ "sdio", sdio_groups, ARRAY_SIZE(sdio_groups) },
++	{ "spi1", spi1_groups, ARRAY_SIZE(spi1_groups) },
++};
++
++static int anyka_pinctrl_set_mux(struct pinctrl_dev *pctldev,
++				 unsigned int func_selector,
++				 unsigned int group_selector)
++{
++	struct anyka_pinctrl *ap = pinctrl_dev_get_drvdata(pctldev);
++	const struct anyka_pin_group *group;
++	struct group_desc *desc;
++	unsigned int i;
++	int ret = 0;
++
++	desc = pinctrl_generic_get_group(pctldev, group_selector);
++	if (!desc)
++		return -EINVAL;
++
++	group = desc->data;
++
++	mutex_lock(&ap->lock);
++	for (i = 0; i < group->nregs; i++) {
++		const struct anyka_pmx_reg *reg = &group->regs[i];
++
++		ret = regmap_update_bits(ap->syscon, reg->offset,
++					 reg->mask, reg->value);
++		if (ret)
++			break;
++	}
++	mutex_unlock(&ap->lock);
++
++	return ret;
++}
++
++static const struct pinmux_ops anyka_pinmux_ops = {
++	.get_functions_count = pinmux_generic_get_function_count,
++	.get_function_name = pinmux_generic_get_function_name,
++	.get_function_groups = pinmux_generic_get_function_groups,
++	.set_mux = anyka_pinctrl_set_mux,
++};
++
++static const struct pinctrl_ops anyka_pinctrl_ops = {
++	.get_groups_count = pinctrl_generic_get_group_count,
++	.get_group_name = pinctrl_generic_get_group_name,
++	.get_group_pins = pinctrl_generic_get_group_pins,
++	.dt_node_to_map = pinconf_generic_dt_node_to_map_group,
++	.dt_free_map = pinconf_generic_dt_free_map,
++};
++
++static int anyka_pinconf_group_set(struct pinctrl_dev *pctldev,
++				   unsigned int group_selector,
++				   unsigned long *configs,
++				   unsigned int num_configs)
++{
++	struct anyka_pinctrl *ap = pinctrl_dev_get_drvdata(pctldev);
++	struct group_desc *desc;
++	enum pin_config_param param;
++	const char *name;
++	unsigned int i;
++	int ret = 0;
++
++	desc = pinctrl_generic_get_group(pctldev, group_selector);
++	if (!desc)
++		return -EINVAL;
++	name = desc->grp.name;
++
++	mutex_lock(&ap->lock);
++	for (i = 0; i < num_configs; i++) {
++		param = pinconf_to_config_param(configs[i]);
++
++		switch (param) {
++		case PIN_CONFIG_BIAS_DISABLE:
++			if (!strcmp(name, "spi1"))
++				ret = regmap_update_bits(ap->syscon,
++							 ANYKA_PULLDOWN3,
++							 GENMASK(15, 12),
++							 GENMASK(15, 12));
++			else
++				ret = -EOPNOTSUPP;
++			break;
++		case PIN_CONFIG_BIAS_PULL_UP:
++			if (!strcmp(name, "sdmmc1") || !strcmp(name, "sdmmc2"))
++				ret = regmap_update_bits(ap->syscon,
++							 ANYKA_PULLDOWN2,
++							 GENMASK(8, 7),
++							 GENMASK(8, 7));
++			else if (!strcmp(name, "sdio"))
++				ret = regmap_update_bits(ap->syscon,
++							 ANYKA_PULLDOWN1,
++							 GENMASK(29, 26),
++							 GENMASK(29, 26));
++			else
++				ret = -EOPNOTSUPP;
++			break;
++		default:
++			ret = -EOPNOTSUPP;
++			break;
++		}
++
++		if (ret)
++			break;
++	}
++	mutex_unlock(&ap->lock);
++
++	return ret;
++}
++
++static const struct pinconf_ops anyka_pinconf_ops = {
++	.pin_config_group_set = anyka_pinconf_group_set,
++	.is_generic = true,
++};
++
++static int anyka_pinctrl_probe(struct platform_device *pdev)
++{
++	struct anyka_pinctrl *ap;
++	unsigned int i;
++	int ret;
++
++	ap = devm_kzalloc(&pdev->dev, sizeof(*ap), GFP_KERNEL);
++	if (!ap)
++		return -ENOMEM;
++
++	ap->dev = &pdev->dev;
++	mutex_init(&ap->lock);
++
++	ap->syscon = syscon_regmap_lookup_by_phandle(pdev->dev.of_node,
++						     "syscon");
++	if (IS_ERR(ap->syscon))
++		return dev_err_probe(&pdev->dev, PTR_ERR(ap->syscon),
++				     "failed to get syscon\n");
++
++	ap->desc.name = "anyka-pinctrl";
++	ap->desc.owner = THIS_MODULE;
++	ap->desc.pins = anyka_pins;
++	ap->desc.npins = ARRAY_SIZE(anyka_pins);
++	ap->desc.pctlops = &anyka_pinctrl_ops;
++	ap->desc.pmxops = &anyka_pinmux_ops;
++	ap->desc.confops = &anyka_pinconf_ops;
++
++	ap->pctldev = devm_pinctrl_register(&pdev->dev, &ap->desc, ap);
++	if (IS_ERR(ap->pctldev))
++		return dev_err_probe(&pdev->dev, PTR_ERR(ap->pctldev),
++				     "failed to register pinctrl\n");
++
++	for (i = 0; i < ARRAY_SIZE(anyka_groups); i++) {
++		const struct anyka_pin_group *group = &anyka_groups[i];
++
++		ret = pinctrl_generic_add_group(ap->pctldev, group->name,
++						group->pins, group->npins,
++						(void *)group);
++		if (ret < 0)
++			return ret;
++	}
++
++	for (i = 0; i < ARRAY_SIZE(anyka_functions); i++) {
++		const struct anyka_pmx_func *func = &anyka_functions[i];
++
++		ret = pinmux_generic_add_function(ap->pctldev, func->name,
++						  func->groups, func->ngroups,
++						  NULL);
++		if (ret < 0)
++			return ret;
++	}
++
++	dev_info(&pdev->dev, "registered %u pins\n", ANYKA_PINCTRL_PINS);
++
++	return 0;
++}
++
++static const struct of_device_id anyka_pinctrl_of_match[] = {
++	{ .compatible = "anyka,ak7802-pinctrl" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, anyka_pinctrl_of_match);
++
++static struct platform_driver anyka_pinctrl_driver = {
++	.probe = anyka_pinctrl_probe,
++	.driver = {
++		.name = "anyka-pinctrl",
++		.of_match_table = anyka_pinctrl_of_match,
++	},
++};
++module_platform_driver(anyka_pinctrl_driver);
++
++MODULE_DESCRIPTION("Anyka AK78/AK88/AK98 pin controller");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/spi/spi-ak88.c b/drivers/spi/spi-ak88.c
+index 8dc61e4cc..7778b240c 100644
+--- a/drivers/spi/spi-ak88.c
++++ b/drivers/spi/spi-ak88.c
+@@ -50,9 +50,6 @@
+ #define AK88_SHAREPIN_CON1		0x78
+ #define AK88_SHAREPIN_SPI_CLK		BIT(30)
+ #define AK88_SHAREPIN_SPI_DATA		GENMASK(2, 1)
+-#define AK88_SHAREPIN_WLED_PWM		BIT(4)
+-#define AK88_PPU_PPD3			0xa4
+-#define AK88_SPI0_GPIO_MASK		GENMASK(15, 12)
+ 
+ #define AK88_DEFAULT_INPUT_CLOCK_HZ	248000000
+ #define AK88_SPICON_CLKDIV_MASK		(0x7f << 8)
+@@ -76,35 +73,6 @@ static int ak88_spi_enable_clock(struct ak88_spi *hw)
+ 				  AK88_CLOCK_CTRL_SPI, 0);
+ }
+ 
+-static int ak88_spi_config_pins(struct ak88_spi *hw)
+-{
+-	u32 mask = AK88_SHAREPIN_SPI_CLK | AK88_SHAREPIN_SPI_DATA |
+-		   AK88_SHAREPIN_WLED_PWM;
+-	int ret;
+-
+-	/*
+-	 * AK7802 routes this controller with bit30 set, bit4 set, and bits 1:2
+-	 * cleared in SHAREPIN_CON1. GPIO chip-select muxing is handled by the
+-	 * GPIO driver when the CS descriptor is requested.
+-	 */
+-	ret = regmap_update_bits(hw->sysctrl, AK88_SHAREPIN_CON1,
+-				 mask,
+-				 AK88_SHAREPIN_SPI_CLK | AK88_SHAREPIN_WLED_PWM);
+-	if (ret)
+-		return ret;
+-
+-	/*
+-	 * Datasheet default keeps pull-up/down enabled; disable it for SPI pins
+-	 * so DIN is not biased low when the peripheral drives MISO.
+-	 */
+-	ret = regmap_update_bits(hw->sysctrl, AK88_PPU_PPD3,
+-				 AK88_SPI0_GPIO_MASK, AK88_SPI0_GPIO_MASK);
+-	if (ret)
+-		return ret;
+-
+-	return 0;
+-}
+-
+ static void ak88_spi_set_speed(struct ak88_spi *hw, u32 speed_hz)
+ {
+ 	u32 ctrl;
+@@ -388,7 +356,6 @@ static int ak88_spi_probe(struct platform_device *pdev)
+ {
+ 	struct spi_controller *ctlr;
+ 	struct ak88_spi *hw;
+-	bool keep_preinit_state;
+ 	u32 sharepin;
+ 	int ret;
+ 
+@@ -411,24 +378,11 @@ static int ak88_spi_probe(struct platform_device *pdev)
+ 	device_property_read_u32(&pdev->dev, "anyka,input-clock-hz",
+ 				 &hw->input_clock_hz);
+ 
+-	keep_preinit_state = device_property_read_bool(&pdev->dev,
+-						       "anyka,keep-preinit-state");
+-
+ 	ret = ak88_spi_enable_clock(hw);
+ 	if (ret)
+ 		return dev_err_probe(&pdev->dev, ret,
+ 				     "failed to enable SPI clock\n");
+ 
+-	if (!keep_preinit_state) {
+-		ret = ak88_spi_config_pins(hw);
+-		if (ret)
+-			return dev_err_probe(&pdev->dev, ret,
+-					     "failed to configure SPI pins\n");
+-	} else {
+-		dev_info(&pdev->dev,
+-			 "keeping preinit pin state (HaRET/bootloader configured)\n");
+-	}
+-
+ 	ret = regmap_read(hw->sysctrl, AK88_SHAREPIN_CON1, &sharepin);
+ 	if (!ret)
+ 		dev_info(&pdev->dev,
+diff --git a/drivers/video/fbdev/anyka-lcdfb.c b/drivers/video/fbdev/anyka-lcdfb.c
+index 6585ad75d..eae1adeff 100644
+--- a/drivers/video/fbdev/anyka-lcdfb.c
++++ b/drivers/video/fbdev/anyka-lcdfb.c
+@@ -49,8 +49,6 @@
+ 
+ #define SYSCTRL_CLOCK_GATE	0x00c
+ #define SYSCTRL_PWM		0x02c
+-#define SYSCTRL_SHAREPIN0	0x074
+-#define SYSCTRL_SHAREPIN1	0x078
+ #define SYSCTRL_GPIO_DIR_BASE	0x07c
+ #define SYSCTRL_GPIO_OUT_BASE	0x080
+ #define SYSCTRL_LCD_CLK_EN_N	BIT(3)
+@@ -243,14 +241,6 @@ static int anyka_lcdfb_init_sysctrl(struct anyka_lcdfb_par *par)
+ 	u32 clk_gate;
+ 	int ret;
+ 
+-	ret = regmap_write(par->sysctrl, SYSCTRL_SHAREPIN0, 0x00000008);
+-	if (ret)
+-		return ret;
+-
+-	ret = regmap_write(par->sysctrl, SYSCTRL_SHAREPIN1, 0x564f0010);
+-	if (ret)
+-		return ret;
+-
+ 	anyka_lcdfb_set_gpio_output(par, 104, true);
+ 	anyka_lcdfb_set_gpio_output(par, 69, false);
+ 	anyka_lcdfb_set_gpio_output(par, 4, false);
+-- 
+2.47.3
+

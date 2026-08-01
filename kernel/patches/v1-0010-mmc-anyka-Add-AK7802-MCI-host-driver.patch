@@ -1,0 +1,864 @@
+From 9153efaaf76edac7c0d1971a29f4db7f300657e1 Mon Sep 17 00:00:00 2001
+From: CatMe0w <CatMe0w@live.cn>
+Date: Sat, 1 Aug 2026 23:52:53 +0800
+Subject: [PATCH v1 10/10] mmc: anyka: Add AK7802 MCI host driver
+
+---
+ arch/arm/boot/dts/anyka/ak7802-netbook.dts |   8 +
+ arch/arm/boot/dts/anyka/ak7802.dtsi        |  15 +
+ drivers/mmc/host/Kconfig                   |  10 +
+ drivers/mmc/host/Makefile                  |   1 +
+ drivers/mmc/host/anyka-mmc.c               | 766 +++++++++++++++++++++
+ 5 files changed, 800 insertions(+)
+ create mode 100644 drivers/mmc/host/anyka-mmc.c
+
+diff --git a/arch/arm/boot/dts/anyka/ak7802-netbook.dts b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
+index 9656471ac..008f8b388 100644
+--- a/arch/arm/boot/dts/anyka/ak7802-netbook.dts
++++ b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
+@@ -74,3 +74,11 @@ ch374: ch374@0 {
+ 		 */
+ 	};
+ };
++
++&mmc0 {
++	wp-gpios = <&gpio 7 GPIO_ACTIVE_HIGH>;
++	non-removable;
++	post-power-on-delay-ms = <100>;
++	anyka,input-clock-hz = <124000000>;
++	status = "okay";
++};
+diff --git a/arch/arm/boot/dts/anyka/ak7802.dtsi b/arch/arm/boot/dts/anyka/ak7802.dtsi
+index f3bafd793..dca1fed68 100644
+--- a/arch/arm/boot/dts/anyka/ak7802.dtsi
++++ b/arch/arm/boot/dts/anyka/ak7802.dtsi
+@@ -108,6 +108,21 @@ spi0: spi@20024000 {
+ 		status = "disabled";
+ 	};
+ 
++	mmc0: mmc@20020000 {
++		compatible = "anyka,ak7802-mmc";
++		reg = <0x20020000 0x44>;
++		interrupt-parent = <&main_intc>;
++		interrupts = <22>;
++		syscon = <&sysctrl>;
++		pinctrl-names = "default";
++		pinctrl-0 = <&sdmmc_pins>;
++		bus-width = <4>;
++		max-frequency = <21000000>;
++		no-mmc;
++		no-sdio;
++		status = "disabled";
++	};
++
+ 	usb0: usb@70000000 {
+ 		compatible = "anyka,ak98-fshc";
+ 		reg = <0x70000000 0x1000>;
+diff --git a/drivers/mmc/host/Kconfig b/drivers/mmc/host/Kconfig
+index 6d79cc9a7..73a38b2c9 100644
+--- a/drivers/mmc/host/Kconfig
++++ b/drivers/mmc/host/Kconfig
+@@ -521,6 +521,16 @@ config MMC_MOXART
+ 	  be found on some embedded hardware such as UC-7112-LX.
+ 	  If you have a controller with this interface, say Y here.
+ 
++config MMC_ANYKA
++	tristate "Anyka AK78/AK88/AK98 MCI support"
++	depends on OF && MFD_SYSCON
++	default y if ARCH_ANYKA
++	help
++	  This selects support for the Anyka MCI SD/MMC host controller.
++	  The AK7802 uses this controller for the external SD card slot.
++
++	  If unsure, say N.
++
+ config MMC_SDHCI_ST
+ 	tristate "SDHCI support on STMicroelectronics SoC"
+ 	depends on ARCH_STI || FSP2 || COMPILE_TEST
+diff --git a/drivers/mmc/host/Makefile b/drivers/mmc/host/Makefile
+index 5057fea8a..0af1c225a 100644
+--- a/drivers/mmc/host/Makefile
++++ b/drivers/mmc/host/Makefile
+@@ -67,6 +67,7 @@ meson-mx-sdhc-objs 		:= meson-mx-sdhc-clkc.o meson-mx-sdhc-mmc.o
+ obj-$(CONFIG_MMC_MESON_MX_SDHC)	+= meson-mx-sdhc.o
+ obj-$(CONFIG_MMC_MESON_MX_SDIO)	+= meson-mx-sdio.o
+ obj-$(CONFIG_MMC_MOXART)	+= moxart-mmc.o
++obj-$(CONFIG_MMC_ANYKA)		+= anyka-mmc.o
+ obj-$(CONFIG_MMC_SUNXI)		+= sunxi-mmc.o
+ obj-$(CONFIG_MMC_USDHI6ROL0)	+= usdhi6rol0.o
+ obj-$(CONFIG_MMC_TOSHIBA_PCI)	+= toshsd.o
+diff --git a/drivers/mmc/host/anyka-mmc.c b/drivers/mmc/host/anyka-mmc.c
+new file mode 100644
+index 000000000..1d4fc95ec
+--- /dev/null
++++ b/drivers/mmc/host/anyka-mmc.c
+@@ -0,0 +1,766 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Anyka AK78/AK88/AK98 MCI host controller driver.
++ *
++ * Copyright (C) 2026 CatMe0w
++ * Based on vendor kernel code provided by:
++ * Copyright (C) 2001-2010 ANYKA LTD.
++ */
++
++#include <linux/bitops.h>
++#include <linux/delay.h>
++#include <linux/device.h>
++#include <linux/err.h>
++#include <linux/io.h>
++#include <linux/jiffies.h>
++#include <linux/kernel.h>
++#include <linux/mfd/syscon.h>
++#include <linux/mm.h>
++#include <linux/mmc/card.h>
++#include <linux/mmc/host.h>
++#include <linux/mmc/mmc.h>
++#include <linux/mmc/slot-gpio.h>
++#include <linux/mod_devicetable.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/regmap.h>
++#include <linux/scatterlist.h>
++
++#define ANYKA_MCI_CLOCK		0x04
++#define ANYKA_MCI_ARGUMENT	0x08
++#define ANYKA_MCI_COMMAND	0x0c
++#define ANYKA_MCI_RESPONSE0	0x14
++#define ANYKA_MCI_RESPONSE1	0x18
++#define ANYKA_MCI_RESPONSE2	0x1c
++#define ANYKA_MCI_RESPONSE3	0x20
++#define ANYKA_MCI_DATATIMER	0x24
++#define ANYKA_MCI_DATALENGTH	0x28
++#define ANYKA_MCI_DATACTRL	0x2c
++#define ANYKA_MCI_STATUS	0x34
++#define ANYKA_MCI_MASK		0x38
++#define ANYKA_MCI_DMACTRL	0x3c
++#define ANYKA_MCI_FIFO		0x40
++
++#define ANYKA_CLK_ENABLE	BIT(16)
++#define ANYKA_CLK_FAIL		BIT(19)
++#define ANYKA_CLK_MCI_ENABLE	BIT(20)
++
++#define ANYKA_CPSM_ENABLE	BIT(0)
++#define ANYKA_CPSM_CMD(x)	(((x) & 0x7f) << 1)
++#define ANYKA_CPSM_RESPONSE	BIT(7)
++#define ANYKA_CPSM_LONGRSP	BIT(8)
++#define ANYKA_CPSM_NOCRC	BIT(10)
++#define ANYKA_CPSM_WITHDATA	BIT(11)
++
++#define ANYKA_DPSM_ENABLE	BIT(0)
++#define ANYKA_DPSM_READ		BIT(1)
++#define ANYKA_DPSM_STREAM	BIT(2)
++#define ANYKA_DPSM_BUSMODE(x)	(((x) & 0x3) << 3)
++#define ANYKA_DPSM_BLKSIZE(x)	(((x) & 0xfff) << 16)
++
++#define ANYKA_STA_RESPCRCFAIL	BIT(0)
++#define ANYKA_STA_DATACRCFAIL	BIT(1)
++#define ANYKA_STA_RESPTIMEOUT	BIT(2)
++#define ANYKA_STA_DATATIMEOUT	BIT(3)
++#define ANYKA_STA_RESPEND	BIT(4)
++#define ANYKA_STA_CMDSENT	BIT(5)
++#define ANYKA_STA_DATAEND	BIT(6)
++#define ANYKA_STA_DATABLOCKEND	BIT(7)
++#define ANYKA_STA_STARTBITERR	BIT(8)
++#define ANYKA_STA_TXACTIVE	BIT(10)
++#define ANYKA_STA_RXACTIVE	BIT(11)
++#define ANYKA_STA_FIFOFULL	BIT(12)
++#define ANYKA_STA_FIFOEMPTY	BIT(13)
++
++#define ANYKA_DATA_ERROR	(ANYKA_STA_DATACRCFAIL | ANYKA_STA_DATATIMEOUT | \
++				 ANYKA_STA_STARTBITERR)
++#define ANYKA_DATA_READY	(ANYKA_STA_FIFOFULL | ANYKA_STA_RXACTIVE)
++#define ANYKA_WRITE_READY	(ANYKA_STA_FIFOEMPTY | ANYKA_STA_TXACTIVE)
++
++#define ANYKA_SYSCTRL_CLOCK_GATE	0x0c
++#define ANYKA_CLOCK_GATE_MMC		BIT(2)
++
++#define ANYKA_DEFAULT_INPUT_CLOCK	124000000
++#define ANYKA_DEFAULT_MAX_FREQ		21000000
++#define ANYKA_MAX_DIVIDER		510
++#define ANYKA_DATA_TIMEOUT		U32_MAX
++#define ANYKA_CMD_TIMEOUT_MS		50
++#define ANYKA_DATA_POLL_TIMEOUT_MS	1000
++#define ANYKA_MAX_BLOCK_SIZE		512
++#define ANYKA_MAX_TRANSFER_SIZE		PAGE_SIZE
++#define ANYKA_MAX_BLOCK_COUNT		(ANYKA_MAX_TRANSFER_SIZE / \
++					 ANYKA_MAX_BLOCK_SIZE)
++
++struct anyka_mmc {
++	struct device *dev;
++	struct mmc_host *mmc;
++	struct regmap *sysctrl;
++	void __iomem *base;
++	u32 input_clock;
++	u32 bus_clock;
++	unsigned char bus_width;
++	unsigned char power_mode;
++	u32 bounce[ANYKA_MAX_TRANSFER_SIZE / sizeof(u32)];
++};
++
++static void anyka_mmc_write(struct anyka_mmc *host, unsigned int reg, u32 val)
++{
++	writel_relaxed(val, host->base + reg);
++}
++
++static u32 anyka_mmc_read(struct anyka_mmc *host, unsigned int reg)
++{
++	return readl_relaxed(host->base + reg);
++}
++
++static void anyka_mmc_stop_data(struct anyka_mmc *host)
++{
++	anyka_mmc_write(host, ANYKA_MCI_COMMAND, 0);
++	anyka_mmc_write(host, ANYKA_MCI_DATACTRL, 0);
++	anyka_mmc_write(host, ANYKA_MCI_DATALENGTH, 0);
++	anyka_mmc_write(host, ANYKA_MCI_DMACTRL, 0);
++	anyka_mmc_write(host, ANYKA_MCI_MASK, 0);
++}
++
++static int anyka_mmc_wait_status(struct anyka_mmc *host, u32 mask,
++				 unsigned int timeout_ms, u32 *out)
++{
++	unsigned long timeout;
++	u32 status;
++
++	timeout = jiffies + msecs_to_jiffies(timeout_ms);
++	do {
++		status = anyka_mmc_read(host, ANYKA_MCI_STATUS);
++		if (status & mask) {
++			if (out)
++				*out = status;
++			return 0;
++		}
++		cpu_relax();
++	} while (time_before_eq(jiffies, timeout));
++
++	if (out)
++		*out = status;
++
++	return -ETIMEDOUT;
++}
++
++static void anyka_mmc_hw_reset(struct anyka_mmc *host)
++{
++	u32 con2 = 0, con1 = 0, pupd2 = 0;
++
++	regmap_update_bits(host->sysctrl, ANYKA_SYSCTRL_CLOCK_GATE,
++			   ANYKA_CLOCK_GATE_MMC, ANYKA_CLOCK_GATE_MMC);
++	udelay(10);
++	regmap_update_bits(host->sysctrl, ANYKA_SYSCTRL_CLOCK_GATE,
++			   ANYKA_CLOCK_GATE_MMC, 0);
++	udelay(10);
++
++	anyka_mmc_stop_data(host);
++	anyka_mmc_write(host, ANYKA_MCI_DATATIMER, ANYKA_DATA_TIMEOUT);
++
++	regmap_read(host->sysctrl, 0x74, &con2);
++	regmap_read(host->sysctrl, 0x78, &con1);
++	regmap_read(host->sysctrl, 0xa0, &pupd2);
++	dev_info(host->dev,
++		 "hw reset: sharepin2=0x%08x sharepin1=0x%08x pupd2=0x%08x sta=0x%08x\n",
++		 con2, con1, pupd2, anyka_mmc_read(host, ANYKA_MCI_STATUS));
++}
++
++static void anyka_mmc_set_clock(struct anyka_mmc *host, unsigned int rate)
++{
++	u32 divider, low, high, clock;
++
++	if (!rate) {
++		clock = anyka_mmc_read(host, ANYKA_MCI_CLOCK);
++		clock &= ~ANYKA_CLK_ENABLE;
++		anyka_mmc_write(host, ANYKA_MCI_CLOCK, clock);
++		host->bus_clock = 0;
++		return;
++	}
++
++	divider = DIV_ROUND_UP(host->input_clock, rate);
++	if (divider > 2)
++		divider -= 2;
++	else
++		divider = 0;
++	/* The controller requires identical high and low divider halves. */
++	divider = min_t(u32, roundup(divider, 2), ANYKA_MAX_DIVIDER);
++
++	low = divider / 2;
++	high = divider / 2;
++	clock = ANYKA_CLK_MCI_ENABLE | ANYKA_CLK_FAIL |
++		ANYKA_CLK_ENABLE | (high << 8) | low;
++
++	anyka_mmc_write(host, ANYKA_MCI_CLOCK, clock);
++	host->bus_clock = host->input_clock / (divider + 2);
++	udelay(10);
++}
++
++static void anyka_mmc_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
++{
++	struct anyka_mmc *host = mmc_priv(mmc);
++
++	if (ios->power_mode != host->power_mode) {
++		if (ios->power_mode == MMC_POWER_OFF) {
++			anyka_mmc_set_clock(host, 0);
++			anyka_mmc_stop_data(host);
++		} else if (host->power_mode == MMC_POWER_OFF) {
++			anyka_mmc_hw_reset(host);
++			anyka_mmc_write(host, ANYKA_MCI_CLOCK,
++					ANYKA_CLK_MCI_ENABLE | ANYKA_CLK_FAIL);
++			udelay(10);
++		}
++		host->power_mode = ios->power_mode;
++	}
++
++	host->bus_width = ios->bus_width;
++	anyka_mmc_set_clock(host, ios->clock);
++	dev_info(host->dev,
++		 "set_ios: power=%u clock=%u actual=%u width=%u clkreg=0x%08x sta=0x%08x\n",
++		 ios->power_mode, ios->clock, host->bus_clock, ios->bus_width,
++		 anyka_mmc_read(host, ANYKA_MCI_CLOCK),
++		 anyka_mmc_read(host, ANYKA_MCI_STATUS));
++}
++
++static void anyka_mmc_setup_data(struct anyka_mmc *host, struct mmc_data *data)
++{
++	u32 datactrl;
++	u32 total = data->blksz * data->blocks;
++
++	anyka_mmc_write(host, ANYKA_MCI_DMACTRL, 0);
++	anyka_mmc_write(host, ANYKA_MCI_DATATIMER, ANYKA_DATA_TIMEOUT);
++	anyka_mmc_write(host, ANYKA_MCI_DATALENGTH, total);
++
++	datactrl = ANYKA_DPSM_ENABLE;
++	if (data->flags & MMC_DATA_READ)
++		datactrl |= ANYKA_DPSM_READ;
++	datactrl |= ANYKA_DPSM_BLKSIZE(data->blksz);
++
++	if (host->bus_width == MMC_BUS_WIDTH_4)
++		datactrl |= ANYKA_DPSM_BUSMODE(1);
++	else if (host->bus_width == MMC_BUS_WIDTH_8)
++		datactrl |= ANYKA_DPSM_BUSMODE(2);
++
++	anyka_mmc_write(host, ANYKA_MCI_DATACTRL, datactrl);
++}
++
++static int anyka_mmc_read_data(struct anyka_mmc *host, struct mmc_data *data,
++			       u32 *buffer)
++{
++	unsigned long timeout;
++	unsigned int i, words;
++	u32 observed = 0;
++	u32 status;
++	size_t total = data->blksz * data->blocks;
++
++	words = DIV_ROUND_UP(total, sizeof(u32));
++	timeout = jiffies + msecs_to_jiffies(ANYKA_DATA_POLL_TIMEOUT_MS);
++
++	for (i = 0; i < words; ) {
++		status = anyka_mmc_read(host, ANYKA_MCI_STATUS);
++		observed |= status;
++		if (status & ANYKA_DATA_ERROR) {
++			return (status & ANYKA_STA_DATATIMEOUT) ?
++				-ETIMEDOUT : -EILSEQ;
++		}
++
++		if ((status & ANYKA_DATA_READY) == ANYKA_DATA_READY) {
++			buffer[i++] = anyka_mmc_read(host, ANYKA_MCI_FIFO);
++			timeout = jiffies + msecs_to_jiffies(ANYKA_DATA_POLL_TIMEOUT_MS);
++			continue;
++		}
++		if (status & ANYKA_STA_DATAEND)
++			return -EIO;
++
++		if (time_after_eq(jiffies, timeout))
++			return -ETIMEDOUT;
++		cpu_relax();
++	}
++
++	timeout = jiffies + msecs_to_jiffies(ANYKA_DATA_POLL_TIMEOUT_MS);
++	for (;;) {
++		status = anyka_mmc_read(host, ANYKA_MCI_STATUS);
++		observed |= status;
++		if (status & ANYKA_DATA_ERROR)
++			return (status & ANYKA_STA_DATATIMEOUT) ?
++				-ETIMEDOUT : -EILSEQ;
++		if ((observed & (ANYKA_STA_DATAEND |
++				 ANYKA_STA_DATABLOCKEND)) ==
++		    (ANYKA_STA_DATAEND | ANYKA_STA_DATABLOCKEND))
++			break;
++		if (time_after_eq(jiffies, timeout))
++			return -ETIMEDOUT;
++		cpu_relax();
++	}
++
++	return 0;
++}
++
++static int anyka_mmc_write_data(struct anyka_mmc *host,
++				struct mmc_data *data, const u32 *buffer)
++{
++	unsigned long timeout;
++	unsigned int i, words;
++	u32 observed = 0;
++	u32 status;
++	size_t total = data->blksz * data->blocks;
++
++	words = DIV_ROUND_UP(total, sizeof(u32));
++	timeout = jiffies + msecs_to_jiffies(ANYKA_DATA_POLL_TIMEOUT_MS);
++
++	for (i = 0; i < words; ) {
++		status = anyka_mmc_read(host, ANYKA_MCI_STATUS);
++		observed |= status;
++		if (status & ANYKA_DATA_ERROR) {
++			return (status & ANYKA_STA_DATATIMEOUT) ?
++				-ETIMEDOUT : -EILSEQ;
++		}
++
++		if ((status & ANYKA_WRITE_READY) == ANYKA_WRITE_READY) {
++			anyka_mmc_write(host, ANYKA_MCI_FIFO, buffer[i++]);
++			timeout = jiffies +
++				msecs_to_jiffies(ANYKA_DATA_POLL_TIMEOUT_MS);
++			continue;
++		}
++		if (status & ANYKA_STA_DATAEND)
++			return -EIO;
++
++		if (time_after_eq(jiffies, timeout))
++			return -ETIMEDOUT;
++		cpu_relax();
++	}
++
++	timeout = jiffies + msecs_to_jiffies(ANYKA_DATA_POLL_TIMEOUT_MS);
++	for (;;) {
++		status = anyka_mmc_read(host, ANYKA_MCI_STATUS);
++		observed |= status;
++		if (status & ANYKA_DATA_ERROR)
++			return (status & ANYKA_STA_DATATIMEOUT) ?
++				-ETIMEDOUT : -EILSEQ;
++		if ((observed & (ANYKA_STA_DATAEND |
++				 ANYKA_STA_DATABLOCKEND)) ==
++		    (ANYKA_STA_DATAEND | ANYKA_STA_DATABLOCKEND))
++			break;
++		if (time_after_eq(jiffies, timeout))
++			return -ETIMEDOUT;
++		cpu_relax();
++	}
++
++	return 0;
++}
++
++static int anyka_mmc_send_command(struct anyka_mmc *host,
++				  struct mmc_command *cmd)
++{
++	u32 command, status;
++	int ret;
++
++	if (anyka_mmc_read(host, ANYKA_MCI_COMMAND) & ANYKA_CPSM_ENABLE) {
++		anyka_mmc_write(host, ANYKA_MCI_COMMAND, 0);
++		udelay(1);
++	}
++
++	command = ANYKA_CPSM_ENABLE | ANYKA_CPSM_CMD(cmd->opcode);
++	if (cmd->flags & MMC_RSP_PRESENT) {
++		command |= ANYKA_CPSM_RESPONSE;
++		if (cmd->flags & MMC_RSP_136)
++			command |= ANYKA_CPSM_LONGRSP;
++		if (!(cmd->flags & MMC_RSP_CRC))
++			command |= ANYKA_CPSM_NOCRC;
++	}
++	if (cmd->data)
++		command |= ANYKA_CPSM_WITHDATA;
++
++	anyka_mmc_write(host, ANYKA_MCI_ARGUMENT, cmd->arg);
++	anyka_mmc_write(host, ANYKA_MCI_MASK, 0);
++	anyka_mmc_write(host, ANYKA_MCI_COMMAND, command);
++
++	if (cmd->flags & MMC_RSP_PRESENT)
++		ret = anyka_mmc_wait_status(host, ANYKA_STA_RESPEND |
++					    ANYKA_STA_RESPTIMEOUT |
++					    ANYKA_STA_RESPCRCFAIL,
++					    ANYKA_CMD_TIMEOUT_MS, &status);
++	else
++		ret = anyka_mmc_wait_status(host, ANYKA_STA_CMDSENT |
++					    ANYKA_STA_RESPTIMEOUT,
++					    ANYKA_CMD_TIMEOUT_MS, &status);
++
++	if (ret) {
++		dev_err(host->dev, "cmd%u timeout, sta=0x%08x clk=0x%08x\n",
++			cmd->opcode, status,
++			anyka_mmc_read(host, ANYKA_MCI_CLOCK));
++		cmd->error = ret;
++		return ret;
++	}
++
++	if (cmd->flags & MMC_RSP_136) {
++		cmd->resp[0] = anyka_mmc_read(host, ANYKA_MCI_RESPONSE0);
++		cmd->resp[1] = anyka_mmc_read(host, ANYKA_MCI_RESPONSE1);
++		cmd->resp[2] = anyka_mmc_read(host, ANYKA_MCI_RESPONSE2);
++		cmd->resp[3] = anyka_mmc_read(host, ANYKA_MCI_RESPONSE3);
++	} else {
++		cmd->resp[0] = anyka_mmc_read(host, ANYKA_MCI_RESPONSE0);
++	}
++
++	if (status & ANYKA_STA_RESPTIMEOUT) {
++		dev_err(host->dev,
++			"cmd%u response timeout, sta=0x%08x clk=0x%08x\n",
++			cmd->opcode, status,
++			anyka_mmc_read(host, ANYKA_MCI_CLOCK));
++		cmd->error = -ETIMEDOUT;
++		return cmd->error;
++	}
++
++	if ((status & ANYKA_STA_RESPCRCFAIL) && (cmd->flags & MMC_RSP_CRC)) {
++		cmd->error = -EILSEQ;
++		return cmd->error;
++	}
++
++	return 0;
++}
++
++static int anyka_mmc_wait_card_ready(struct anyka_mmc *host)
++{
++	struct mmc_command status = {};
++	unsigned long timeout;
++	int ret;
++
++	if (!host->mmc->card)
++		return -ENOMEDIUM;
++
++	status.opcode = MMC_SEND_STATUS;
++	status.arg = (u32)host->mmc->card->rca << 16;
++	status.flags = MMC_RSP_R1 | MMC_CMD_AC;
++	timeout = jiffies + msecs_to_jiffies(ANYKA_DATA_POLL_TIMEOUT_MS);
++
++	for (;;) {
++		ret = anyka_mmc_send_command(host, &status);
++		if (ret)
++			return ret;
++		if (R1_STATUS(status.resp[0]))
++			return -EIO;
++		if (mmc_ready_for_data(status.resp[0]))
++			return 0;
++		if (time_after_eq(jiffies, timeout))
++			return -ETIMEDOUT;
++		usleep_range(1000, 2000);
++	}
++}
++
++static int anyka_mmc_read_once(struct anyka_mmc *host,
++			       struct mmc_command *cmd,
++			       struct mmc_data *data, u32 *buffer)
++{
++	int ret;
++
++	anyka_mmc_setup_data(host, data);
++	ret = anyka_mmc_send_command(host, cmd);
++	if (!ret)
++		ret = anyka_mmc_read_data(host, data, buffer);
++	anyka_mmc_stop_data(host);
++
++	return ret;
++}
++
++static int anyka_mmc_write_once(struct anyka_mmc *host,
++				struct mmc_command *cmd,
++				struct mmc_data *data, const u32 *buffer)
++{
++	int ret;
++
++	ret = anyka_mmc_send_command(host, cmd);
++	if (!ret && R1_STATUS(cmd->resp[0])) {
++		cmd->error = -EIO;
++		ret = cmd->error;
++	}
++	if (!ret) {
++		anyka_mmc_setup_data(host, data);
++		ret = anyka_mmc_write_data(host, data, buffer);
++	}
++	anyka_mmc_stop_data(host);
++	if (!ret) {
++		ret = anyka_mmc_wait_card_ready(host);
++		anyka_mmc_stop_data(host);
++	}
++
++	return ret;
++}
++
++static int anyka_mmc_read_blocks(struct anyka_mmc *host,
++				 struct mmc_request *mrq)
++{
++	struct mmc_command command;
++	struct mmc_data block;
++	struct mmc_data *data = mrq->cmd->data;
++	unsigned int i;
++	u32 arg_step;
++	int ret;
++
++	if (mrq->cmd->opcode != MMC_READ_MULTIPLE_BLOCK || !host->mmc->card)
++		return -EINVAL;
++
++	/* Serve page-sized block I/O with the validated single-block path. */
++	arg_step = mmc_card_is_blockaddr(host->mmc->card) ?
++		1 : ANYKA_MAX_BLOCK_SIZE;
++	block = *data;
++	block.blocks = 1;
++	block.stop = NULL;
++
++	for (i = 0; i < data->blocks; i++) {
++		command = *mrq->cmd;
++		command.opcode = MMC_READ_SINGLE_BLOCK;
++		command.arg = mrq->cmd->arg + i * arg_step;
++		command.error = 0;
++		command.data = &block;
++		memset(command.resp, 0, sizeof(command.resp));
++		block.blk_addr = data->blk_addr + i;
++		block.bytes_xfered = 0;
++		block.error = 0;
++
++		ret = anyka_mmc_read_once(host, &command, &block,
++					  host->bounce +
++					  i * ANYKA_MAX_BLOCK_SIZE / sizeof(u32));
++		if (ret) {
++			if (command.error)
++				mrq->cmd->error = command.error;
++			return ret;
++		}
++		memcpy(mrq->cmd->resp, command.resp, sizeof(command.resp));
++	}
++
++	return 0;
++}
++
++static int anyka_mmc_write_blocks(struct anyka_mmc *host,
++				  struct mmc_request *mrq)
++{
++	struct mmc_command command;
++	struct mmc_data block;
++	struct mmc_data *data = mrq->cmd->data;
++	unsigned int i;
++	u32 arg_step;
++	int ret;
++
++	if (mrq->cmd->opcode != MMC_WRITE_MULTIPLE_BLOCK || !host->mmc->card)
++		return -EINVAL;
++
++	/* Serve page-sized block I/O with the validated single-block path. */
++	arg_step = mmc_card_is_blockaddr(host->mmc->card) ?
++		1 : ANYKA_MAX_BLOCK_SIZE;
++	block = *data;
++	block.blocks = 1;
++	block.stop = NULL;
++
++	for (i = 0; i < data->blocks; i++) {
++		command = *mrq->cmd;
++		command.opcode = MMC_WRITE_BLOCK;
++		command.arg = mrq->cmd->arg + i * arg_step;
++		command.error = 0;
++		command.data = &block;
++		memset(command.resp, 0, sizeof(command.resp));
++		block.blk_addr = data->blk_addr + i;
++		block.bytes_xfered = 0;
++		block.error = 0;
++
++		ret = anyka_mmc_write_once(host, &command, &block,
++					   host->bounce +
++					   i * ANYKA_MAX_BLOCK_SIZE / sizeof(u32));
++		if (ret) {
++			if (command.error)
++				mrq->cmd->error = command.error;
++			return ret;
++		}
++		memcpy(mrq->cmd->resp, command.resp, sizeof(command.resp));
++	}
++
++	return 0;
++}
++
++static void anyka_mmc_request(struct mmc_host *mmc, struct mmc_request *mrq)
++{
++	struct anyka_mmc *host = mmc_priv(mmc);
++	struct mmc_data *data = mrq->cmd->data;
++	size_t copied, total;
++	bool split = false;
++	bool write;
++	int ret;
++
++	if (data) {
++		data->bytes_xfered = 0;
++		write = data->flags & MMC_DATA_WRITE;
++
++		total = data->blksz * data->blocks;
++		if (!data->blocks || !data->blksz ||
++		    data->blocks > ANYKA_MAX_BLOCK_COUNT ||
++		    data->blksz > ANYKA_MAX_BLOCK_SIZE ||
++		    total > ANYKA_MAX_TRANSFER_SIZE ||
++		    (data->blocks > 1 &&
++		     data->blksz != ANYKA_MAX_BLOCK_SIZE)) {
++			data->error = -EINVAL;
++			mrq->cmd->error = -EINVAL;
++			mmc_request_done(mmc, mrq);
++			return;
++		}
++
++		if (write) {
++			copied = sg_copy_to_buffer(data->sg, data->sg_len,
++						   host->bounce, total);
++			if (copied != total) {
++				data->error = -EIO;
++				mrq->cmd->error = -EIO;
++				mmc_request_done(mmc, mrq);
++				return;
++			}
++		}
++
++		if (data->blocks > 1) {
++			split = true;
++			if (write)
++				ret = anyka_mmc_write_blocks(host, mrq);
++			else
++				ret = anyka_mmc_read_blocks(host, mrq);
++		} else if (write) {
++			ret = anyka_mmc_write_once(host, mrq->cmd, data,
++						   host->bounce);
++		} else {
++			ret = anyka_mmc_read_once(host, mrq->cmd, data,
++						  host->bounce);
++		}
++
++		if (!ret && !write) {
++			copied = sg_copy_from_buffer(data->sg, data->sg_len,
++						     host->bounce, total);
++			if (copied != total)
++				ret = -EIO;
++		}
++		if (!ret)
++			data->bytes_xfered = total;
++		if (ret)
++			data->error = ret;
++	} else {
++		ret = anyka_mmc_send_command(host, mrq->cmd);
++		anyka_mmc_stop_data(host);
++	}
++
++	if (mrq->stop && !split) {
++		anyka_mmc_send_command(host, mrq->stop);
++		anyka_mmc_stop_data(host);
++	}
++
++	mmc_request_done(mmc, mrq);
++}
++
++static int anyka_mmc_get_cd(struct mmc_host *mmc)
++{
++	int ret = mmc_gpio_get_cd(mmc);
++
++	if (ret < 0)
++		return 1;
++
++	return ret;
++}
++
++static int anyka_mmc_get_ro(struct mmc_host *mmc)
++{
++	return mmc_gpio_get_ro(mmc);
++}
++
++static const struct mmc_host_ops anyka_mmc_ops = {
++	.request = anyka_mmc_request,
++	.set_ios = anyka_mmc_set_ios,
++	.get_cd = anyka_mmc_get_cd,
++	.get_ro = anyka_mmc_get_ro,
++};
++
++static int anyka_mmc_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct anyka_mmc *host;
++	struct mmc_host *mmc;
++	u32 max_freq;
++	int ret;
++
++	mmc = devm_mmc_alloc_host(dev, sizeof(*host));
++	if (!mmc)
++		return -ENOMEM;
++
++	host = mmc_priv(mmc);
++	host->dev = dev;
++	host->mmc = mmc;
++	host->power_mode = MMC_POWER_OFF;
++	host->bus_width = MMC_BUS_WIDTH_1;
++	host->input_clock = ANYKA_DEFAULT_INPUT_CLOCK;
++
++	host->base = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(host->base))
++		return PTR_ERR(host->base);
++
++	host->sysctrl = syscon_regmap_lookup_by_phandle(dev->of_node, "syscon");
++	if (IS_ERR(host->sysctrl))
++		return dev_err_probe(dev, PTR_ERR(host->sysctrl),
++				     "missing syscon\n");
++
++	device_property_read_u32(dev, "anyka,input-clock-hz", &host->input_clock);
++
++	mmc->ops = &anyka_mmc_ops;
++	mmc->ocr_avail = MMC_VDD_32_33 | MMC_VDD_33_34;
++	mmc->f_min = max_t(unsigned int,
++			   DIV_ROUND_UP(host->input_clock,
++					ANYKA_MAX_DIVIDER + 2),
++			   100000);
++	mmc->f_max = min_t(unsigned int, host->input_clock / 2,
++			   ANYKA_DEFAULT_MAX_FREQ);
++	mmc->max_req_size = ANYKA_MAX_TRANSFER_SIZE;
++	mmc->max_seg_size = ANYKA_MAX_TRANSFER_SIZE;
++	mmc->max_blk_size = ANYKA_MAX_BLOCK_SIZE;
++	mmc->max_blk_count = ANYKA_MAX_BLOCK_COUNT;
++	mmc->max_segs = 16;
++
++	ret = mmc_of_parse(mmc);
++	if (ret)
++		return ret;
++
++	if (!device_property_read_u32(dev, "max-frequency", &max_freq))
++		mmc->f_max = min_t(u32, mmc->f_max, max_freq);
++
++	platform_set_drvdata(pdev, mmc);
++	anyka_mmc_hw_reset(host);
++
++	ret = mmc_add_host(mmc);
++	if (ret)
++		return ret;
++
++	dev_info(dev, "registered MCI host at %u Hz input clock\n",
++		 host->input_clock);
++
++	return 0;
++}
++
++static void anyka_mmc_remove(struct platform_device *pdev)
++{
++	struct mmc_host *mmc = platform_get_drvdata(pdev);
++
++	mmc_remove_host(mmc);
++}
++
++static const struct of_device_id anyka_mmc_of_match[] = {
++	{ .compatible = "anyka,ak7802-mmc" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, anyka_mmc_of_match);
++
++static struct platform_driver anyka_mmc_driver = {
++	.probe = anyka_mmc_probe,
++	.remove = anyka_mmc_remove,
++	.driver = {
++		.name = "anyka-mmc",
++		.of_match_table = anyka_mmc_of_match,
++	},
++};
++module_platform_driver(anyka_mmc_driver);
++
++MODULE_DESCRIPTION("Anyka MCI SD/MMC host driver");
++MODULE_AUTHOR("CatMe0w");
++MODULE_LICENSE("GPL");
+-- 
+2.47.3
+

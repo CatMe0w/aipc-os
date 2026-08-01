@@ -1,7 +1,7 @@
 From 3a07ef12e8accca0eba7b9be63e955561d127230 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Fri, 1 May 2026 10:42:24 +0800
-Subject: [PATCH v1 7/8] usb: anyka: Add AK98 full-speed HCD
+Subject: [PATCH v1 07/10] usb: anyka: Add AK98 full-speed HCD
 
 ---
  drivers/usb/host/Kconfig       |   14 +
