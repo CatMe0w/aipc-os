@@ -5,17 +5,20 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "deploy": "pnpm build && wrangler pages deploy dist --project-name=aipc-os"
   },
   "devDependencies": {
-    "vite": "^8.0.8",
-    "vite-plugin-minify": "^2.1.0",
-    "wrangler": "^4.81.1"
+    "@types/node": "^26.1.2",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.0",
+    "vite-plugin-minify": "^3.0.0",
+    "wrangler": "^4.118.0"
   },
   "dependencies": {
-    "@fontsource/doto": "^5.2.10",
-    "@fontsource/ibm-plex-mono": "^5.2.7",
-    "@fontsource/ibm-plex-sans": "^5.2.8"
+    "@fontsource/doto": "^5.3.0",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/ibm-plex-sans": "^5.3.0"
   }
 }

@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import { ViteMinifyPlugin } from "vite-plugin-minify";
 import { resolve } from "path";
+import { prerender } from "./plugins/prerender.js";
 
 export default defineConfig({
   root: ".",
@@ -9,10 +10,11 @@ export default defineConfig({
     outDir: "dist",
     rollupOptions: {
       input: {
-        index: resolve(__dirname, "index.html"),
-        en: resolve(__dirname, "en.html"),
+        index: resolve(import.meta.dirname, "index.html"),
+        en: resolve(import.meta.dirname, "en.html"),
       },
     },
+    modulePreload: false,
   },
-  plugins: [ViteMinifyPlugin({})],
+  plugins: [prerender(), ViteMinifyPlugin({})],
 });
