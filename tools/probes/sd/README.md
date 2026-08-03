@@ -1,99 +1,51 @@
 # AK7802 SD/MMC pre-validation
 
-This suite checks which MCI behaviors from successor Linux 2.6 drivers also apply to AK7802 before they are used in a Linux 7.0 host driver. Each probe tests one narrow part of the controller and reports a nonzero status when its acceptance conditions are not met.
+This suite checks AK7802 MCI behavior before it is used by the Linux MCI host driver. Each stub isolates one controller assumption and returns a nonzero status when its acceptance conditions are not met. Confirmed register behavior and Linux results are recorded in [SDHC Driver](../../../docs/nk/sdhc-driver.md); this file only describes the probe suite and its safety boundary.
 
-## Running the probes
+## Running
 
-Build the stubs from the repository root:
+Build the stubs and invoke the runner from the repository root:
 
 ```
 make -C tools/probes/sd/stub
+uv run tools/probes/sd/run_probe.py PROBE.bin --words N [options]
 ```
 
-Power-cycle the target into USB boot before each independent run, then execute one stub:
+Use `--words 32` for `sd_irq_window`, 64 for `sd_baseline` and `sd_irq`, 80 for `sd_highspeed`, 152 for `sd_init`, and 160 for the remaining probes. Read probes use `--lba`; destructive probes require `--write-lba`. Other source-specific options are `--target-offset`, `--four-bit`, `--capture-only`, and `--verify-only`.
 
-```
-uv run tools/probes/sd/run_probe.py tools/probes/sd/stub/sd_init.bin --words 152
-```
+Initialize DDR before running the multiblock write, high-speed, IRQ, or DDR-linked variants. Most other stubs execute from the default L2 address. A DDR-linked binary also requires the `--stub-addr` selected by its linker target: `0x30020000`, `0x30030000`, `0x30040000`, `0x30050000`, `0x30090000`, or `0x30110000`. The Makefile is the authoritative mapping from binary name to linker script.
 
-The inner-FIFO and L2 read probes accept `--lba N`; without it they read LBA 0. The write probe requires the explicitly destructive `--write-lba N` option and refuses to run without it. The selected LBA must first be verified as unallocated.
+Some probes consume state left by another stub. Multiblock, write, and high-speed comparisons begin with `sd_pio_withdata` for the same LBA. `sd_irq` and `sd_irq_window` consume the state left by `sd_highspeed_41mhz`. Do not reset between members of one chain; power-cycle before an independent run.
 
-The write experiment is a two-stage exception to the cold-start rule. First use the inner-FIFO read probe to initialize the card and retain the selected sector in L2 SRAM. Then run the write probe without resetting or power-cycling between the two commands:
+Every result starts with magic `0x53445052`, a format version, an experiment number, a status, and a payload length. The runner rejects an invalid header and exits unsuccessfully when status is nonzero.
 
-```
-uv run tools/probes/sd/run_probe.py tools/probes/sd/stub/sd_pio_withdata.bin --words 160 --lba N
-uv run tools/probes/sd/run_probe.py tools/probes/sd/stub/sd_write.bin --words 160 --write-lba N
-```
+## Write safety
 
-After the write probe restores the sector, power-cycle the target and read the same LBA again. Its 128 data words must match the first read.
+Never reuse an LBA merely because it was unallocated on a previous card. Confirm the entire range is outside every partition on the installed card before passing `--write-lba`. A failed probe may stop after writing its test pattern and before restoring the original data.
 
-The available experiments are:
+The multiblock write source supports a read-only `--capture-only` pass and stores the original range at DDR `0x30010000`. Save that range before the destructive pass. After restoration, power-cycle the device, upload the saved reference to the same address, and run `--verify-only`. The reference length is the request size. The single-block `sd_write` probe instead consumes the sector retained by the preceding PIO read and must also be checked again after a power cycle.
 
-| Stub | Result words | Purpose |
-| --- | ---: | --- |
-| `sd_baseline.bin` | 64 | Capture untouched MCI and L2 state |
-| `sd_init.bin` | 152 | Run the Linux MMC enumeration sequence |
-| `sd_pio_nodata.bin` | 160 | Read one block without `CPSM_WITHDATA` |
-| `sd_pio_withdata.bin` | 160 | Read one block with `CPSM_WITHDATA` |
-| `sd_l2.bin` | 160 | Read one block through an L2 common buffer |
-| `sd_write.bin` | 160 | Write and restore one explicitly selected block through the inner FIFO |
+## Probe sources
 
-Every result begins with the magic value `0x53445052`, a format version, an experiment number, a status, and a payload length. The runner exits unsuccessfully when the header is invalid or the experiment status is nonzero.
+- `sd_baseline.c` captures untouched MCI, L2, clock, and pin state. `sd_init.c` reproduces Linux SD enumeration.
+- `sd_pio.c` builds the two inner-FIFO CMD17 encodings and the single-block L2 PIO variant. `sd_write.c` tests CMD24 ordering and restoration.
+- `sd_multiread.c` and `sd_multiread8.c` test native CMD18, block-end behavior, CMD12, and one-bit versus four-bit operation.
+- `sd_multiwrite8.c` is the common source for CMD25, common-buffer PIO, L2 DMA, CMD23, request-size, chunk-size, high-speed, and scatter-gather variants.
+- `sd_highspeed.c` checks CMD6 selection and compares CMD17 data after changing the clock divider.
+- `sd_irq.c` observes command, data, and L2 DMA completion through the main interrupt controller. `sd_irq_window.c` tests whether merely enabling an idle source asserts an interrupt.
 
-## Results
+`sd_pio.c` varies `PIO_WITHDATA` and `PIO_L2`. `sd_multiwrite8.c` varies the boolean `USE_L2`, `USE_L2_DMA`, `USE_CMD23`, `USE_HIGH_SPEED`, and `USE_SCATTER_DMA` switches. Built request sizes are 8, 64, 128, 256, 512, and 1024 blocks. DMA chunks are 4096, 8192, or 16384 bytes. High-speed divider values are `0x0101` for 31 MHz and `0x0001` for 41.33 MHz. The scatter-gather variant uses 4096-byte data segments at an 8192-byte stride. Exact combinations and DDR placements remain in the Makefile rather than being duplicated here.
 
-All five read-only experiments completed successfully and were repeated from independent cold starts with the same controller behavior and block contents. The write experiment also completed successfully on an unallocated sector and restored its original contents.
+## Confirmed boundaries
 
-### Cold-boot state
+Cold boot leaves the MCI idle except for `MCI_FIFOEMPTY` and does not configure an L2 buffer for it. SD enumeration tolerates the expected CMD5 timeout without resetting the controller. Long responses map directly from `MCI_RESPONSE0..3` to Linux `resp[0..3]`.
 
-The primary MCI was quiescent except for `MCI_FIFOEMPTY`. The L2 controller was visible but had no common buffer configured for MCI. A Linux driver must initialize any L2 buffer it intends to use.
+Both CMD17 command encodings return the same sector. Inner-FIFO reads require `MCI_FIFOFULL | MCI_RXACTIVE`; writes issue CMD24 before enabling the data path and require `MCI_FIFOEMPTY | MCI_TXACTIVE`. The single-block and multiblock write probes restored their original data and passed an independent power-cycle check.
 
-### Card enumeration
+Native CMD18 and CMD25 work through the inner FIFO and common buffer 2. L2 DMA works in both directions with 64-byte operations and repeated chunks while one MCI request remains active. An 8 KiB chunk passes; a 16 KiB chunk stalls after the first sector. CMD23 bounds successful CMD18 and CMD25 requests without CMD12, while an aborted request still requires CMD12.
 
-The enumeration probe reproduced the non-SPI Linux MMC sequence, including the expected CMD5 timeout while probing for SDIO. CMD55 and ACMD41 completed immediately afterward without resetting the controller. The card then completed CMD2, CMD3, CMD9, CMD7, and CMD13 and entered transfer state.
+Requests through 512 KiB passed with 8 KiB chunks. The scatter-gather probe crossed discontiguous 4 KiB segments without modifying the guard gaps. CMD6 high-speed selection passed at 31 MHz and at the retained 41.33 MHz divider setting.
 
-Long response registers are already in Linux `mmc_command.resp[]` order:
+MCI completion reaches main interrupt source 22 and common-buffer 2 DMA completion reaches source 10. An idle L2 buffer asserts source 10 as soon as `L2_BUFINTEN[11]` is enabled, so software must set `L2_DMAREQ[26]` first and exclude local IRQ delivery across the two writes.
 
-```
-resp[0] = MCI_RESPONSE0
-resp[1] = MCI_RESPONSE1
-resp[2] = MCI_RESPONSE2
-resp[3] = MCI_RESPONSE3
-```
-
-Reversing these words corrupts CID and CSD decoding. The reverse byte-copy order used by the target WinCE interface is an API layout detail, not the Linux representation.
-
-### Inner-FIFO reads
-
-Both CMD17 encodings completed a 512-byte read:
-
-| Command value | Meaning | Result |
-| ---: | --- | --- |
-| `0x000000A3` | No `CPSM_WITHDATA` | Success |
-| `0x000008A3` | `CPSM_WITHDATA` set | Success |
-
-Before every FIFO access, the probe required both `MCI_FIFOFULL` and `MCI_RXACTIVE`. It transferred exactly 128 words and required both `MCI_DATAEND` and `MCI_DATABLOCKEND` without a data error. The two command variants returned identical data, so `CPSM_WITHDATA` is not the cause of the unusable Linux path.
-
-### L2 common-buffer read
-
-The L2 probe routed MCI to common buffer 6 and used `MCI_DMACTRL=0x01000001`. The buffer count progressed from 0 to 8 during the transfer and returned to 0 after the CPU copied 512 bytes. Its contents matched both inner-FIFO reads.
-
-Buffer 6 was chosen because the probe image overlaps buffer 2, which the successor driver uses. The result validates the common-buffer model but does not prove that buffer 2 is available to Linux.
-
-### Inner-FIFO write
-
-The write probe follows the ordering shared by the successor Linux drivers and the target WinCE driver. It sends CMD24 first, enables the transmit data path only after the command response, and writes each word only while both `MCI_FIFOEMPTY` and `MCI_TXACTIVE` are asserted. It consumes the sector retained by the preceding read probe, writes a deterministic test pattern, verifies the pattern with CMD17, restores the original sector, and verifies the restoration. A failed run can leave the test pattern in the selected sector, which is why only a confirmed unallocated LBA may be used.
-
-The test used LBA 8388608, beyond the last partition ending at LBA 6555647. Pattern readback and original-data readback both passed. After a power cycle, an independent read of the same LBA matched the pre-test sector, confirming that restoration reached the card rather than remaining only in controller state. CMD13 returned `0x00000900` after each write, indicating transfer state with the card ready for data.
-
-## Linux driver implications
-
-- Copy long responses from `MCI_RESPONSE0..3` directly into `resp[0..3]`.
-- Treat `MCI_FIFOFULL | MCI_RXACTIVE` as a conjunctive read-ready condition.
-- Start the write data path only after CMD24 succeeds, then require `MCI_FIFOEMPTY | MCI_TXACTIVE` before each FIFO word.
-- Poll CMD13 until the card is ready after a completed write.
-- Do not reset the controller solely because CMD5 times out during normal SD discovery.
-- Either CMD17 command encoding is accepted by the tested controller path.
-- Initialize and allocate an L2 common buffer before enabling the MCI L2 path.
-
-The recorded hardware results do not cover interrupts, clock changes, four-bit writes, multi-block requests, hot removal, deliberate error recovery, or Linux block-layer integration.
+The tested scope does not include requests above 512 KiB, frequencies above 41.33 MHz, hot removal, or deliberate data-error recovery.

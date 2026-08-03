@@ -22,15 +22,23 @@ def main() -> int:
     lba = parser.add_mutually_exclusive_group()
     lba.add_argument("--lba", type=lambda value: int(value, 0))
     lba.add_argument("--write-lba", type=lambda value: int(value, 0))
+    parser.add_argument("--target-offset", type=lambda value: int(value, 0), default=0)
+    parser.add_argument("--four-bit", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--verify-only", action="store_true")
+    mode.add_argument("--capture-only", action="store_true")
+    parser.add_argument("--stub-addr", type=lambda value: int(value, 0), default=STUB_ADDR)
     args = parser.parse_args()
 
     image = args.binary.read_bytes()
-    if len(image) > 0xC30:
+    if args.stub_addr == STUB_ADDR and len(image) > 0xC30:
         raise SystemExit("stub exceeds executable L2 SRAM range")
+    if not 0 <= args.stub_addr <= 0xFFFFFFFF:
+        raise SystemExit("stub address exceeds the 32-bit address space")
 
-    print(f"stub={args.binary} size={len(image)}")
+    print(f"stub={args.binary} size={len(image)} addr=0x{args.stub_addr:08x}")
     dev = find_device()
-    dev.write_mem(STUB_ADDR, image)
+    dev.write_mem(args.stub_addr, image)
     param_magic = 0
     param_lba = 0
     if args.lba is not None:
@@ -41,10 +49,27 @@ def main() -> int:
         param_lba = args.write_lba
     if not 0 <= param_lba <= 0xFFFFFFFF:
         raise SystemExit("LBA exceeds the 32-bit probe parameter")
-    dev.write_mem(PARAM_ADDR, struct.pack("<II", param_magic, param_lba))
+    if not 0 <= args.target_offset <= 0xFFFFFFFF:
+        raise SystemExit("target offset exceeds the 32-bit probe parameter")
+    run_mode = 2 if args.capture_only else int(args.verify_only)
+    dev.write_mem(
+        PARAM_ADDR,
+        struct.pack(
+            "<IIIII",
+            param_magic,
+            param_lba,
+            args.target_offset,
+            int(args.four_bit),
+            run_mode,
+        ),
+    )
     if param_magic:
-        print(f"lba={param_lba} write={param_magic == WRITE_LBA_MAGIC}")
-    dev.execute(STUB_ADDR, wait=True, timeout=10.0)
+        print(
+            f"lba={param_lba} write={param_magic == WRITE_LBA_MAGIC} "
+            f"target_offset={args.target_offset} four_bit={args.four_bit} "
+            f"verify_only={args.verify_only} capture_only={args.capture_only}"
+        )
+    dev.execute(args.stub_addr, wait=True, timeout=10.0)
     raw = dev.read_mem(RESULT_ADDR, args.words * 4)
     words = struct.unpack(f"<{args.words}I", raw)
 
