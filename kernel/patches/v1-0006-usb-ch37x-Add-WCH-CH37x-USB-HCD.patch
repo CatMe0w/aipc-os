@@ -1,7 +1,7 @@
-From 03bc9524b879eded8f464eb946fc5e0745f451fe Mon Sep 17 00:00:00 2001
+From b8c990056394979a7142af5fd43ab643e3879e50 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Fri, 1 May 2026 10:42:24 +0800
-Subject: [PATCH v1 06/10] usb: ch37x: Add WCH CH37x USB HCD
+Subject: [PATCH v1 06/11] usb: ch37x: Add WCH CH37x USB HCD
 
 ---
  drivers/usb/host/Kconfig     |   10 +

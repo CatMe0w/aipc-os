@@ -1,0 +1,893 @@
+From 45ec4ac8ae59b963f3482bfbf16fbd051ea74143 Mon Sep 17 00:00:00 2001
+From: CatMe0w <CatMe0w@live.cn>
+Date: Tue, 4 Aug 2026 13:08:08 +0800
+Subject: [PATCH v1 11/11] net: dm9000: Support a GPIO-driven parallel bus
+
+---
+ arch/arm/boot/dts/anyka/ak7802-netbook.dts |  29 +++
+ drivers/net/ethernet/davicom/Kconfig       |  13 ++
+ drivers/net/ethernet/davicom/Makefile      |   1 +
+ drivers/net/ethernet/davicom/dm9000-gpio.c | 240 +++++++++++++++++++++
+ drivers/net/ethernet/davicom/dm9000.c      | 233 +++++++++++++++-----
+ drivers/net/ethernet/davicom/dm9000.h      |  33 +++
+ 6 files changed, 490 insertions(+), 59 deletions(-)
+ create mode 100644 drivers/net/ethernet/davicom/dm9000-gpio.c
+
+diff --git a/arch/arm/boot/dts/anyka/ak7802-netbook.dts b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
+index 008f8b388..f5eb6882e 100644
+--- a/arch/arm/boot/dts/anyka/ak7802-netbook.dts
++++ b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
+@@ -2,6 +2,7 @@
+ /dts-v1/;
+ 
+ #include <dt-bindings/gpio/gpio.h>
++#include <dt-bindings/interrupt-controller/irq.h>
+ #include "ak7802.dtsi"
+ 
+ / {
+@@ -10,6 +11,7 @@ / {
+ 
+ 	aliases {
+ 		display0 = &lcd0;
++		ethernet0 = &enet;
+ 	};
+ 
+ 	chosen {
+@@ -25,6 +27,33 @@ memory@30000000 {
+ 		reg = <0x30000000 0x04000000>;
+ 	};
+ 
++	enet: ethernet {
++		compatible = "davicom,dm9000";
++		interrupt-parent = <&gpio>;
++		/*
++		 * INT idles low: the chip powers up active high and nothing
++		 * reprograms INTCR. The RLAN_INT# net name is misleading.
++		 */
++		interrupts = <56 IRQ_TYPE_LEVEL_HIGH>;
++
++		data-gpios = <&gpio 48 GPIO_ACTIVE_HIGH>,
++			     <&gpio 49 GPIO_ACTIVE_HIGH>,
++			     <&gpio 50 GPIO_ACTIVE_HIGH>,
++			     <&gpio 51 GPIO_ACTIVE_HIGH>,
++			     <&gpio 52 GPIO_ACTIVE_HIGH>,
++			     <&gpio 53 GPIO_ACTIVE_HIGH>,
++			     <&gpio 54 GPIO_ACTIVE_HIGH>,
++			     <&gpio 55 GPIO_ACTIVE_HIGH>;
++		cmd-gpios = <&gpio 47 GPIO_ACTIVE_HIGH>;
++		cs-gpios = <&gpio 102 GPIO_ACTIVE_LOW>;
++		ior-gpios = <&gpio 57 GPIO_ACTIVE_LOW>;
++		iow-gpios = <&gpio 58 GPIO_ACTIVE_LOW>;
++		/* LAN_RST# shares the JTAG TCK pin. */
++		reset-gpios = <&gpio 2 GPIO_ACTIVE_LOW>;
++
++		davicom,no-eeprom;
++	};
++
+ 	reserved-memory {
+ 		#address-cells = <1>;
+ 		#size-cells = <1>;
+diff --git a/drivers/net/ethernet/davicom/Kconfig b/drivers/net/ethernet/davicom/Kconfig
+index 02e0caff9..c92f5d852 100644
+--- a/drivers/net/ethernet/davicom/Kconfig
++++ b/drivers/net/ethernet/davicom/Kconfig
+@@ -27,6 +27,19 @@ config DM9000
+ 	  To compile this driver as a module, choose M here.  The module
+ 	  will be called dm9000.
+ 
++config DM9000_GPIO_BUS
++	bool "DM9000 GPIO-driven bus support"
++	depends on DM9000=y && GPIOLIB
++	help
++	  Drive the DM9000 parallel bus from GPIOs, for boards that wire the
++	  chip up without a static memory controller. Bus cycles are generated
++	  in software, so throughput is well below a memory-mapped board.
++
++	  This is built alongside the driver rather than into it, so it
++	  requires DM9000 to be built in rather than modular.
++
++	  If unsure, say N.
++
+ config DM9000_FORCE_SIMPLE_PHY_POLL
+ 	bool "Force simple NSR based PHY polling"
+ 	depends on DM9000
+diff --git a/drivers/net/ethernet/davicom/Makefile b/drivers/net/ethernet/davicom/Makefile
+index 225f85bc1..5522ef478 100644
+--- a/drivers/net/ethernet/davicom/Makefile
++++ b/drivers/net/ethernet/davicom/Makefile
+@@ -4,4 +4,5 @@
+ #
+ 
+ obj-$(CONFIG_DM9000) += dm9000.o
++obj-$(CONFIG_DM9000_GPIO_BUS) += dm9000-gpio.o
+ obj-$(CONFIG_DM9051) += dm9051.o
+diff --git a/drivers/net/ethernet/davicom/dm9000-gpio.c b/drivers/net/ethernet/davicom/dm9000-gpio.c
+new file mode 100644
+index 000000000..682b65899
+--- /dev/null
++++ b/drivers/net/ethernet/davicom/dm9000-gpio.c
+@@ -0,0 +1,240 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * DM9000 on a GPIO-driven parallel bus.
++ *
++ * Boards with no static memory controller wire SD0..SD7, CMD, CS#, IOR# and
++ * IOW# straight to GPIOs and generate every bus cycle in software.
++ *
++ * Copyright (C) 2026 CatMe0w
++ */
++
++#include <linux/bitmap.h>
++#include <linux/gpio/consumer.h>
++#include <linux/platform_device.h>
++#include <linux/property.h>
++#include <linux/slab.h>
++
++#include "dm9000.h"
++
++#define DM9000_GPIO_DATA_WIDTH	8
++
++struct dm9000_gpio {
++	struct gpio_descs *data;
++	struct gpio_desc *cmd;
++	struct gpio_desc *cs;
++	struct gpio_desc *ior;
++	struct gpio_desc *iow;
++
++	/* Flipping eight descriptors is not cheap, so only do it on a change. */
++	bool data_input;
++};
++
++/* CMD selects which of the chip's two ports a data cycle reaches. */
++#define DM9000_GPIO_PORT_INDEX	0
++#define DM9000_GPIO_PORT_DATA	1
++
++static struct dm9000_gpio *to_gpio(struct board_info *db)
++{
++	return dm9000_bus_priv(db);
++}
++
++static void dm9000_gpio_dir(struct dm9000_gpio *g, bool input)
++{
++	unsigned int i;
++
++	if (g->data_input == input)
++		return;
++
++	for (i = 0; i < g->data->ndescs; i++) {
++		if (input)
++			gpiod_direction_input(g->data->desc[i]);
++		else
++			gpiod_direction_output(g->data->desc[i], 0);
++	}
++
++	g->data_input = input;
++}
++
++static void dm9000_gpio_drive(struct dm9000_gpio *g, u8 value)
++{
++	DECLARE_BITMAP(values, DM9000_GPIO_DATA_WIDTH);
++
++	values[0] = value;
++	gpiod_set_array_value(g->data->ndescs, g->data->desc,
++			      g->data->info, values);
++}
++
++static u8 dm9000_gpio_sample(struct dm9000_gpio *g)
++{
++	DECLARE_BITMAP(values, DM9000_GPIO_DATA_WIDTH) = { };
++
++	gpiod_get_array_value(g->data->ndescs, g->data->desc,
++			      g->data->info, values);
++
++	return values[0];
++}
++
++/* Open a burst on one of the two ports. Callers must pair this with _end(). */
++static void dm9000_gpio_begin(struct dm9000_gpio *g, int port, bool input)
++{
++	dm9000_gpio_dir(g, input);
++	gpiod_set_value(g->cs, 1);
++	gpiod_set_value(g->cmd, port);
++}
++
++static void dm9000_gpio_end(struct dm9000_gpio *g)
++{
++	gpiod_set_value(g->cs, 0);
++}
++
++/* The chip latches on the rising edge, so driving after the strobe is fine. */
++static void dm9000_gpio_write_cycle(struct dm9000_gpio *g, u8 value)
++{
++	gpiod_set_value(g->iow, 1);
++	dm9000_gpio_drive(g, value);
++	gpiod_set_value(g->iow, 0);
++}
++
++static u8 dm9000_gpio_read_cycle(struct dm9000_gpio *g)
++{
++	u8 value;
++
++	gpiod_set_value(g->ior, 1);
++	value = dm9000_gpio_sample(g);
++	gpiod_set_value(g->ior, 0);
++
++	return value;
++}
++
++static void dm9000_gpio_index_write(struct board_info *db, u8 reg)
++{
++	struct dm9000_gpio *g = to_gpio(db);
++
++	dm9000_gpio_begin(g, DM9000_GPIO_PORT_INDEX, false);
++	dm9000_gpio_write_cycle(g, reg);
++	dm9000_gpio_end(g);
++}
++
++static u8 dm9000_gpio_index_read(struct board_info *db)
++{
++	struct dm9000_gpio *g = to_gpio(db);
++	u8 value;
++
++	dm9000_gpio_begin(g, DM9000_GPIO_PORT_INDEX, true);
++	value = dm9000_gpio_read_cycle(g);
++	dm9000_gpio_end(g);
++
++	return value;
++}
++
++static void dm9000_gpio_data_write(struct board_info *db, u8 value)
++{
++	struct dm9000_gpio *g = to_gpio(db);
++
++	dm9000_gpio_begin(g, DM9000_GPIO_PORT_DATA, false);
++	dm9000_gpio_write_cycle(g, value);
++	dm9000_gpio_end(g);
++}
++
++static u8 dm9000_gpio_data_read(struct board_info *db)
++{
++	struct dm9000_gpio *g = to_gpio(db);
++	u8 value;
++
++	dm9000_gpio_begin(g, DM9000_GPIO_PORT_DATA, true);
++	value = dm9000_gpio_read_cycle(g);
++	dm9000_gpio_end(g);
++
++	return value;
++}
++
++static void dm9000_gpio_inblk(struct board_info *db, void *data, int length)
++{
++	struct dm9000_gpio *g = to_gpio(db);
++	u8 *buf = data;
++	int i;
++
++	dm9000_gpio_begin(g, DM9000_GPIO_PORT_DATA, true);
++	for (i = 0; i < length; i++)
++		buf[i] = dm9000_gpio_read_cycle(g);
++	dm9000_gpio_end(g);
++}
++
++static void dm9000_gpio_outblk(struct board_info *db, const void *data,
++			       int length)
++{
++	struct dm9000_gpio *g = to_gpio(db);
++	const u8 *buf = data;
++	int i;
++
++	dm9000_gpio_begin(g, DM9000_GPIO_PORT_DATA, false);
++	for (i = 0; i < length; i++)
++		dm9000_gpio_write_cycle(g, buf[i]);
++	dm9000_gpio_end(g);
++}
++
++static void dm9000_gpio_dumpblk(struct board_info *db, int length)
++{
++	struct dm9000_gpio *g = to_gpio(db);
++	int i;
++
++	dm9000_gpio_begin(g, DM9000_GPIO_PORT_DATA, true);
++	for (i = 0; i < length; i++)
++		dm9000_gpio_read_cycle(g);
++	dm9000_gpio_end(g);
++}
++
++static const struct dm9000_bus_ops dm9000_gpio_ops = {
++	.index_write	= dm9000_gpio_index_write,
++	.index_read	= dm9000_gpio_index_read,
++	.data_write	= dm9000_gpio_data_write,
++	.data_read	= dm9000_gpio_data_read,
++	.inblk		= dm9000_gpio_inblk,
++	.outblk		= dm9000_gpio_outblk,
++	.dumpblk	= dm9000_gpio_dumpblk,
++};
++
++int dm9000_gpio_bus_setup(struct board_info *db, struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct dm9000_gpio *g;
++
++	if (!device_property_present(dev, "data-gpios"))
++		return -ENODEV;
++
++	g = devm_kzalloc(dev, sizeof(*g), GFP_KERNEL);
++	if (!g)
++		return -ENOMEM;
++
++	g->data = devm_gpiod_get_array(dev, "data", GPIOD_OUT_LOW);
++	if (IS_ERR(g->data))
++		return dev_err_probe(dev, PTR_ERR(g->data),
++				     "failed to get data gpios\n");
++
++	if (g->data->ndescs != DM9000_GPIO_DATA_WIDTH)
++		return dev_err_probe(dev, -EINVAL,
++				     "need %d data gpios, got %u\n",
++				     DM9000_GPIO_DATA_WIDTH, g->data->ndescs);
++
++	/* The strobes are active low; declare them that way in the DT. */
++	g->cmd = devm_gpiod_get(dev, "cmd", GPIOD_OUT_LOW);
++	if (IS_ERR(g->cmd))
++		return dev_err_probe(dev, PTR_ERR(g->cmd), "no cmd gpio\n");
++
++	g->cs = devm_gpiod_get(dev, "cs", GPIOD_OUT_LOW);
++	if (IS_ERR(g->cs))
++		return dev_err_probe(dev, PTR_ERR(g->cs), "no cs gpio\n");
++
++	g->ior = devm_gpiod_get(dev, "ior", GPIOD_OUT_LOW);
++	if (IS_ERR(g->ior))
++		return dev_err_probe(dev, PTR_ERR(g->ior), "no ior gpio\n");
++
++	g->iow = devm_gpiod_get(dev, "iow", GPIOD_OUT_LOW);
++	if (IS_ERR(g->iow))
++		return dev_err_probe(dev, PTR_ERR(g->iow), "no iow gpio\n");
++
++	dm9000_set_bus(db, &dm9000_gpio_ops, g);
++	dev_info(dev, "using GPIO-driven %d-bit bus\n", DM9000_GPIO_DATA_WIDTH);
++
++	return 0;
++}
+diff --git a/drivers/net/ethernet/davicom/dm9000.c b/drivers/net/ethernet/davicom/dm9000.c
+index b87eaf0c2..eacf6e994 100644
+--- a/drivers/net/ethernet/davicom/dm9000.c
++++ b/drivers/net/ethernet/davicom/dm9000.c
+@@ -87,8 +87,8 @@ enum dm9000_type {
+ /* Structure/enum declaration ------------------------------- */
+ struct board_info {
+ 
+-	void __iomem	*io_addr;	/* Register I/O base address */
+-	void __iomem	*io_data;	/* Data I/O address */
++	const struct dm9000_bus_ops *bus;
++	void		*bus_priv;
+ 	u16		 irq;		/* IRQ */
+ 
+ 	u16		tx_pkt_cnt;
+@@ -107,10 +107,6 @@ struct board_info {
+ 
+ 	enum dm9000_type type;
+ 
+-	void (*inblk)(void __iomem *port, void *data, int length);
+-	void (*outblk)(void __iomem *port, void *data, int length);
+-	void (*dumpblk)(void __iomem *port, int length);
+-
+ 	struct device	*dev;	     /* parent device */
+ 
+ 	struct resource	*addr_res;   /* resources found */
+@@ -149,6 +145,18 @@ static inline struct board_info *to_dm9000_board(struct net_device *dev)
+ 	return netdev_priv(dev);
+ }
+ 
++void *dm9000_bus_priv(struct board_info *db)
++{
++	return db->bus_priv;
++}
++
++void dm9000_set_bus(struct board_info *db, const struct dm9000_bus_ops *ops,
++		    void *priv)
++{
++	db->bus = ops;
++	db->bus_priv = priv;
++}
++
+ /* DM9000 network board routine ---------------------------- */
+ 
+ /*
+@@ -157,8 +165,8 @@ static inline struct board_info *to_dm9000_board(struct net_device *dev)
+ static u8
+ ior(struct board_info *db, int reg)
+ {
+-	writeb(reg, db->io_addr);
+-	return readb(db->io_data);
++	db->bus->index_write(db, reg);
++	return db->bus->data_read(db);
+ }
+ 
+ /*
+@@ -168,8 +176,8 @@ ior(struct board_info *db, int reg)
+ static void
+ iow(struct board_info *db, int reg, int value)
+ {
+-	writeb(reg, db->io_addr);
+-	writeb(value, db->io_data);
++	db->bus->index_write(db, reg);
++	db->bus->data_write(db, value);
+ }
+ 
+ static void
+@@ -193,6 +201,23 @@ dm9000_reset(struct board_info *db)
+ 		dev_err(db->dev, "dm9000 did not respond to second reset\n");
+ }
+ 
++/* Block helpers keep the __iomem signature because dm9000_plat_data lets a
++ * board override them.
++ */
++struct dm9000_mmio {
++	void __iomem *addr;		/* Register I/O base address */
++	void __iomem *data;		/* Data I/O address */
++
++	void (*inblk)(void __iomem *port, void *data, int length);
++	void (*outblk)(void __iomem *port, void *data, int length);
++	void (*dumpblk)(void __iomem *port, int length);
++};
++
++static struct dm9000_mmio *to_mmio(struct board_info *db)
++{
++	return db->bus_priv;
++}
++
+ /* routines for sending block to chip */
+ 
+ static void dm9000_outblk_8bit(void __iomem *reg, void *data, int count)
+@@ -258,6 +283,67 @@ static void dm9000_dumpblk_32bit(void __iomem *reg, int count)
+ 		readl(reg);
+ }
+ 
++static void dm9000_mmio_index_write(struct board_info *db, u8 reg)
++{
++	writeb(reg, to_mmio(db)->addr);
++}
++
++static u8 dm9000_mmio_index_read(struct board_info *db)
++{
++	return readb(to_mmio(db)->addr);
++}
++
++static void dm9000_mmio_data_write(struct board_info *db, u8 value)
++{
++	writeb(value, to_mmio(db)->data);
++}
++
++static u8 dm9000_mmio_data_read(struct board_info *db)
++{
++	return readb(to_mmio(db)->data);
++}
++
++static void dm9000_mmio_inblk(struct board_info *db, void *data, int length)
++{
++	struct dm9000_mmio *mm = to_mmio(db);
++
++	mm->inblk(mm->data, data, length);
++}
++
++static void dm9000_mmio_outblk(struct board_info *db, const void *data,
++			       int length)
++{
++	struct dm9000_mmio *mm = to_mmio(db);
++
++	mm->outblk(mm->data, (void *)data, length);
++}
++
++static void dm9000_mmio_dumpblk(struct board_info *db, int length)
++{
++	struct dm9000_mmio *mm = to_mmio(db);
++
++	mm->dumpblk(mm->data, length);
++}
++
++static void dm9000_mmio_release(struct board_info *db)
++{
++	struct dm9000_mmio *mm = to_mmio(db);
++
++	iounmap(mm->addr);
++	iounmap(mm->data);
++}
++
++static const struct dm9000_bus_ops dm9000_mmio_ops = {
++	.index_write	= dm9000_mmio_index_write,
++	.index_read	= dm9000_mmio_index_read,
++	.data_write	= dm9000_mmio_data_write,
++	.data_read	= dm9000_mmio_data_read,
++	.inblk		= dm9000_mmio_inblk,
++	.outblk		= dm9000_mmio_outblk,
++	.dumpblk	= dm9000_mmio_dumpblk,
++	.release	= dm9000_mmio_release,
++};
++
+ /*
+  * Sleep, either by using msleep() or if we are suspending, then
+  * use mdelay() to sleep.
+@@ -284,7 +370,7 @@ dm9000_phy_read(struct net_device *dev, int phy_reg_unused, int reg)
+ 	spin_lock_irqsave(&db->lock, flags);
+ 
+ 	/* Save previous register address */
+-	reg_save = readb(db->io_addr);
++	reg_save = db->bus->index_read(db);
+ 
+ 	/* Fill the phyxcer register into REG_0C */
+ 	iow(db, DM9000_EPAR, DM9000_PHY | reg);
+@@ -292,13 +378,13 @@ dm9000_phy_read(struct net_device *dev, int phy_reg_unused, int reg)
+ 	/* Issue phyxcer read command */
+ 	iow(db, DM9000_EPCR, EPCR_ERPRR | EPCR_EPOS);
+ 
+-	writeb(reg_save, db->io_addr);
++	db->bus->index_write(db, reg_save);
+ 	spin_unlock_irqrestore(&db->lock, flags);
+ 
+ 	dm9000_msleep(db, 1);		/* Wait read complete */
+ 
+ 	spin_lock_irqsave(&db->lock, flags);
+-	reg_save = readb(db->io_addr);
++	reg_save = db->bus->index_read(db);
+ 
+ 	iow(db, DM9000_EPCR, 0x0);	/* Clear phyxcer read command */
+ 
+@@ -306,7 +392,7 @@ dm9000_phy_read(struct net_device *dev, int phy_reg_unused, int reg)
+ 	ret = (ior(db, DM9000_EPDRH) << 8) | ior(db, DM9000_EPDRL);
+ 
+ 	/* restore the previous address */
+-	writeb(reg_save, db->io_addr);
++	db->bus->index_write(db, reg_save);
+ 	spin_unlock_irqrestore(&db->lock, flags);
+ 
+ 	mutex_unlock(&db->addr_lock);
+@@ -331,7 +417,7 @@ dm9000_phy_write(struct net_device *dev,
+ 	spin_lock_irqsave(&db->lock, flags);
+ 
+ 	/* Save previous register address */
+-	reg_save = readb(db->io_addr);
++	reg_save = db->bus->index_read(db);
+ 
+ 	/* Fill the phyxcer register into REG_0C */
+ 	iow(db, DM9000_EPAR, DM9000_PHY | reg);
+@@ -343,18 +429,18 @@ dm9000_phy_write(struct net_device *dev,
+ 	/* Issue phyxcer write command */
+ 	iow(db, DM9000_EPCR, EPCR_EPOS | EPCR_ERPRW);
+ 
+-	writeb(reg_save, db->io_addr);
++	db->bus->index_write(db, reg_save);
+ 	spin_unlock_irqrestore(&db->lock, flags);
+ 
+ 	dm9000_msleep(db, 1);		/* Wait write complete */
+ 
+ 	spin_lock_irqsave(&db->lock, flags);
+-	reg_save = readb(db->io_addr);
++	reg_save = db->bus->index_read(db);
+ 
+ 	iow(db, DM9000_EPCR, 0x0);	/* Clear phyxcer write command */
+ 
+ 	/* restore the previous address */
+-	writeb(reg_save, db->io_addr);
++	db->bus->index_write(db, reg_save);
+ 
+ 	spin_unlock_irqrestore(&db->lock, flags);
+ 	if (!db->in_timeout)
+@@ -369,15 +455,17 @@ dm9000_phy_write(struct net_device *dev,
+ 
+ static void dm9000_set_io(struct board_info *db, int byte_width)
+ {
++	struct dm9000_mmio *mm = to_mmio(db);
++
+ 	/* use the size of the data resource to work out what IO
+ 	 * routines we want to use
+ 	 */
+ 
+ 	switch (byte_width) {
+ 	case 1:
+-		db->dumpblk = dm9000_dumpblk_8bit;
+-		db->outblk  = dm9000_outblk_8bit;
+-		db->inblk   = dm9000_inblk_8bit;
++		mm->dumpblk = dm9000_dumpblk_8bit;
++		mm->outblk  = dm9000_outblk_8bit;
++		mm->inblk   = dm9000_inblk_8bit;
+ 		break;
+ 
+ 
+@@ -385,16 +473,16 @@ static void dm9000_set_io(struct board_info *db, int byte_width)
+ 		dev_dbg(db->dev, ": 3 byte IO, falling back to 16bit\n");
+ 		fallthrough;
+ 	case 2:
+-		db->dumpblk = dm9000_dumpblk_16bit;
+-		db->outblk  = dm9000_outblk_16bit;
+-		db->inblk   = dm9000_inblk_16bit;
++		mm->dumpblk = dm9000_dumpblk_16bit;
++		mm->outblk  = dm9000_outblk_16bit;
++		mm->inblk   = dm9000_inblk_16bit;
+ 		break;
+ 
+ 	case 4:
+ 	default:
+-		db->dumpblk = dm9000_dumpblk_32bit;
+-		db->outblk  = dm9000_outblk_32bit;
+-		db->inblk   = dm9000_inblk_32bit;
++		mm->dumpblk = dm9000_dumpblk_32bit;
++		mm->outblk  = dm9000_outblk_32bit;
++		mm->inblk   = dm9000_inblk_32bit;
+ 		break;
+ 	}
+ }
+@@ -804,8 +892,8 @@ dm9000_release_board(struct platform_device *pdev, struct board_info *db)
+ {
+ 	/* unmap our resources */
+ 
+-	iounmap(db->io_addr);
+-	iounmap(db->io_data);
++	if (db->bus && db->bus->release)
++		db->bus->release(db);
+ 
+ 	/* release the resources */
+ 
+@@ -969,7 +1057,7 @@ static void dm9000_timeout(struct net_device *dev, unsigned int txqueue)
+ 	/* Save previous register address */
+ 	spin_lock_irqsave(&db->lock, flags);
+ 	db->in_timeout = 1;
+-	reg_save = readb(db->io_addr);
++	reg_save = db->bus->index_read(db);
+ 
+ 	netif_stop_queue(dev);
+ 	dm9000_init_dm9000(dev);
+@@ -979,7 +1067,7 @@ static void dm9000_timeout(struct net_device *dev, unsigned int txqueue)
+ 	netif_wake_queue(dev);
+ 
+ 	/* Restore previous register address */
+-	writeb(reg_save, db->io_addr);
++	db->bus->index_write(db, reg_save);
+ 	db->in_timeout = 0;
+ 	spin_unlock_irqrestore(&db->lock, flags);
+ }
+@@ -1025,9 +1113,9 @@ dm9000_start_xmit(struct sk_buff *skb, struct net_device *dev)
+ 	spin_lock_irqsave(&db->lock, flags);
+ 
+ 	/* Move data to DM9000 TX RAM */
+-	writeb(DM9000_MWCMD, db->io_addr);
++	db->bus->index_write(db, DM9000_MWCMD);
+ 
+-	(db->outblk)(db->io_data, skb->data, skb->len);
++	db->bus->outblk(db, skb->data, skb->len);
+ 	dev->stats.tx_bytes += skb->len;
+ 
+ 	db->tx_pkt_cnt++;
+@@ -1098,7 +1186,7 @@ dm9000_rx(struct net_device *dev)
+ 		ior(db, DM9000_MRCMDX);	/* Dummy read */
+ 
+ 		/* Get most updated data */
+-		rxbyte = readb(db->io_data);
++		rxbyte = db->bus->data_read(db);
+ 
+ 		/* Status check: this byte must be 0 or 1 */
+ 		if (rxbyte & DM9000_PKT_ERR) {
+@@ -1112,9 +1200,9 @@ dm9000_rx(struct net_device *dev)
+ 
+ 		/* A packet ready now  & Get status/length */
+ 		GoodPacket = true;
+-		writeb(DM9000_MRCMD, db->io_addr);
++		db->bus->index_write(db, DM9000_MRCMD);
+ 
+-		(db->inblk)(db->io_data, &rxhdr, sizeof(rxhdr));
++		db->bus->inblk(db, &rxhdr, sizeof(rxhdr));
+ 
+ 		RxLen = le16_to_cpu(rxhdr.RxLen);
+ 
+@@ -1163,7 +1251,7 @@ dm9000_rx(struct net_device *dev)
+ 
+ 			/* Read received packet from RX SRAM */
+ 
+-			(db->inblk)(db->io_data, rdptr, RxLen);
++			db->bus->inblk(db, rdptr, RxLen);
+ 			dev->stats.rx_bytes += RxLen;
+ 
+ 			/* Pass to upper layer */
+@@ -1180,7 +1268,7 @@ dm9000_rx(struct net_device *dev)
+ 		} else {
+ 			/* need to dump the packet's data */
+ 
+-			(db->dumpblk)(db->io_data, RxLen);
++			db->bus->dumpblk(db, RxLen);
+ 		}
+ 	} while (rxbyte & DM9000_PKT_RDY);
+ }
+@@ -1201,7 +1289,7 @@ static irqreturn_t dm9000_interrupt(int irq, void *dev_id)
+ 	spin_lock_irqsave(&db->lock, flags);
+ 
+ 	/* Save previous register address */
+-	reg_save = readb(db->io_addr);
++	reg_save = db->bus->index_read(db);
+ 
+ 	dm9000_mask_interrupts(db);
+ 	/* Got DM9000 interrupt status */
+@@ -1228,7 +1316,7 @@ static irqreturn_t dm9000_interrupt(int irq, void *dev_id)
+ 
+ 	dm9000_unmask_interrupts(db);
+ 	/* Restore previous register address */
+-	writeb(reg_save, db->io_addr);
++	db->bus->index_write(db, reg_save);
+ 
+ 	spin_unlock_irqrestore(&db->lock, flags);
+ 
+@@ -1422,6 +1510,7 @@ dm9000_probe(struct platform_device *pdev)
+ 	u32 id_val;
+ 	struct gpio_desc *reset_gpio;
+ 	struct regulator *power;
++	struct dm9000_mmio *mm = NULL;
+ 	bool inv_mac_addr = false;
+ 	u8 addr[ETH_ALEN];
+ 
+@@ -1494,15 +1583,31 @@ dm9000_probe(struct platform_device *pdev)
+ 
+ 	INIT_DELAYED_WORK(&db->phy_poll, dm9000_poll_work);
+ 
+-	db->addr_res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+-	db->data_res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
+-
+-	if (!db->addr_res || !db->data_res) {
+-		dev_err(db->dev, "insufficient resources addr=%p data=%p\n",
+-			db->addr_res, db->data_res);
+-		ret = -ENOENT;
++	/* A GPIO-driven bus has no reg resources, so try it first. */
++	ret = dm9000_gpio_bus_setup(db, pdev);
++	if (ret && ret != -ENODEV)
+ 		goto out;
++
++	if (!db->bus) {
++		mm = devm_kzalloc(&pdev->dev, sizeof(*mm), GFP_KERNEL);
++		if (!mm) {
++			ret = -ENOMEM;
++			goto out;
++		}
++		db->bus = &dm9000_mmio_ops;
++		db->bus_priv = mm;
++
++		db->addr_res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++		db->data_res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
++
++		if (!db->addr_res || !db->data_res) {
++			dev_err(db->dev, "insufficient resources addr=%p data=%p\n",
++				db->addr_res, db->data_res);
++			ret = -ENOENT;
++			goto out;
++		}
+ 	}
++	ret = 0;
+ 
+ 	ndev->irq = platform_get_irq(pdev, 0);
+ 	if (ndev->irq < 0) {
+@@ -1532,6 +1637,9 @@ dm9000_probe(struct platform_device *pdev)
+ 		}
+ 	}
+ 
++	if (db->bus != &dm9000_mmio_ops)
++		goto bus_ready;
++
+ 	iosize = resource_size(db->addr_res);
+ 	db->addr_req = request_mem_region(db->addr_res->start, iosize,
+ 					  pdev->name);
+@@ -1542,9 +1650,9 @@ dm9000_probe(struct platform_device *pdev)
+ 		goto out;
+ 	}
+ 
+-	db->io_addr = ioremap(db->addr_res->start, iosize);
++	mm->addr = ioremap(db->addr_res->start, iosize);
+ 
+-	if (db->io_addr == NULL) {
++	if (mm->addr == NULL) {
+ 		dev_err(db->dev, "failed to ioremap address reg\n");
+ 		ret = -EINVAL;
+ 		goto out;
+@@ -1560,16 +1668,16 @@ dm9000_probe(struct platform_device *pdev)
+ 		goto out;
+ 	}
+ 
+-	db->io_data = ioremap(db->data_res->start, iosize);
++	mm->data = ioremap(db->data_res->start, iosize);
+ 
+-	if (db->io_data == NULL) {
++	if (mm->data == NULL) {
+ 		dev_err(db->dev, "failed to ioremap data reg\n");
+ 		ret = -EINVAL;
+ 		goto out;
+ 	}
+ 
+ 	/* fill in parameters for net-dev structure */
+-	ndev->base_addr = (unsigned long)db->io_addr;
++	ndev->base_addr = (unsigned long)mm->addr;
+ 
+ 	/* ensure at least we have a default set of IO routines */
+ 	dm9000_set_io(db, iosize);
+@@ -1592,17 +1700,19 @@ dm9000_probe(struct platform_device *pdev)
+ 		 * over-rides */
+ 
+ 		if (pdata->inblk != NULL)
+-			db->inblk = pdata->inblk;
++			mm->inblk = pdata->inblk;
+ 
+ 		if (pdata->outblk != NULL)
+-			db->outblk = pdata->outblk;
++			mm->outblk = pdata->outblk;
+ 
+ 		if (pdata->dumpblk != NULL)
+-			db->dumpblk = pdata->dumpblk;
++			mm->dumpblk = pdata->dumpblk;
+ 
+ 		db->flags = pdata->flags;
+ 	}
+ 
++bus_ready:
++
+ #ifdef CONFIG_DM9000_FORCE_SIMPLE_PHY_POLL
+ 	db->flags |= DM9000_PLATF_SIMPLE_PHY;
+ #endif
+@@ -1700,10 +1810,15 @@ dm9000_probe(struct platform_device *pdev)
+ 		if (inv_mac_addr)
+ 			dev_warn(db->dev, "%s: Invalid ethernet MAC address. Please set using ip\n",
+ 				 ndev->name);
+-		printk(KERN_INFO "%s: dm9000%c at %p,%p IRQ %d MAC: %pM (%s)\n",
+-		       ndev->name, dm9000_type_to_char(db->type),
+-		       db->io_addr, db->io_data, ndev->irq,
+-		       ndev->dev_addr, mac_src);
++		if (mm)
++			printk(KERN_INFO "%s: dm9000%c at %p,%p IRQ %d MAC: %pM (%s)\n",
++			       ndev->name, dm9000_type_to_char(db->type),
++			       mm->addr, mm->data, ndev->irq,
++			       ndev->dev_addr, mac_src);
++		else
++			printk(KERN_INFO "%s: dm9000%c IRQ %d MAC: %pM (%s)\n",
++			       ndev->name, dm9000_type_to_char(db->type),
++			       ndev->irq, ndev->dev_addr, mac_src);
+ 	}
+ 	return 0;
+ 
+diff --git a/drivers/net/ethernet/davicom/dm9000.h b/drivers/net/ethernet/davicom/dm9000.h
+index 581b35ad4..c3deabddb 100644
+--- a/drivers/net/ethernet/davicom/dm9000.h
++++ b/drivers/net/ethernet/davicom/dm9000.h
+@@ -177,5 +177,38 @@
+ 
+ #define DSPCR_INIT_PARAM	0xE100	/* DSP init parameter */
+ 
++/* Bus backends */
++
++struct board_info;
++struct platform_device;
++
++/* Do not add io pointers to board_info: that lets callers bypass these ops
++ * and silently work on memory-mapped boards only.
++ */
++struct dm9000_bus_ops {
++	void	(*index_write)(struct board_info *db, u8 reg);
++	u8	(*index_read)(struct board_info *db);	/* irq/timeout save it */
++	void	(*data_write)(struct board_info *db, u8 value);
++	u8	(*data_read)(struct board_info *db);
++	void	(*inblk)(struct board_info *db, void *data, int length);
++	void	(*outblk)(struct board_info *db, const void *data, int length);
++	void	(*dumpblk)(struct board_info *db, int length);
++	void	(*release)(struct board_info *db);
++};
++
++void *dm9000_bus_priv(struct board_info *db);
++void dm9000_set_bus(struct board_info *db, const struct dm9000_bus_ops *ops,
++		    void *priv);
++
++#ifdef CONFIG_DM9000_GPIO_BUS
++int dm9000_gpio_bus_setup(struct board_info *db, struct platform_device *pdev);
++#else
++static inline int dm9000_gpio_bus_setup(struct board_info *db,
++					struct platform_device *pdev)
++{
++	return -ENODEV;
++}
++#endif
++
+ #endif /* _DM9000X_H_ */
+ 
+-- 
+2.47.3
+
