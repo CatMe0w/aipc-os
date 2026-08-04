@@ -7,3 +7,4 @@ ARM assembly probes for investigating hardware behavior (e.g. SD/MMC). For refer
 Provided as-is. May not be in English.
 
 - [SD/MMC](sd/README.md)
+- [Ethernet](eth/README.md)

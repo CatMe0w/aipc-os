@@ -79,7 +79,7 @@ To build ARM stubs or the DOOM binary, you need `arm-none-eabi-gcc`.
 - **RAM**: 64 MB DDR SDRAM
 - **Storage**: 512 MB MLC NAND (Hynix typical), 4x528-byte interleaved ECC layout
 - **Display**: 800x480 TFT LCD, RGB565, ~48 Hz
-- **Ethernet**: Microchip ENC28J60 on SPI
+- **Ethernet**: Davicom DM9000A, 8-bit parallel bus bit-banged over GPIO
 - **USB HID**: WCH CH374 USB host bridge on SPI, internal keyboard + 2 external USB-A ports
 - **USB**: MUSB (Mentor Graphics) integrated in SoC, 1 external USB-A port
 
