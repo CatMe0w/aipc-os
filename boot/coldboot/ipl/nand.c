@@ -29,6 +29,8 @@
 #define NAND_PAGE_SIZE          REG32(0x30E00D0Cu)
 #define NAND_COL_ADDR_CYCLES    REG32(0x30E00D10u)
 
+#define NF_WAIT_LIMIT           20000000u
+
 /* NF FIFO micro-op encodings (bits [10:0]):
  *   0x062 output address byte    (parameter in bits [21:11])
  *   0x064 output command byte
@@ -42,10 +44,13 @@ static void nf_seq_start(uint32_t launch)
     NF_CTRL_STA = (NF_CTRL_STA & 0x7FFFF3FFu) | launch;
 }
 
-static void nf_seq_wait_done(void)
+static int nf_seq_wait_done(void)
 {
-    while ((int32_t)NF_CTRL_STA >= 0)
-        ;  /* bit 31 set when sequence finishes */
+    for (uint32_t i = 0; i < NF_WAIT_LIMIT; ++i) {
+        if ((int32_t)NF_CTRL_STA < 0)
+            return 0;  /* bit 31 set when sequence finishes */
+    }
+    return -10;
 }
 
 /* Append col-address bytes then row-address bytes to FIFO at `fifo`.
@@ -73,12 +78,14 @@ static void l2_bind_nf_dma(void)
 
 /* Pull `n` bytes (<= 512) from the NF L2 buffer into `dst`. Polls L2CTR
  * status counter until the buffer has >= n/64 chunks. */
-static void l2_copy_from_buf(void *dst, uint32_t n)
+static int l2_copy_from_buf(void *dst, uint32_t n)
 {
     if (n > 0x200u)
-        return;
-    while (((L2CTR_STAT_REG1 >> 20) & 0xFu) < (n >> 6))
-        ;
+        return -11;
+    for (uint32_t i = 0; ((L2CTR_STAT_REG1 >> 20) & 0xFu) < (n >> 6); ++i) {
+        if (i >= NF_WAIT_LIMIT)
+            return -12;
+    }
     const volatile uint32_t *src = (const volatile uint32_t *)L2_NF_BUFFER;
     uint8_t *d8 = (uint8_t *)dst;
     uint32_t whole = n & 0x3FCu;
@@ -92,6 +99,7 @@ static void l2_copy_from_buf(void *dst, uint32_t n)
         for (uint32_t i = 0; i < rem; ++i)
             d8[whole + i] = (uint8_t)(w >> (8u * i));
     }
+    return 0;
 }
 
 /* Classify ECC_CTRL status after a chunk DMA completes.
@@ -135,12 +143,14 @@ static int nf_read_page_with_ecc(uint32_t page_no, uint8_t *dst,
     REG32(NF_FIFO_HEAD) = 0x64u;  /* output command byte 0x00 (READ first) */
     volatile uint32_t *fifo = (volatile uint32_t *)(uintptr_t)NF_FIFO_NEXT;
     fifo = nf_emit_addr_cycles(fifo, page_no, 0u);
-    if (NAND_CHUNKS_PER_PAGE != 1u) {
+    if (chunks != 1u) {
         *fifo++ = 0x18000u | 0x64u;  /* output command byte 0x30 (READ confirm) */
     }
     *fifo++ = 0x201u;  /* wait until ready */
     nf_seq_start(0x40008400u);
-    nf_seq_wait_done();
+    int rc = nf_seq_wait_done();
+    if (rc)
+        return rc;
 
     for (uint32_t c = 0; c < chunks; ++c) {
         l2_bind_nf_dma();
@@ -148,15 +158,22 @@ static int nf_read_page_with_ecc(uint32_t page_no, uint8_t *dst,
         NF_CTRL_STA = 0;
         REG32(NF_FIFO_HEAD) = 0x107919u;  /* read 528 bytes (512 data + 16 ECC) */
         nf_seq_start(0x40008400u);
-        l2_copy_from_buf(dst + (c << 9), 0x200u);
-        nf_seq_wait_done();
+        rc = l2_copy_from_buf(dst + (c << 9), 0x200u);
+        if (rc)
+            return rc;
+        rc = nf_seq_wait_done();
+        if (rc)
+            return rc;
 
         uint32_t status;
-        do {
-            do {
-                status = ECC_CTRL;
-            } while (((status >> 6) ^ 1u) & 1u);  /* wait DMA done (bit 6) */
-        } while ((status & 0x01000000u) == 0u);   /* wait ECC ready (bit 24) */
+        uint32_t spins = 0;
+        for (;;) {
+            status = ECC_CTRL;
+            if (((status >> 6) & 1u) && (status & 0x01000000u))
+                break;
+            if (++spins >= NF_WAIT_LIMIT)
+                return -13;
+        }
         ECC_CTRL = status | 0x40u;  /* clear DMA done */
 
         int kind = nf_classify_dma_result(status) & 0xFFu;
@@ -183,6 +200,22 @@ static int nf_read_page_with_ecc(uint32_t page_no, uint8_t *dst,
     return 0;
 }
 
+static int nand_geometry_valid(uint32_t page_size, uint32_t pages_per_block,
+                               uint32_t chunks)
+{
+    if (page_size != 0x200u && page_size != 0x800u && page_size != 0x1000u)
+        return 0;
+    if (chunks == 0 || chunks > 8u || chunks != (page_size >> 9))
+        return 0;
+    if (pages_per_block == 0 || pages_per_block > 256u)
+        return 0;
+    if (NAND_COL_ADDR_CYCLES == 0 || NAND_COL_ADDR_CYCLES > 2u)
+        return 0;
+    if (NAND_PAGE_ADDR_CYCLES == 0 || NAND_PAGE_ADDR_CYCLES > 5u)
+        return 0;
+    return 1;
+}
+
 int nand_read_page(uint32_t page_no, void *dst, void *oob_dst)
 {
     return nf_read_page_with_ecc(page_no, (uint8_t *)dst,
@@ -195,12 +228,16 @@ int nand_load_partition(void *dst, uint32_t start_block, uint32_t max_bytes)
     static uint8_t oob_scratch[64];
     uint32_t page_size = NAND_PAGE_SIZE;
     uint32_t pages_per_block = NAND_PAGES_PER_BLOCK;
+    uint32_t chunks = NAND_CHUNKS_PER_PAGE;
+    if (!nand_geometry_valid(page_size, pages_per_block, chunks))
+        return -20;
+
     uint32_t page = start_block * pages_per_block;
     uint8_t *out = (uint8_t *)dst;
 
     while (max_bytes >= page_size) {
         int rc = nf_read_page_with_ecc(page, out, oob_scratch,
-                                        NAND_CHUNKS_PER_PAGE);
+                                        chunks);
         if (rc != 0)
             return rc;
         out      += page_size;

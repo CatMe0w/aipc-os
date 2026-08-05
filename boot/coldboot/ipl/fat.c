@@ -6,6 +6,9 @@ static uint8_t  io_buf[512]   __attribute__((aligned(4)));  /* MBR / BPB / dir /
 static uint8_t  fat_buf[512]  __attribute__((aligned(4)));  /* cached FAT sector */
 static uint32_t fat_buf_lba = 0xFFFFFFFFu;
 
+#define MAX_SECTORS_PER_CLUSTER 128u
+#define MAX_FAT32_ROOT_SECTORS  4096u
+
 static struct {
     uint32_t bytes_per_sector;
     uint32_t sectors_per_cluster;
@@ -26,6 +29,11 @@ static uint32_t rd32(const uint8_t *p)
 {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8)
          | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static int is_power_of_two(uint32_t v)
+{
+    return v != 0 && (v & (v - 1u)) == 0;
 }
 
 static int read_sector(uint32_t lba, void *dst)
@@ -92,9 +100,13 @@ static int find_in_root(const char *name11, uint32_t *first_cluster,
 {
     if (v.is_fat32) {
         uint32_t cluster = v.root_cluster;
-        while (cluster < 0x0FFFFFF8u && cluster >= 2u) {
+        uint32_t scanned = 0;
+        while (cluster < 0x0FFFFFF8u && cluster >= 2u &&
+               scanned < MAX_FAT32_ROOT_SECTORS) {
             uint32_t lba = v.data_start_lba + (cluster - 2u) * v.sectors_per_cluster;
             for (uint32_t s = 0; s < v.sectors_per_cluster; s++) {
+                if (scanned++ >= MAX_FAT32_ROOT_SECTORS)
+                    return -7;
                 if (read_sector(lba + s, io_buf) < 0)
                     return -6;
                 int r = scan_dir_sector(io_buf, name11, first_cluster, file_size);
@@ -154,15 +166,24 @@ int fat_load_file(const char *name11, void *dst, uint32_t max_bytes,
 
     if (v.bytes_per_sector != 512u)
         return -5;
+    if (!is_power_of_two(v.sectors_per_cluster) ||
+        v.sectors_per_cluster > MAX_SECTORS_PER_CLUSTER)
+        return -5;
+    if (reserved == 0 || num_fats == 0 || num_fats > 4)
+        return -5;
 
     uint32_t sectors_per_fat;
     if (spf16 == 0) {
         v.is_fat32 = 1;
         sectors_per_fat = rd32(io_buf + 0x24);
         v.root_cluster = rd32(io_buf + 0x2C);
+        if (sectors_per_fat == 0 || v.root_cluster < 2u)
+            return -5;
     } else {
         v.is_fat32 = 0;
         sectors_per_fat = spf16;
+        if (root_entries == 0)
+            return -5;
     }
 
     v.fat_start_lba = part_lba + reserved;
@@ -179,6 +200,8 @@ int fat_load_file(const char *name11, void *dst, uint32_t max_bytes,
     int frc = find_in_root(name11, &first_cluster, &file_size);
     if (frc != 0)
         return frc;
+    if (file_size == 0 || first_cluster < 2u)
+        return -9;
     if (file_size > max_bytes)
         return -9;
 
@@ -210,6 +233,9 @@ int fat_load_file(const char *name11, void *dst, uint32_t max_bytes,
         }
         cluster = fat_entry(cluster);
     }
+
+    if (loaded != file_size)
+        return -10;
 
     if (out_size)
         *out_size = file_size;

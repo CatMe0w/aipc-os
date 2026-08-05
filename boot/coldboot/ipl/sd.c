@@ -82,6 +82,22 @@ static uint32_t wait_sta(uint32_t mask)
     return 0;
 }
 
+static void sd_stop_transfer(void)
+{
+    MCI_CMD      = 0;
+    MCI_DATACTRL = 0;
+    MCI_DATALEN  = 0;
+    MCI_DMACTRL  = 0;
+    MCI_MASK     = 0;
+    L2_CONBUF0_7 |= (1u << (SD_L2_BUF_ID + 24));
+}
+
+static void sd_quiesce(void)
+{
+    sd_stop_transfer();
+    L2_BUFASSIGN1 &= ~(0x7u << 12);
+}
+
 static int send_resp(uint32_t cmd_idx, uint32_t arg, uint32_t flags,
                      uint32_t *resp_out)
 {
@@ -259,6 +275,8 @@ int sd_init(void)
 
 void sd_release_pins(void)
 {
+    sd_quiesce();
+
     if (!g_pin_save.valid)
         return;
     SYSCTRL(0x0C) = g_pin_save.sc_0c;
@@ -295,8 +313,10 @@ int sd_read_block(uint32_t lba, void *dst)
     MCI_MASK = 0x1FFu;
     MCI_CMD  = CPSM_ENABLE | CPSM_RESPONSE | (17u << 1);
 
-    if (!(wait_sta(RESP_MASK) & STA_RESPEND))
+    if (!(wait_sta(RESP_MASK) & STA_RESPEND)) {
+        sd_stop_transfer();
         return -1;
+    }
     /* Consume R1 so the AK MCI clears its sticky RESPEND latch. */
     (void)MCI_RESP0;
 
@@ -306,8 +326,10 @@ int sd_read_block(uint32_t lba, void *dst)
      * hot loop touches L2 registers/SRAM, not the slow MCI FIFO. */
     uint32_t spins = 0;
     while (((L2_BUFSTAT1 >> (SD_L2_BUF_ID * 4)) & 0xFu) < 8u) {
-        if (++spins >= WAIT_LIMIT)
+        if (++spins >= WAIT_LIMIT) {
+            sd_stop_transfer();
             return -2;
+        }
     }
 
     const volatile uint32_t *src =
@@ -316,7 +338,6 @@ int sd_read_block(uint32_t lba, void *dst)
     for (uint32_t w = 0; w < 128u; w++)
         dw[w] = src[w];
 
-    MCI_DATACTRL = 0;
-    MCI_DMACTRL  = 0;
+    sd_stop_transfer();
     return 0;
 }
