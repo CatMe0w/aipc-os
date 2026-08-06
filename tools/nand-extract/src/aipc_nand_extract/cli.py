@@ -22,8 +22,9 @@ MAX_ECEC_LOGICAL_PAGES_PER_RAW_GROUP = 512
 PTB_PAYLOAD_SIZE = 0x7F4
 PTB_ENTRY_SIZE = 0x30
 NBOOT_CODE_OFFSET = PAGE_SIZE
-NBOOT_CODE_SIZE = PAGE_SIZE * 2
+NBOOT_CODE_FALLBACK_SIZE = PAGE_SIZE * 2
 NBOOT_CODE_LOAD_BASE = 0x30000000
+AK_BOOT_SIGNATURE = b"ANYKA382"
 IMG_HEADER_SIZE = 0x2C
 EBOOT_VIEW_SIZE = 0x64000
 CHILD_PARTITION_TABLE_OFFSET = 0x1BE
@@ -745,6 +746,16 @@ def write_slice(src_path: Path, out_path: Path, offset: int, size: int) -> None:
                 raise click.ClickException(f"short read while writing {out_path.name}")
             fo.write(chunk)
             remaining -= len(chunk)
+
+
+def nboot_payload_size(nbt_page0: bytes) -> int | None:
+    if len(nbt_page0) < 0x10 or nbt_page0[4:12] != AK_BOOT_SIGNATURE:
+        return None
+    chunks_per_page = nbt_page0[0x0C]
+    page_count = nbt_page0[0x0D]
+    if chunks_per_page not in (1, 4, 8) or page_count == 0:
+        return None
+    return page_count * chunks_per_page * CHUNK_SIZE
 
 
 def parse_img_header(raw: bytes) -> dict | None:
@@ -1741,16 +1752,19 @@ def write_analysis_views(out_dir: Path) -> list[dict]:
     nbt_path = out_dir / "NBT.raw"
     if nbt_path.exists():
         nbt_size = nbt_path.stat().st_size
-        if nbt_size >= NBOOT_CODE_OFFSET + NBOOT_CODE_SIZE:
+        with nbt_path.open("rb") as fh:
+            payload_size = nboot_payload_size(fh.read(0x10)) or NBOOT_CODE_FALLBACK_SIZE
+        payload_size = min(payload_size, nbt_size - NBOOT_CODE_OFFSET)
+        if payload_size > 0:
             path = out_dir / "NBT.code.bin"
-            write_slice(nbt_path, path, NBOOT_CODE_OFFSET, NBOOT_CODE_SIZE)
+            write_slice(nbt_path, path, NBOOT_CODE_OFFSET, payload_size)
             views.append(
                 {
                     "path": path.name,
                     "kind": "nboot_code",
                     "source": nbt_path.name,
                     "source_offset": NBOOT_CODE_OFFSET,
-                    "size": NBOOT_CODE_SIZE,
+                    "size": payload_size,
                     "load_base": NBOOT_CODE_LOAD_BASE,
                 }
             )
