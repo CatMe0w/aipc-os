@@ -8,7 +8,6 @@ __pycache__/
 *.bin
 *.su
 boot/coldboot/opennboot/test/test_ecc
-boot/coldboot/opennboot/test/bootbin/BOOT.BIN
 *.dSYM
 node_modules/
 dist/

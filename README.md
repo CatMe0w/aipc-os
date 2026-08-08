@@ -50,10 +50,11 @@ Python CLI tools (uv workspace) for talking to the device:
 | `aipc-nand-dump`     | Fast NAND dump tool for AIPC            |
 | `aipc-nand-extract`  | Extract partitions from a raw NAND dump |
 
-| Extra    | Purpose                                                                               |
-| -------- | ------------------------------------------------------------------------------------- |
-| `probes` | Lab reports and ARM assembly probes for investigating hardware behavior (e.g. SD/MMC) |
-| `old`    | Deprecated tools and scripts from early experimentation                               |
+| Extra     | Purpose                                                                               |
+| --------- | ------------------------------------------------------------------------------------- |
+| `gdbstub` | GDB stub, a replacement for the bootrom USB boot mode                                 |
+| `probes`  | Lab reports and ARM assembly probes for investigating hardware behavior (e.g. SD/MMC) |
+| `old`     | Deprecated tools and scripts from early experimentation                               |
 
 ### Website ([`website/`](website/))
 
