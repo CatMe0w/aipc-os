@@ -1,51 +1,49 @@
 # Diagnostic Self-Test Mode
 
-Diagnostic mode is a factory test path activated when both DGPIO[3] and DGPIO[2] are held high during the boot override sampling (all 5 polls must see both bits asserted). The bootrom sets rRTC_BOOTMOD = 0x05000000, then enters `bootrom_diag_mode()`, which never returns.
+Diagnostic mode is a factory test path. It starts when DGPIO[3] and DGPIO[2] both stay high through the boot override sampling. All 5 polls must see both bits asserted. The bootrom sets SYSCTRL+0x54 = 0x05000000, then enters `bootrom_diag_mode()`, which never returns.
 
 ## Overview
 
-The diagnostic mode runs two categories of hardware self-tests:
+Diagnostic mode runs two groups of hardware self-tests:
 
-1. **GPIO/Sharepin connectivity test** - verifies that all GPIO groups can be driven to all-ones and all-zeroes.
-2. **RTC/USB indexed register window test** - writes and reads back test patterns across 6 register windows to verify the indexed sideband interface.
+1. **GPIO/sharepin connectivity test**: makes sure that all GPIO groups can drive all-ones and all-zeroes.
+2. **RTC/USB indexed register window test**: writes and reads back test patterns across 6 register windows to make sure that the indexed sideband interface works.
 
-Results are signaled via two GPIO4 output pins used as status indicators. After the tests complete, the bootrom enters an infinite idle loop.
+Two GPIO4 output pins carry the results. After the tests, the bootrom enters an idle loop that never ends.
 
 ## GPIO4 Test Output Pins
 
-The diagnostic mode uses GPIO4 bits 10 and 11 (bit index = argument + 6, where argument 4 -> bit 10, argument 5 -> bit 11) as test status indicators:
+Diagnostic mode uses GPIO4 bits 10 and 11 as test status indicators. The bit index is the argument plus 6, thus argument 4 drives bit 10 and argument 5 drives bit 11.
 
 | Pin (bit) | Role           | Driven by  |
 | --------- | -------------- | ---------- |
 | GPIO4[10] | Busy indicator | Argument 4 |
 | GPIO4[11] | Pass latch     | Argument 5 |
 
-Pin driving functions:
+The pin driving functions work as follows:
 
-- **Drive high**: clear direction bit in SYSCTRL+0x94, set output bit in SYSCTRL+0x98.
-- **Drive low**: clear direction bit in SYSCTRL+0x94, clear output bit in SYSCTRL+0x98.
+- **Drive high**: clear the direction bit in SYSCTRL+0x94, set the output bit in SYSCTRL+0x98.
+- **Drive low**: clear the direction bit in SYSCTRL+0x94, clear the output bit in SYSCTRL+0x98.
 
-Similarly, GPIO4 bits 6 and 7 (arguments 0 and 1) are used as additional status indicators during the GPIO/sharepin test phase.
+GPIO4 bits 6 and 7, arguments 0 and 1, are more status indicators for the GPIO/sharepin test phase.
 
-## Initialization
-
-`diag_init()`:
+## Initialization (`diag_init`)
 
 1. Drive GPIO4[6] low (clear arg 0).
-2. Drive GPIO4[6] high (set arg 0) - signals test start.
-3. Drive GPIO4[7] high (set arg 1) - pass indicator for GPIO test.
+2. Drive GPIO4[6] high (set arg 0). This signals the test start.
+3. Drive GPIO4[7] high (set arg 1). This is the pass indicator of the GPIO test.
 4. Run the GPIO/sharepin connectivity test.
-5. Drive GPIO4[6] low - signals GPIO test phase complete.
+5. Drive GPIO4[6] low. This signals the end of the GPIO test phase.
 
-## GPIO/Sharepin Connectivity Test
+## GPIO/Sharepin Connectivity Test (`gpio_mux_selftest`)
 
-This test verifies that all four GPIO groups (GPIO1-GPIO4) can be driven and read back correctly.
+This test makes sure that all four GPIO groups, GPIO1 to GPIO4, drive and read back correctly.
 
 ### Setup
 
-1. Clear sharepin mux registers: SYSCTRL+0x74 = 0, SYSCTRL+0x78 = 0 (switch all sharepins to GPIO mode).
-2. Set I/O control: SYSCTRL+0xD4 |= 0x3FFFC (bits [17:2]) and SYSCTRL+0xD4 |= 0xC000000 (bits [27:26]).
-3. Set GPIO1 direction register to 0: SYSCTRL+0x7C = 0.
+1. Clear the sharepin mux registers: SYSCTRL+0x74 = 0, SYSCTRL+0x78 = 0. This switches all sharepins to GPIO mode.
+2. Set the I/O control: SYSCTRL+0xD4 |= 0x3FFFC (bits [17:2]) and SYSCTRL+0xD4 |= 0xC000000 (bits [27:26]).
+3. Set the GPIO1 direction register to 0: SYSCTRL+0x7C = 0.
 
 ### Drive All-Ones Test
 
@@ -62,7 +60,7 @@ Set all output registers to their maximum values:
 | GPIO4 dir | Low 3 bits cleared |                                |
 | GPIO4 out | Low 3 bits set     |                                |
 
-Then read back and verify:
+Then read back and compare:
 
 | Input Register | Expected   | Mask         |
 | -------------- | ---------- | ------------ |
@@ -71,38 +69,38 @@ Then read back and verify:
 | GPIO3 in       | 0xFFFFFFFF | full         |
 | GPIO4 in       | 0x07       | & 0x07       |
 
-Any mismatch drives GPIO4[7] low (fail) and returns.
+Any mismatch drives GPIO4[7] low, which means fail, and returns.
 
 ### Drive All-Zeroes Test
 
-Clear all output registers to 0 and verify all input registers read 0 (with the same masks). Any mismatch drives GPIO4[7] low (fail).
+Clear all output registers to 0 and make sure that all input registers read 0, with the same masks. Any mismatch drives GPIO4[7] low, which means fail.
 
 ## RTC/USB Indexed Register Window Test
 
-After GPIO tests, the main test function:
+After the GPIO tests, the main test function (`run_rtcusb_selftest`):
 
-1. Drives GPIO4[10] low then high (busy pulse).
-2. Drives GPIO4[11] high (pass latch preset).
-3. Tests 6 register windows sequentially.
-4. On any window failure, drives GPIO4[11] low (fail latch).
-5. Drives GPIO4[10] low (busy cleared = test complete).
+1. Drives GPIO4[10] low, then high. This is the busy pulse.
+2. Drives GPIO4[11] high. This presets the pass latch.
+3. Tests the 6 register windows in order.
+4. Drives GPIO4[11] low on any window failure. This is the fail latch.
+5. Drives GPIO4[10] low. Busy clear means that the test is complete.
 
 ### Indexed Register Interface
 
-The RTC/USB sideband is accessed through a 14-bit indexed register interface:
+A 14-bit indexed register interface reaches the RTC/USB sideband.
 
 **Write** (`rtcusb_write_indexed14(window, value)`):
 
 1. Clear SYSCTRL+0x50 bits [18:0] (shift right 19, shift left 19).
-2. OR in: `window | (value & 0x3FFF) | 0x40000` (bit 18 = write strobe).
-3. Poll SYSCTRL+0x4C bit 24 until set (transfer complete).
+2. OR in `window | (value & 0x3FFF) | 0x40000`, where bit 18 is the write strobe.
+3. Poll SYSCTRL+0x4C bit 24 until it sets. This means transfer complete.
 
 **Read** (`rtcusb_read_indexed14(window)`):
 
 1. Clear SYSCTRL+0x50 bits [18:0].
-2. OR in: `window | 0x60000` (bits 18:17 = read strobe).
-3. Poll SYSCTRL+0x4C bit 24 until set.
-4. Return SYSCTRL+0x54 & 0x3FFF (low 14 bits of the read-back register).
+2. OR in `window | 0x60000`, where bits 18:17 are the read strobe.
+3. Poll SYSCTRL+0x4C bit 24 until it sets.
+4. Return SYSCTRL+0x54 & 0x3FFF, the low 14 bits of the read-back register.
 
 ### Window Addresses
 
@@ -117,7 +115,7 @@ The RTC/USB sideband is accessed through a 14-bit indexed register interface:
 
 ### Test Pattern
 
-Each window is tested with 4 write-read-verify cycles using complementary bit patterns:
+Each window gets 4 write-read-compare cycles with complementary bit patterns:
 
 | Step | Write Value | Purpose                        |
 | ---- | ----------- | ------------------------------ |
@@ -128,7 +126,7 @@ Each window is tested with 4 write-read-verify cycles using complementary bit pa
 
 ### Per-Window Expected Masks
 
-Not all bits in every window are writable. The test applies per-window masks to the read-back value before comparison:
+Not every bit in every window is writable. The test applies a per-window mask to the read-back value before the comparison:
 
 | Window  | All-1s mask | All-0s mask | 0x1555 mask | 0x2AAA mask |
 | ------- | ----------- | ----------- | ----------- | ----------- |
@@ -139,8 +137,8 @@ Not all bits in every window are writable. The test applies per-window masks to 
 | 0x10000 | 0x1FFD      | 0x1FFD      | 0x1554      | 0xAA9       |
 | 0x14000 | 0x3FDF      | 0x3FDF      | 0x1555      | 0x2A8A      |
 
-These masks reflect read-only, reserved, or always-set/clear bits in each register window. If any verification step fails, the function returns 0 immediately (fail), and the outer loop drives the fail indicator low.
+These masks come from the read-only, reserved, and always-set or always-clear bits of each register window. On any failed comparison the function returns 0 immediately, and the outer loop drives the fail indicator low.
 
 ## Post-Test Behavior
 
-After all tests complete (or any test fails), the diagnostic mode enters an infinite `while(1)` loop. The GPIO4 output pins retain their final state, allowing external test equipment to read the pass/fail result.
+After all tests complete, or after any test fails, diagnostic mode enters a `while(1)` loop. The GPIO4 output pins hold their final state, thus external test equipment can read the pass or fail result.

@@ -2,13 +2,13 @@
 
 ## ROMHDR
 
-The `ROMHDR` is a standard WinCE ROM header structure, 0x54 bytes, consisting of 21 consecutive little-endian 32-bit fields. Its blob offset is:
+The `ROMHDR` is a standard WinCE ROM header structure. It is 0x54 bytes, 21 consecutive little-endian 32-bit fields. Its blob offset is:
 
 ```
 blob_offset = ecec_pointer_to_offset(image, field_44)
 ```
 
-where `field_44` comes from the ECEC image header (see [Partition and ECEC Layout](partition-and-ecec-layout.md)).
+`field_44` comes from the ECEC image header. See [Partition and ECEC Layout](partition-and-ecec-layout.md).
 
 | Index | Field            | Notes                                          |
 | ----: | ---------------- | ---------------------------------------------- |
@@ -34,7 +34,7 @@ where `field_44` comes from the ECEC image header (see [Partition and ECEC Layou
 |    19 | `tracking_start` | kernel debug tracking buffer VA                |
 |    20 | `tracking_len`   | kernel debug tracking buffer byte count        |
 
-CPU type `0x01C2` identifies ARM.
+CPU type `0x01C2` means ARM.
 
 Observed values for the primary module images:
 
@@ -43,7 +43,7 @@ Observed values for the primary module images:
 | v1.58.2 | `ECEC_01` | `0x80600000` | `0x830B89A4` | 262 | 161 | `0x01C2` |
 | v1.88 | `ECEC_01` | `0x80380000` | `0x82DD8348` | 262 | 161 | `0x01C2` |
 
-Immediately following the `ROMHDR` are the ROM module table (`nummods` × 32 bytes) and ROM file table (`numfiles` × 28 bytes), in that order.
+The ROM module table (`nummods` * 32 bytes) follows the `ROMHDR` immediately, and the ROM file table (`numfiles` * 28 bytes) follows that.
 
 ## ROM Module Table
 
@@ -60,9 +60,9 @@ Each entry is 32 bytes:
 | `+0x18` | 4 | `o32_pointer` | VA of first compact `o32_rom` section descriptor |
 | `+0x1C` | 4 | `load_pointer` | VA of the module's load address in the WinCE image |
 
-`load_pointer` is the address at which WinCE places the module in the running system's virtual address space. It differs from `e32_rom.image_base`, which is the preferred compile-time base recorded in the compact ROM header.
+`load_pointer` is the address where WinCE places the module in the virtual address space of the running system. It differs from `e32_rom.image_base`, the preferred compile-time base in the compact ROM header.
 
-EBOOT's second ECEC validation (`sub_8005B3E8`) walks this table and accepts the image only when one entry's `name_pointer` resolves to `nk.exe`.
+The second ECEC validation of EBOOT (`sub_8005B3E8`) walks this table. It accepts the image only when the `name_pointer` of one entry resolves to `nk.exe`.
 
 ## ROM File Table
 
@@ -78,11 +78,11 @@ Each entry is 28 bytes:
 | `+0x14` | 4 | `name_pointer` | VA of null-terminated ASCII file name |
 | `+0x18` | 4 | `load_pointer` | VA of file data in the ROM image |
 
-ROM files are accessible from within the running WinCE system via the BinFS filesystem. ROM modules are not directly accessible as files; attempts to copy them silently fail.
+The BinFS filesystem makes the ROM files available inside the running WinCE system. ROM modules are not available as files, and an attempt to copy one fails without a message.
 
 ## Compact e32_rom
 
-The `e32_rom` header is 112 bytes (`0x70`), located at `ecec_pointer_to_offset(image, module.e32_pointer)`.
+The `e32_rom` header is 112 bytes (`0x70`). It sits at `ecec_pointer_to_offset(image, module.e32_pointer)`.
 
 | Offset | Size | Field | Notes |
 | --- | --- | --- | --- |
@@ -107,13 +107,13 @@ Unit assignments:
 | ----- | ---------------------------------------------------------- |
 | 0     | export directory                                           |
 | 1     | import directory                                           |
-| 2–8   | [partial] other directories; meanings not fully determined |
+| 2-8   | [partial] other directories; meanings not fully determined |
 
-`image_base` records the address the module was linked for. Absolute pointers baked into section data reference this base. The actual WinCE load address is `module.load_pointer` from the ROM module table entry.
+`image_base` records the address that the module was linked for. Absolute pointers inside the section data refer to this base. The actual WinCE load address is `module.load_pointer`, from the ROM module table entry.
 
 ## Compact o32_rom
 
-Each `o32_rom` section descriptor is 24 bytes (`0x18`). Descriptors begin at `ecec_pointer_to_offset(image, module.o32_pointer)` and are laid out consecutively for `e32_rom.object_count` entries.
+Each `o32_rom` section descriptor is 24 bytes (`0x18`). The descriptors start at `ecec_pointer_to_offset(image, module.o32_pointer)`, one after the other, for `e32_rom.object_count` entries.
 
 | Offset | Size | Field | Notes |
 | --- | --- | --- | --- |
@@ -124,20 +124,20 @@ Each `o32_rom` section descriptor is 24 bytes (`0x18`). Descriptors begin at `ec
 | `+0x10` | 4 | `real_address` | [partial] runtime address; purpose not fully determined |
 | `+0x14` | 4 | `flags` | section characteristic flags |
 
-`data_pointer` is an independent virtual address for each section. It must be converted through `ecec_pointer_to_offset` separately for each section; sections are not assumed to be contiguous in the stored blob.
+`data_pointer` is an independent virtual address for each section. Each section needs its own conversion through `ecec_pointer_to_offset`. Do not assume that the sections are contiguous in the stored blob.
 
-Common `flags` values observed:
+Common `flags` values:
 
-| Value        | Meaning                                      |
-| ------------ | -------------------------------------------- |
-| `0x00000020` | executable code (`.text`)                    |
-| `0x00000040` | initialized data (`.data`, `.rdata`)         |
-| `0x00000080` | uninitialized data (`.bss`)                  |
-| `0x00002000` | CECOMPRESS candidate; treated as compressed only when the section bytes pass block-header validation |
+| Value | Meaning |
+| --- | --- |
+| `0x00000020` | executable code (`.text`) |
+| `0x00000040` | initialized data (`.data`, `.rdata`) |
+| `0x00000080` | uninitialized data (`.bss`) |
+| `0x00002000` | CECOMPRESS candidate. Treat it as compressed only when the section bytes pass block-header validation. |
 
 ## Unresolved
 
-- Full semantics of `e32_rom` directory units 2–8.
-- The meaning of `sect14_rva` / `sect14_size` and how they relate to `o32_rom.real_address`.
-- One module per ECEC image fails to resolve in each observed firmware version; the cause is not yet determined.
-- Full extraction of ROM file table entries into usable files.
+- Full semantics of `e32_rom` directory units 2-8.
+- The meaning of `sect14_rva` and `sect14_size`, and their relation to `o32_rom.real_address`.
+- One module per ECEC image fails to resolve in each firmware version. The cause is not yet known.
+- Full extraction of the ROM file table entries into usable files.

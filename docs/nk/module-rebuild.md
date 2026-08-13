@@ -1,12 +1,12 @@
 # Module Rebuild
 
-`tools/nand-extract` converts each ROM module descriptor into a PE file suitable for loading in decompilers. The goal is a correct analysis layout, not a byte-for-byte reconstruction of any original Platform Builder PE.
+`tools/nand-extract` converts each ROM module descriptor into a PE file that a decompiler can load. The goal is a correct analysis layout, not a byte-for-byte reconstruction of an original Platform Builder PE.
 
 ## Image Base
 
-The rebuilt PE `ImageBase` is `module.load_pointer`, not `e32_rom.image_base`.
+The `ImageBase` of the rebuilt PE is `module.load_pointer`, not `e32_rom.image_base`.
 
-`e32_rom.image_base` is the preferred compile-time base at which the module was linked. At runtime, WinCE places the module at `module.load_pointer`. Absolute pointers baked into section data reference `image_base`, but the module executes at `load_pointer`. Using `image_base` as the PE base causes decompilers to report impossible-looking references; using `load_pointer` makes all internal cross-references land inside the rebuilt image.
+`e32_rom.image_base` is the preferred compile-time base that the module was linked for. At runtime WinCE places the module at `module.load_pointer`. Absolute pointers inside the section data refer to `image_base`, but the module executes at `load_pointer`. With `image_base` as the PE base, a decompiler reports references that look impossible. With `load_pointer`, every internal cross-reference lands inside the rebuilt image.
 
 Observed values for `SPI.dll`:
 
@@ -17,16 +17,16 @@ Observed values for `SPI.dll`:
 
 ## Section Bytes
 
-Each section is copied independently from its own `o32_rom.data_pointer`:
+Each section comes from its own `o32_rom.data_pointer`:
 
 ```
 blob_offset = ecec_pointer_to_offset(image, o32.data_pointer)
 data        = image_blob[blob_offset : blob_offset + o32.physical_size]
 ```
 
-Sections are not assumed to be contiguous. An `o32_rom.data_pointer` from one section may belong to a completely different scatter-load segment of the ECEC image than the module name string or the `e32_rom` header.
+Do not assume that the sections are contiguous. The `o32_rom.data_pointer` of one section can belong to a completely different scatter-load segment of the ECEC image than the module name string or the `e32_rom` header.
 
-When `flags & 0x2000` is set and the stored bytes begin with a valid CECOMPRESS block table, the extractor decompresses the section before writing the rebuilt PE. The CECOMPRESS wrapper stores a 24-bit uncompressed size followed by 24-bit block-end offsets. Each block has a 16-byte ROM-LZX header:
+When `flags & 0x2000` is set, and the stored bytes start with a valid CECOMPRESS block table, the extractor decompresses the section before it writes the rebuilt PE. The CECOMPRESS wrapper holds a 24-bit uncompressed size, then 24-bit block-end offsets. Each block has a 16-byte ROM-LZX header:
 
 ```
 u32 window_bits        // observed: 16
@@ -35,23 +35,23 @@ u32 compressed_size
 u32 uncompressed_size_copy
 ```
 
-The rebuilt PE section keeps the original `o32_rom.virtual_size`, writes the decompressed bytes as raw section data, and clears the `0x2000` compressed flag from the PE section characteristics. Some sections carry `0x2000` even though their stored bytes do not pass the CECOMPRESS block-header checks; those sections are left unchanged rather than being forced through the decompressor.
+The rebuilt PE section keeps the original `o32_rom.virtual_size`, writes the decompressed bytes as raw section data, and clears the `0x2000` compressed flag from the PE section characteristics. Some sections carry `0x2000` even though their stored bytes fail the CECOMPRESS block-header checks. The extractor leaves those sections alone rather than force them through the decompressor.
 
-Section names assigned in the rebuilt PE:
+Section names in the rebuilt PE:
 
-| Condition | Name |
-|---|---|
-| `flags & 0x20` | `.text` |
-| `flags & 0x80` | `.bss` |
-| `flags & 0x40` and `flags & 0x80000000` | `.data` |
-| `flags & 0x40` without `flags & 0x80000000` | `.rdata` |
-| otherwise | `.secN` (N = descriptor index) |
+| Condition                                   | Name                           |
+| ------------------------------------------- | ------------------------------ |
+| `flags & 0x20`                              | `.text`                        |
+| `flags & 0x80`                              | `.bss`                         |
+| `flags & 0x40` and `flags & 0x80000000`     | `.data`                        |
+| `flags & 0x40` without `flags & 0x80000000` | `.rdata`                       |
+| otherwise                                   | `.secN` (N = descriptor index) |
 
-This uses the normal PE read/write characteristic bits. It also covers `nk.exe`, whose `o32_rom` descriptors are not ordered as the usual `.text, .data, .rdata` sequence.
+This uses the normal PE read and write characteristic bits. It also covers `nk.exe`, whose `o32_rom` descriptors do not follow the usual `.text, .data, .rdata` order.
 
 ## In-Image Pointer Relocation
 
-Section data may contain absolute pointers based on `e32_rom.image_base`. After copying each section, the extractor scans all 4-byte-aligned dwords and rewrites values in the range:
+Section data can hold absolute pointers based on `e32_rom.image_base`. After it copies each section, the extractor scans all 4-byte-aligned dwords and rewrites every value in this range:
 
 ```
 [e32.image_base,  e32.image_base + e32.virtual_size)
@@ -63,13 +63,13 @@ to:
 module.load_pointer + (value - e32.image_base)
 ```
 
-This converts stale compile-time addresses into the correct WinCE virtual addresses without touching MMIO constants or other unrelated dwords.
+This turns a stale compile-time address into the correct WinCE virtual address, and it leaves MMIO constants and other unrelated dwords alone.
 
 ## Export Directory
 
-The export directory RVA and size come from `e32_rom.units[0]`. When a valid export directory is present, the extractor copies the export blob into a synthetic `.edata` section, shifts all internal RVAs from their ROM positions to the new section's RVA, and sets the PE export data directory to point there.
+The export directory RVA and size come from `e32_rom.units[0]`. Where a valid export directory exists, the extractor copies the export blob into a synthetic `.edata` section, shifts every internal RVA from its ROM position to the RVA of the new section, and points the PE export data directory there.
 
-This makes exported function names visible in decompilers without altering section byte layout.
+This makes the exported function names visible in a decompiler without a change to the section byte layout.
 
 Observed exports for `SPI.dll` in both firmware versions: `DllEntry`, `SPI_Close`, `SPI_Deinit`, `SPI_IOControl`, `SPI_Init`, `SPI_Open`, `SPI_Read`, `SPI_Seek`, `SPI_Write`.
 
@@ -77,7 +77,7 @@ Observed exports for `SPI.dll` in both firmware versions: `DllEntry`, `SPI_Close
 
 The import directory RVA and size come from `e32_rom.units[1]`. The rebuilt PE exposes this as its PE import data directory.
 
-The descriptor area contains PE-like import descriptor records:
+The descriptor area holds PE-like import descriptor records:
 
 | Field                | Notes                       |
 | -------------------- | --------------------------- |
@@ -87,15 +87,15 @@ The descriptor area contains PE-like import descriptor records:
 | `Name`               | RVA of DLL name string      |
 | `FirstThunk`         | RVA of IAT slots in `.data` |
 
-Observed thunk arrays use PE ordinal import encoding:
+The thunk arrays use PE ordinal import encoding:
 
 ```
 thunk_value = 0x80000000 | ordinal
 ```
 
-Decompilers use `OriginalFirstThunk` to name IAT slots and import wrapper functions.
+A decompiler uses `OriginalFirstThunk` to name the IAT slots and the import wrapper functions.
 
-The IAT slots in `.data` (`FirstThunk` entries) contain ROM-resolved runtime addresses, not disk-style ordinal thunks. Decompilers that require canonical disk PE import tables may not parse them correctly.
+The IAT slots in `.data`, the `FirstThunk` entries, hold ROM-resolved runtime addresses, not disk-style ordinal thunks. A decompiler that needs a canonical disk PE import table can fail to parse them.
 
 Observed import descriptors for `SPI.dll` in both firmware versions:
 
@@ -104,7 +104,7 @@ Observed import descriptors for `SPI.dll` in both firmware versions:
 | `COREDLL.dll` |                 `0x23B0` |   `0x2410` |         `0x3014` |
 | `CEDDK.dll`   |                 `0x239C` |   `0x241C` |         `0x3000` |
 
-The ARM import wrapper pattern used throughout:
+The ARM import wrapper pattern throughout:
 
 ```asm
 LDR R12, =__imp_FunctionName
@@ -114,28 +114,28 @@ BX  R12
 
 ## Verified Result: SPI.dll (v1.88)
 
-| Section | RVA | Virtual size |
-|---|--:|--:|
-| `.text` | `0x1000` | `0x1600` |
-| `.data` | `0x3000` | `0x7C` |
-| `.rdata` | `0x4000` | `0x108` |
-| `.edata` | `0x6000` | `0xE4` |
+| Section  |      RVA | Virtual size |
+| -------- | -------: | -----------: |
+| `.text`  | `0x1000` |     `0x1600` |
+| `.data`  | `0x3000` |       `0x7C` |
+| `.rdata` | `0x4000` |      `0x108` |
+| `.edata` | `0x6000` |       `0xE4` |
 
-| Item | Value |
-|---|---|
-| `ImageBase` | `0x828E1000` |
-| Exports | 9 |
-| Imports | 27 (from `COREDLL.dll` and `CEDDK.dll`) |
+| Item        | Value                                   |
+| ----------- | --------------------------------------- |
+| `ImageBase` | `0x828E1000`                            |
+| Exports     | 9                                       |
+| Imports     | 27 (from `COREDLL.dll` and `CEDDK.dll`) |
 
-`SPI_Init` resolves to named WinCE API calls (`CreateFileW`, `DeviceIoControl`, `CloseHandle`, `OpenDeviceKey`, `RegQueryValueExW`, `RegCloseKey`, `MmMapIoSpace`) and maps physical register bases `0x20024000` (SPI0) and `0x20025000` (SPI1).
+`SPI_Init` resolves to named WinCE API calls (`CreateFileW`, `DeviceIoControl`, `CloseHandle`, `OpenDeviceKey`, `RegQueryValueExW`, `RegCloseKey`, `MmMapIoSpace`). It maps the physical register bases `0x20024000` (SPI0) and `0x20025000` (SPI1).
 
 ## Limits
 
-- The rebuilt PE is an analysis artifact and is not intended to load in a running WinCE system.
-- IAT slots contain ROM-resolved addresses rather than disk-style ordinal thunks.
-- Debug directories, relocation tables, and version resources are not reconstructed.
+- The rebuilt PE is an analysis artifact. It is not for a running WinCE system.
+- The IAT slots hold ROM-resolved addresses, not disk-style ordinal thunks.
+- The extractor does not reconstruct debug directories, relocation tables or version resources.
 
 ## Unresolved
 
-- Rewriting `FirstThunk` into canonical ordinal thunks for tools that require strict PE import tables.
-- Names and prototypes for unresolved CEDDK ordinals (e.g., ordinals 60 and 62 observed in `SPI.dll`).
+- A rewrite of `FirstThunk` into canonical ordinal thunks, for tools that need a strict PE import table.
+- Names and prototypes for the unresolved CEDDK ordinals, for example ordinals 60 and 62 in `SPI.dll`.

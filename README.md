@@ -1,14 +1,14 @@
 # AIPC OS
 
-Reverse engineering and bare-metal development for the **AIPC netbook**, a retro WinCE-based handheld netbook built on the **Anyka AK7802** SoC (ARM926EJ-S). The long-term goal is a working Linux _(and DOOM)_ port.
+Reverse engineering and bare-metal development for the **AIPC netbook** (a.k.a. Zenithink ZT-N670 or Disgo 3000), a retro WinCE-based handheld netbook built on the **Anyka AK7802** SoC (ARM926EJ-S). The long-term goal is a working Linux _(and DOOM)_ port.
 
 See [https://aipc-os.catme0w.org/](https://aipc-os.catme0w.org/) for the project homepage.
 
 ## Showcase
 
-| Booting Linux 7.0-rc3 | Booting DOOM |
-| --- | --- |
-| ![Booting Linux 7.0-rc3](https://github.com/user-attachments/assets/9385af0d-8bfa-4284-a66e-5d4783e4fc9a) | ![Booting DOOM](https://github.com/user-attachments/assets/d2f49c3f-eb05-4561-8703-38333c41fbfc) |
+| Booting Linux 7.0-rc3 | Booting DOOM | Booting [AOSC OS Afterglow](https://aosc.io/afterglow)
+| --- | --- | --- |
+| ![Booting Linux 7.0-rc3](https://github.com/user-attachments/assets/9385af0d-8bfa-4284-a66e-5d4783e4fc9a) | ![Booting DOOM](https://github.com/user-attachments/assets/d2f49c3f-eb05-4561-8703-38333c41fbfc) | ![Booting AOSC OS Afterglow](https://github.com/user-attachments/assets/81570855-eae7-431d-87ad-99dd01d00ed2) |
 
 ## Content
 
@@ -18,6 +18,7 @@ See [https://aipc-os.catme0w.org/](https://aipc-os.catme0w.org/) for the project
 - **[nboot](docs/nboot/README.md)** -- First-stage NAND bootloader. DDR init script, EBOOT loading.
 - **[EBOOT](docs/eboot/README.md)** -- WinCE second-stage bootloader. LCD bring-up, ENC28J60 SPI Ethernet, CH374 USB HID keyboard, NAND driver, vendor partition table, TFTP/EDBG download protocol, maintenance mode password and menu, GPIO driver with two independent pin numbering systems, CPU PLL formula.
 - **[NK](docs/nk/README.md)** -- WinCE kernel and vendor drivers.
+- **[AIPC OS Original](docs/aipc-os-original/README.md)** -- Original research from us. Johnson–Nyquist noise TRNG, faster SD/MMC driver.
 
 Reverse-engineered from scratch.
 
@@ -28,6 +29,7 @@ A [doomgeneric](https://github.com/ozkl/doomgeneric)-based DOOM port that runs d
 ### Boot methods ([`boot/`](boot/))
 
 - `coldboot/` -- Boot Linux directly from internal disk, bypassing WinCE entirely.
+  - `opennboot/` -- Custom firmware openNBOOT. Replaces the stock nboot and enables booting arbitrary ARM payloads from SD.
 - `warmboot/` -- [HaRET](boot/warmboot/third_party/)-based Linux boot from within WinCE.
 
 ### Linux kernel ([`kernel/`](kernel/))

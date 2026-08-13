@@ -11,14 +11,14 @@ The first 2048-byte page of the `NK` partition is an MBR-style sector. The WinCE
 | `lba_start`    | `+0x08` | 4    | first sector of sub-partition (LE uint32) |
 | `sector_count` | `+0x0C` | 4    | sector count (LE uint32)                  |
 
-The table starts at offset `0x1BE` within the first page and holds four 16-byte entries. Signature `0x55AA` appears at offset `0x1FE`. The sector unit is 2048 bytes (one clean NAND page), so:
+The table starts at offset `0x1BE` in the first page and holds four 16-byte entries. Signature `0x55AA` sits at offset `0x1FE`. The sector unit is 2048 bytes, one clean NAND page, thus:
 
 ```
-sub-partition offset = lba_start  × 0x800
-sub-partition size   = sector_count × 0x800
+sub-partition offset = lba_start    * 0x800
+sub-partition size   = sector_count * 0x800
 ```
 
-Observed sub-partitions in both firmware versions:
+Both firmware versions show these sub-partitions:
 
 | Sub-partition  | Type   | Notes                                       |
 | -------------- | ------ | ------------------------------------------- |
@@ -27,19 +27,19 @@ Observed sub-partitions in both firmware versions:
 
 ## ECEC Images
 
-`NK.binfs.raw` begins with one or more ECEC images placed back-to-back. The sub-partition may contain trailing space beyond the last detected ECEC image span. Each image begins on a page boundary and is identified by the magic `ECEC` at raw offset `+0x40` from the image start. The 64 bytes preceding the magic (`+0x00..+0x3F`) contain 16 little-endian DWORDs of currently uninterpreted data.
+`NK.binfs.raw` starts with one or more ECEC images, back to back. The sub-partition can hold trailing space after the span of the last ECEC image. Each image starts on a page boundary, and the magic `ECEC` at raw offset `+0x40` from the image start identifies it. The 64 bytes before the magic, `+0x00..+0x3F`, hold 16 little-endian DWORDs that we do not yet interpret.
 
 | Offset | Size | Field | Meaning |
 | --- | --- | --- | --- |
 | `+0x40` | 4 | magic | `"ECEC"` |
 | `+0x44` | 4 | `field_44` | Virtual address of the image `ROMHDR` |
-| `+0x48` | 4 | `field_48` | `field_44 − load_base`; i.e., logical offset of `ROMHDR` from `physfirst` |
+| `+0x48` | 4 | `field_48` | `field_44 - load_base`, the logical offset of `ROMHDR` from `physfirst` |
 
 ```
 load_base = field_44 - field_48
 ```
 
-`load_base` equals `ROMHDR.physfirst`. All virtual addresses in the ROM metadata are offsets from this base.
+`load_base` equals `ROMHDR.physfirst`. Every virtual address in the ROM metadata is an offset from this base.
 
 Observed ECEC images:
 
@@ -50,19 +50,19 @@ Observed ECEC images:
 | v1.88    | `ECEC_00` |            `0x00000000` | `0x00183000` | `0x80200000` |
 | v1.88    | `ECEC_01` |            `0x00183000` | `0x037F0000` | `0x80380000` |
 
-The span is larger than the logical image size because stored ECEC images contain periodic metadata pages that are not part of the WinCE virtual address space.
+The span is larger than the logical image size, because a stored ECEC image carries periodic metadata pages that are not part of the WinCE virtual address space.
 
 ## Metadata Pages
 
-ECEC images contain one metadata page per fixed number of stored pages. Metadata pages must be skipped when converting virtual addresses to blob offsets.
+An ECEC image carries one metadata page per fixed number of stored pages. A conversion from a virtual address to a blob offset must skip the metadata pages.
 
 A stored page is a metadata page when:
 
 - bytes `+0x04..+0x07` equal `0xFFFBFFFD`
 - bytes `+0x08..+0x0F` equal `0xFFFFFFFF`
-- more than half of the 2048-byte page contains `0xFF`
+- more than half of the 2048-byte page holds `0xFF`
 
-Metadata pages appear at a fixed global period across all of `NK.binfs.raw`. The period is the GCD of the intervals between consecutive metadata page indices. Within each group of `raw_pages_per_group` consecutive stored pages, the metadata page is always at the same index (`metadata_page_mod`).
+Metadata pages appear at a fixed global period across all of `NK.binfs.raw`. The period is the GCD of the intervals between consecutive metadata page indices. In each group of `raw_pages_per_group` consecutive stored pages, the metadata page always sits at the same index, `metadata_page_mod`.
 
 ```
 raw_pages_per_group   = period
@@ -76,7 +76,7 @@ Observed global layout:
 | v1.58.2 | 64 | 63 | 62 |
 | v1.88 | 128 | 127 | 126 |
 
-Each ECEC image has its own local `metadata_page_index`, derived from the global layout and the image's start position:
+Each ECEC image has its own local `metadata_page_index`, which comes from the global layout and the start position of the image:
 
 ```
 image_start_page       = image_start_offset / 0x800
@@ -92,7 +92,7 @@ Observed per-image metadata page indices:
 
 ## Logical-to-Raw-Offset Formula
 
-To convert a logical offset (virtual address minus `load_base`) to a blob offset within the ECEC image file:
+To convert a logical offset, the virtual address minus `load_base`, into a blob offset in the ECEC image file:
 
 ```
 logical_page, page_offset = divmod(logical_offset, 0x800)
@@ -101,18 +101,18 @@ raw_page_in_group         = page_in_group + (1 if page_in_group >= metadata_page
 blob_offset               = (group * raw_pages_per_group + raw_page_in_group) * 0x800 + page_offset
 ```
 
-To convert a virtual address pointer to a blob offset:
+To convert a virtual address pointer into a blob offset:
 
 ```
 logical_offset = pointer - image.load_base
 blob_offset    = ecec_logical_to_raw_offset(logical_offset)
 ```
 
-All ROM metadata pointers (`name_pointer`, `e32_pointer`, `o32_pointer`, `data_pointer`, and the `ROMHDR` pointer at `field_44`) use this mapping.
+Every ROM metadata pointer uses this mapping: `name_pointer`, `e32_pointer`, `o32_pointer`, `data_pointer`, and the `ROMHDR` pointer at `field_44`.
 
 ## Chain Information Record
 
-The logical size of each ECEC image is recorded in a `chain information` table embedded in `NK.binfs.raw`. The table is located by searching for the ASCII string `"chain information\0"` within the first ECEC image's blob. Records near that anchor have the format:
+A `chain information` table in `NK.binfs.raw` records the logical size of each ECEC image. To locate the table, search the blob of the first ECEC image for the ASCII string `"chain information\0"`. Records near that anchor have this format:
 
 | Field          | Size | Notes                                             |
 | -------------- | ---- | ------------------------------------------------- |
@@ -121,7 +121,7 @@ The logical size of each ECEC image is recorded in a `chain information` table e
 | `order`        | 4    | high word must be `1`; low word is sequence index |
 | `reserved`     | 4    | must be `0`                                       |
 
-When present, the chain information `logical_size` is the authoritative size for each image. It takes precedence over any size inferred from the span between consecutive ECEC headers.
+Where the chain information exists, its `logical_size` is the authoritative size for each image. It takes precedence over any size inferred from the span between consecutive ECEC headers.
 
 Observed logical sizes:
 
@@ -134,6 +134,6 @@ Observed logical sizes:
 
 ## Unresolved
 
-- The meaning of the 16 DWORDs at `+0x00..+0x3F` before the `ECEC` magic.
-- The content and purpose of the metadata pages beyond the recognized marker dwords.
-- The full structure of the MBR page (`NK.raw[0x000..0x7FF]`): only the partition table at `+0x1BE` and the signature at `+0x1FE` are decoded; the preceding 446 bytes are unexamined.
+- The meaning of the 16 DWORDs at `+0x00..+0x3F`, before the `ECEC` magic.
+- The content and the purpose of the metadata pages, beyond the marker dwords that we recognize.
+- The full structure of the MBR page (`NK.raw[0x000..0x7FF]`). Only the partition table at `+0x1BE` and the signature at `+0x1FE` are decoded. The 446 bytes before them are unexamined.
