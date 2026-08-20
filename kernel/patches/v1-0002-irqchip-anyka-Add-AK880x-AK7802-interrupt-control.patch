@@ -1,7 +1,7 @@
-From fa978d64262906b7bdf9481e58612ed983c0043d Mon Sep 17 00:00:00 2001
+From 017e1ce41267fcfa990c682e12ecda7b8fd62291 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Fri, 1 May 2026 10:42:24 +0800
-Subject: [PATCH v1 02/11] irqchip: anyka: Add AK880x/AK7802 interrupt
+Subject: [PATCH v1 02/12] irqchip: anyka: Add AK880x/AK7802 interrupt
  controller driver
 
 ---

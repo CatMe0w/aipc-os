@@ -14,23 +14,28 @@ See [https://aipc-os.catme0w.org/](https://aipc-os.catme0w.org/) for the project
 
 ### Documentation ([`docs/`](docs/))
 
-- **[bootrom](docs/bootrom/README.md)** -- The mask ROM baked into the AK7802 die. USB boot mode, NAND/SPI boot, UART console, GPIO naming crosswalk, full memory map.
-- **[nboot](docs/nboot/README.md)** -- First-stage NAND bootloader. DDR init script, EBOOT loading.
-- **[EBOOT](docs/eboot/README.md)** -- WinCE second-stage bootloader. LCD bring-up, ENC28J60 SPI Ethernet, CH374 USB HID keyboard, NAND driver, vendor partition table, TFTP/EDBG download protocol, maintenance mode password and menu, GPIO driver with two independent pin numbering systems, CPU PLL formula.
-- **[NK](docs/nk/README.md)** -- WinCE kernel and vendor drivers.
-- **[AIPC OS Original](docs/aipc-os-original/README.md)** -- Original research from us. Johnson–Nyquist noise TRNG, faster SD/MMC driver.
+- **[bootrom](docs/bootrom/README.md)**: The mask ROM baked into the AK7802 die. USB boot mode, NAND/SPI boot, UART console, GPIO naming crosswalk, full memory map.
+- **[nboot](docs/nboot/README.md)**: First-stage NAND bootloader. DDR init script, EBOOT loading.
+- **[EBOOT](docs/eboot/README.md)**" WinCE second-stage bootloader. LCD bring-up, ENC28J60 SPI Ethernet, CH374 USB HID keyboard, NAND driver, vendor partition table, TFTP/EDBG download protocol, maintenance mode password and menu, GPIO driver with two independent pin numbering systems, CPU PLL formula.
+- **[NK](docs/nk/README.md)**: WinCE kernel and vendor drivers.
+- **[AIPC OS Original](docs/aipc-os-original/README.md)**: Original research from us. Johnson–Nyquist noise TRNG, faster SD/MMC driver.
 
 Reverse-engineered from scratch.
 
-### Bare-metal DOOM ([`doom/`](doom/))
+### Bare metal ([`baremetal/`](baremetal/))
 
-A [doomgeneric](https://github.com/ozkl/doomgeneric)-based DOOM port that runs directly on AIPC.
+Code that runs on the AK7802 with no operating system.
 
-### Boot methods ([`boot/`](boot/))
+- `opennboot/`: Custom firmware openNBOOT. Replaces the stock nboot in NAND block 0 and boots arbitrary ARM payloads from SD.
+- `aipc-boot/`: The payload openNBOOT hands off to. An GUI menu that boots a Linux zImage or the GDB stub from SD, or stock WinCE from NAND.
+- `gdbstub/`: GDB stub, a replacement for the bootrom USB boot mode.
+- `doom/`: A [doomgeneric](https://github.com/ozkl/doomgeneric)-based DOOM port.
+- `probes/`: One-shot ARM probes and lab reports. Not for reuse.
+- `lib/`: Shared drivers. LCD, keyboard, MMU, SD, FAT, NAND, UART, etc.
 
-- `coldboot/` -- Boot Linux directly from internal disk, bypassing WinCE entirely.
-  - `opennboot/` -- Custom firmware openNBOOT. Replaces the stock nboot and enables booting arbitrary ARM payloads from SD.
-- `warmboot/` -- [HaRET](boot/warmboot/third_party/)-based Linux boot from within WinCE.
+### SD card ([`sdcard/`](sdcard/))
+
+Recipe for the SD card image, and the HaRET files for the warm boot path.
 
 ### Linux kernel ([`kernel/`](kernel/))
 
@@ -38,29 +43,29 @@ Kernel sources and patches.
 
 ### Tools ([`tools/`](tools/))
 
-Python CLI tools (uv workspace) for talking to the device:
+Host-side Python CLI tools, one uv workspace member per directory. The `ak7802-` prefix means the tool works on any AK7802. The `aipc-` prefix means it depends on something specific to this device.
 
-| AK7802 SoC Tool        | Purpose                                             |
+| Tool                   | Purpose                                             |
 | ---------------------- | --------------------------------------------------- |
-| `ak7802-nand-dump-min` | Universal AK7802 NAND dump tool                     |
+| `opennboot`            | Install openNBOOT into NAND                         |
 | `ak7802-usbboot`       | USB boot mode protocol: peek, poke, upload, execute |
+| `ak7802-nand-dump-min` | Universal AK7802 NAND dump tool                     |
+| `aipc-coldboot-dump`   | Cold-boot attack RAM extraction                     |
+| `aipc-ddr-init`        | Standalone DDR SDRAM init via USB boot              |
+| `aipc-nand-dump`       | Fast NAND dump tool for AIPC                        |
+| `aipc-nand-extract`    | Extract partitions from a raw NAND dump             |
 
-| AIPC-specific Tool   | Purpose                                 |
-| -------------------- | --------------------------------------- |
-| `aipc-coldboot-dump` | Cold-boot attack RAM extraction         |
-| `aipc-ddr-init`      | Standalone DDR SDRAM init via USB boot  |
-| `aipc-nand-dump`     | Fast NAND dump tool for AIPC            |
-| `aipc-nand-extract`  | Extract partitions from a raw NAND dump |
+### Talks ([`talks/`](talks/))
 
-| Extra     | Purpose                                                                               |
-| --------- | ------------------------------------------------------------------------------------- |
-| `gdbstub` | GDB stub, a replacement for the bootrom USB boot mode                                 |
-| `probes`  | Lab reports and ARM assembly probes for investigating hardware behavior (e.g. SD/MMC) |
-| `old`     | Deprecated tools and scripts from early experimentation                               |
+Slides from public talks about this project.
 
 ### Website ([`website/`](website/))
 
 Source for [aipc-os.catme0w.org](https://aipc-os.catme0w.org/).
+
+### Attic ([`attic/`](attic/))
+
+Superseded code, kept only to explain artifacts it produced.
 
 ## Quick start
 
@@ -68,7 +73,7 @@ Source for [aipc-os.catme0w.org](https://aipc-os.catme0w.org/).
 uv sync
 ```
 
-This installs all Python tools into a shared virtualenv. CLI entry points are available immediately:
+CLI entry points are available immediately:
 
 ```
 uv run ak7802-usbboot --help
@@ -78,14 +83,14 @@ To build ARM stubs or the DOOM binary, you need `arm-none-eabi-gcc`.
 
 ## Hardware
 
-- **SoC**: Anyka AK7802 (ARM926EJ-S, 248/266 MHz typical)
+- **SoC**: Anyka AK7802 (ARM926EJ-S, 248 MHz typical)
 - **RAM**: 64 MB DDR SDRAM
 - **Storage**: 512 MB MLC NAND (Hynix typical), 4x528-byte interleaved ECC layout
-- **Display**: 800x480 TFT LCD, RGB565, ~48 Hz
+- **Display**: 800x480 TFT LCD, RGB565
 - **Ethernet**: Davicom DM9000A, 8-bit parallel bus bit-banged over GPIO
 - **USB HID**: WCH CH374 USB host bridge on SPI, internal keyboard + 2 external USB-A ports
 - **USB**: MUSB (Mentor Graphics) integrated in SoC, 1 external USB-A port
 
 ## License
 
-See [LICENSE](LICENSE) for details. In short: tools and scripts are MIT, kernel patches are GPLv2, docs are CC-BY-SA 4.0, DOOM is GPLv2.
+See [LICENSE](LICENSE) for details. In short: tools and scripts are MIT, kernel patches are GPLv2, DOOM is GPLv2, docs are CC-BY-SA 4.0, talks are CC-BY 4.0.

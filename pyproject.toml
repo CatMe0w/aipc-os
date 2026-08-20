@@ -1,9 +1,2 @@
 [tool.uv.workspace]
-members = [
-    "tools/usbboot",
-    "tools/ddr-init",
-    "tools/coldboot-dump",
-    "tools/nand-dump",
-    "tools/nand-dump-min",
-    "tools/nand-extract",
-]
+members = ["tools/*"]

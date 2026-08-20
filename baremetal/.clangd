@@ -1,0 +1,66 @@
+CompileFlags:
+  Compiler: arm-none-eabi-gcc
+  Add:
+    - --target=arm-none-eabi
+    - -mcpu=arm926ej-s
+    - -marm
+    - -std=gnu11
+    - -ffreestanding
+    - -Wall
+    - -Wextra
+    - -Wno-unused-parameter
+
+---
+If:
+  PathMatch: aipc-boot/.*
+CompileFlags:
+  Add:
+    - -I.
+    - -I../lib
+    - -Ithird_party
+    - -DLV_CONF_INCLUDE_SIMPLE
+    - -DLOG_BASE=0x301B0000u
+
+---
+If:
+  PathMatch: doom/src/.*
+CompileFlags:
+  Add:
+    - -I../../lib
+    - -I../doomgeneric/doomgeneric
+    - -DLOG_BASE=0x301A0000u
+    - -DDOOMGENERIC_RESX=320
+    - -DDOOMGENERIC_RESY=200
+    - -DWAD_FILENAME="doom1.wad"
+
+---
+If:
+  PathMatch: opennboot/.*
+CompileFlags:
+  Add:
+    - -I.
+    - -I../lib
+
+---
+# test/ builds on the host, one directory deeper.
+If:
+  PathMatch: opennboot/test/.*
+CompileFlags:
+  Add:
+    - -I../../lib
+
+---
+# sd_pio.c stops at an #error until the variant is selected.
+If:
+  PathMatch: probes/sd/.*
+CompileFlags:
+  Add:
+    - -DPIO_WITHDATA=1
+
+---
+# clangd analyses a header on its own as Objective-C++. These are C headers.
+If:
+  PathMatch: .*\.h
+CompileFlags:
+  Add:
+    - -xc-header

@@ -1,7 +1,7 @@
-From 299253d826fc1b387974dbbe980b6f722f70cd8e Mon Sep 17 00:00:00 2001
+From 0aa371e3eb7cad23a0135de20dfc4bb6f24b8346 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Fri, 1 May 2026 10:42:24 +0800
-Subject: [PATCH v1 04/11] gpio: anyka: Add AK880x GPIO driver
+Subject: [PATCH v1 04/12] gpio: anyka: Add AK880x GPIO driver
 
 ---
  drivers/gpio/Kconfig      |   8 +

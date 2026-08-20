@@ -1,7 +1,7 @@
-From 796a7cb0c7017c19fd98a7284ef65ea5d28610f2 Mon Sep 17 00:00:00 2001
+From c71b83ef36cc6d5b34b7becca4c3810d03b66ecc Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Mon, 3 Aug 2026 11:09:03 +0800
-Subject: [PATCH v1 10/11] mmc: anyka: Add AK7802 MCI host driver
+Subject: [PATCH v1 10/12] mmc: anyka: Add AK7802 MCI host driver
 
 ---
  arch/arm/boot/dts/anyka/ak7802-netbook.dts |    8 +

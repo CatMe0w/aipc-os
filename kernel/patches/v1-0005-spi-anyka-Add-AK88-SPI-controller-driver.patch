@@ -1,7 +1,7 @@
-From 2e73e66bcf3c5346ca78bcc334e3b68606dab065 Mon Sep 17 00:00:00 2001
+From 23b6da147633e87463936afe06058e88a701e857 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Fri, 1 May 2026 10:42:24 +0800
-Subject: [PATCH v1 05/11] spi: anyka: Add AK88 SPI controller driver
+Subject: [PATCH v1 05/12] spi: anyka: Add AK88 SPI controller driver
 
 ---
  drivers/spi/Kconfig         |  14 ++

@@ -270,7 +270,7 @@ Linux and Windows XHCI implementations tolerate this in practice. They likely us
 
 **Affected platforms**: macOS, confirmed on Apple Silicon with USB-C, macOS 26.4. Linux and Windows are not affected.
 
-**Workaround**: Use [openNBOOT](../../boot/coldboot/opennboot) with [gdbstub](../../tools/gdbstub) as a replacement. For USB boot, use a Linux or Windows host. 
+**Workaround**: Use [openNBOOT](../../baremetal/opennboot) with [gdbstub](../../baremetal/gdbstub) as a replacement. For USB boot, use a Linux or Windows host. 
 
 ### SET_CONFIGURATION does not reset the data toggles
 

@@ -1,0 +1,3 @@
+# Filled by the release workflow with the images the wheel ships.
+# A source checkout uses its own build output instead, see images.py.
+*.bin

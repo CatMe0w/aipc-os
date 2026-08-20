@@ -1,7 +1,7 @@
-From 45ec4ac8ae59b963f3482bfbf16fbd051ea74143 Mon Sep 17 00:00:00 2001
+From db994e87f3da629b091830a8f94881398d8cb934 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Tue, 4 Aug 2026 13:08:08 +0800
-Subject: [PATCH v1 11/11] net: dm9000: Support a GPIO-driven parallel bus
+Subject: [PATCH v1 11/12] net: dm9000: Support a GPIO-driven parallel bus
 
 ---
  arch/arm/boot/dts/anyka/ak7802-netbook.dts |  29 +++

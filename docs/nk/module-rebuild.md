@@ -1,6 +1,6 @@
 # Module Rebuild
 
-`tools/nand-extract` converts each ROM module descriptor into a PE file that a decompiler can load. The goal is a correct analysis layout, not a byte-for-byte reconstruction of an original Platform Builder PE.
+`tools/aipc-nand-extract` converts each ROM module descriptor into a PE file that a decompiler can load. The goal is a correct analysis layout, not a byte-for-byte reconstruction of an original Platform Builder PE.
 
 ## Image Base
 

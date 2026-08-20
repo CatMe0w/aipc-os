@@ -1,7 +1,7 @@
-From 3b3090e8cb7167d66f3064c1fd65b1ec7972e0e3 Mon Sep 17 00:00:00 2001
+From 1d5c0e5fc7a048bad7cb5f49c3ebc12343083d7b Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Sat, 1 Aug 2026 23:51:57 +0800
-Subject: [PATCH v1 09/11] pinctrl: anyka: Add AK7802 pin controller driver
+Subject: [PATCH v1 09/12] pinctrl: anyka: Add AK7802 pin controller driver
 
 ---
  arch/arm/boot/dts/anyka/ak7802-netbook.dts |   4 +

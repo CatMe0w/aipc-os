@@ -7,7 +7,8 @@ __pycache__/
 *.elf
 *.bin
 *.su
-boot/coldboot/opennboot/test/test_ecc
+baremetal/opennboot/test/test_ecc
 *.dSYM
 node_modules/
 dist/
+build/

@@ -1,0 +1,25 @@
+[project]
+name = "opennboot"
+version = "0.1.0"
+description = "Install openNBOOT, a replacement bootloader for the AIPC netbook (Anyka AK7802)"
+readme = "README.md"
+authors = [
+    { name = "CatMe0w", email = "CatMe0w@live.cn" }
+]
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "ak7802-usbboot",
+    "aipc-ddr-init",
+    "click>=8.1",
+]
+
+[tool.uv.sources]
+ak7802-usbboot = { workspace = true }
+aipc-ddr-init = { workspace = true }
+
+[project.scripts]
+opennboot = "opennboot.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.3,<0.12.0"]
+build-backend = "uv_build"
