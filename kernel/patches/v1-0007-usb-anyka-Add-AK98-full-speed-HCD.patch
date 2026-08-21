@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Fri, 1 May 2026 10:42:24 +0800
-Subject: [PATCH v1 07/12] usb: anyka: Add AK98 full-speed HCD
+Subject: [PATCH v1 07/13] usb: anyka: Add AK98 full-speed HCD
 
 ---
  drivers/usb/Makefile           |    1 +

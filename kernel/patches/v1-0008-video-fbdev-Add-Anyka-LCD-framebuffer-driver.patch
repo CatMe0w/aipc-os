@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Fri, 1 May 2026 10:42:24 +0800
-Subject: [PATCH v1 08/12] video: fbdev: Add Anyka LCD framebuffer driver
+Subject: [PATCH v1 08/13] video: fbdev: Add Anyka LCD framebuffer driver
 
 ---
  drivers/video/fbdev/Kconfig       |  11 +

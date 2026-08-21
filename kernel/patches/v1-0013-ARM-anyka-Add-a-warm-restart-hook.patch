@@ -1,0 +1,97 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CatMe0w <CatMe0w@live.cn>
+Date: Sat, 22 Aug 2026 01:59:13 +0800
+Subject: [PATCH v1 13/13] ARM: anyka: Add a warm restart hook
+
+---
+ arch/arm/mach-anyka/Makefile  |  2 +-
+ arch/arm/mach-anyka/anyka.c   | 12 ++++++++++
+ arch/arm/mach-anyka/restart.S | 42 +++++++++++++++++++++++++++++++++++
+ 3 files changed, 55 insertions(+), 1 deletion(-)
+ create mode 100644 arch/arm/mach-anyka/restart.S
+
+diff --git a/arch/arm/mach-anyka/Makefile b/arch/arm/mach-anyka/Makefile
+index 4c1f0d88e..e6766a7db 100644
+--- a/arch/arm/mach-anyka/Makefile
++++ b/arch/arm/mach-anyka/Makefile
+@@ -1,2 +1,2 @@
+ # SPDX-License-Identifier: GPL-2.0-only
+-obj-$(CONFIG_ARCH_ANYKA) += anyka.o
++obj-$(CONFIG_ARCH_ANYKA) += anyka.o restart.o
+diff --git a/arch/arm/mach-anyka/anyka.c b/arch/arm/mach-anyka/anyka.c
+index b569d8dce..a56b1317f 100644
+--- a/arch/arm/mach-anyka/anyka.c
++++ b/arch/arm/mach-anyka/anyka.c
+@@ -5,7 +5,18 @@
+  * Copyright (C) 2026 CatMe0w
+  */
+ 
++#include <linux/reboot.h>
++
+ #include <asm/mach/arch.h>
++#include <asm/memory.h>
++#include <asm/system_misc.h>
++
++void anyka_reset(void);
++
++static void anyka_restart(enum reboot_mode mode, const char *cmd)
++{
++	soft_restart(virt_to_idmap(anyka_reset));
++}
+ 
+ static const char *const anyka_dt_compat[] __initconst = {
+ 	"anyka,ak7802",
+@@ -14,4 +25,5 @@ static const char *const anyka_dt_compat[] __initconst = {
+ 
+ DT_MACHINE_START(ANYKA_DT, "Anyka SoC (Flattened Device Tree)")
+ 	.dt_compat = anyka_dt_compat,
++	.restart = anyka_restart,
+ MACHINE_END
+diff --git a/arch/arm/mach-anyka/restart.S b/arch/arm/mach-anyka/restart.S
+new file mode 100644
+index 000000000..8c04c15a3
+--- /dev/null
++++ b/arch/arm/mach-anyka/restart.S
+@@ -0,0 +1,42 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/*
++ * Warm restart for Anyka ARM926 SoCs
++ *
++ * Copyright (C) 2026 CatMe0w
++ */
++
++#include <linux/linkage.h>
++
++#define SYSCTRL			0x08000000
++#define SYSCTRL_INT_MASK_IRQ	0x34
++#define SYSCTRL_INT_MASK_FIQ	0x38
++#define SYSCTRL_MULFUN_CON1	0x58
++#define MULFUN_CON1_USB_SEL	0x7
++
++#define USB			0x70000000
++#define USB_INTRTX1E		0x06
++#define USB_INTRRX1E		0x08
++#define USB_INTRUSBE		0x0b
++
++#define BOOTROM_RESET_VECTOR	0x00000000
++
++	.pushsection	.idmap.text, "ax"
++	.align	5
++SYM_FUNC_START(anyka_reset)
++	mov	r0, #SYSCTRL
++	mov	r1, #0
++	str	r1, [r0, #SYSCTRL_INT_MASK_IRQ]
++	str	r1, [r0, #SYSCTRL_INT_MASK_FIQ]
++
++	mov	r2, #USB
++	strb	r1, [r2, #USB_INTRTX1E]
++	strb	r1, [r2, #USB_INTRRX1E]
++	strb	r1, [r2, #USB_INTRUSBE]
++
++	ldr	r3, [r0, #SYSCTRL_MULFUN_CON1]
++	bic	r3, r3, #MULFUN_CON1_USB_SEL
++	str	r3, [r0, #SYSCTRL_MULFUN_CON1]
++
++	mov	pc, #BOOTROM_RESET_VECTOR
++SYM_FUNC_END(anyka_reset)
++	.popsection
