@@ -10,7 +10,7 @@ What remains is re-entry. A program that already runs on the part jumps to the b
 
 Turn the USB block off first. This is the one step that decides whether the restart works. See [The USB Block](#the-usb-block) below.
 
-Mask the module interrupt sources at `SYSCTRL+0x34` and `SYSCTRL+0x38`. The bootrom writes `CPSR = 0x13` at entry, which unmasks IRQ and FIQ, and the IRQ vector forwards to a DDR word that no longer holds a handler.
+Mask the module interrupt sources at `SYSCTRL+0x34` and `SYSCTRL+0x38`. The bootrom writes `CPSR = 0x13` at entry, which unmasks IRQ and FIQ, and its IRQ vector forwards to `0x30000018`.
 
 Restore no register. The bootrom entry sets its own `CPSR` and `SP`, thus nothing of the caller survives into it.
 
@@ -38,10 +38,20 @@ This part has no SOFTCONN bit. The pull-up stays, thus the host still sees an at
 
 The bootrom samples the DGPIO[3:2] straps at entry, and `detect_boot_override` forces GPIO104 and GPIO105 to inputs before it reads them. Software therefore cannot hold a strap value across a restart. There is no way to restart into USB boot mode, and there is no equivalent of a `reboot bootloader` command. On this board both pins read low once released, thus a restart takes the normal boot path.
 
-The SPI probe and the NAND probe do not write the sharepin registers at `SYSCTRL+0x74` and `SYSCTRL+0x78`. Only the diagnostic self-test clears them. Both probes therefore run with the pin multiplexer that the previous image left. The probes work under the multiplexer that aipc-boot sets, but an image that gives the NAND pins to another function must restore these two registers before the jump.
+Each probe sets its own pins, thus the caller does not need to repair the pin multiplexer before the jump. The NAND probe calls a hardware init function first, which clears `SYSCTRL+0x74` bits 4 and 3, sets bit 3, then sets `0x00C70200` in `SYSCTRL+0x78`. The SPI probe sets bit 30 of `SYSCTRL+0x78`, and the UART console sets bit 9.
+
+The bootrom does not write the module interrupt masks at `SYSCTRL+0x34` and `SYSCTRL+0x38`, and it unmasks IRQ and FIQ at entry before it does anything else. The vector at `0x18` reads its target from the word at `0xF0`, which holds `0x30000018`. A restart without the masks is therefore safe only for an image that keeps a usable vector table at that address.
 
 See [boot-flow.md](../bootrom/boot-flow.md) for the decision tree that runs after the jump, and [memory-map.md](../bootrom/memory-map.md) for the L2 layout.
 
 ## Probe
 
 [baremetal/probes/reset/README.md](../../baremetal/probes/reset/README.md) has a probe that does all of the above, and a table of the stage colors it writes to the screen.
+
+## The Linux Restart Hook
+
+The `.restart` hook of the machine descriptor calls `soft_restart()` with the address of a small routine in the `.idmap.text` section. `soft_restart()` cleans the caches and turns the MMU off, then it enters that routine. See `arch/arm/mach-anyka/restart.S` in the [kernel patches](../../kernel/).
+
+The routine runs with the MMU off and writes the registers at their physical addresses. The restart path runs with interrupts off, thus it cannot `ioremap` them.
+
+Linux keeps no vector table at `0x30000018`, and the timer source is still on when the restart starts. It therefore needs the interrupt masks.
