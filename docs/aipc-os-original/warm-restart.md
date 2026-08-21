@@ -1,0 +1,47 @@
+# Warm Restart
+
+The device has no software restart. This document describes the one we built.
+
+The AK7802 has no full-chip reset register. The high half of `SYSCTRL+0x0C` holds a software reset bit for each module, but no bit resets the part. The `#RST` pin is an input, and no net on this board drives it from the SoC side. The reset path of the original firmware goes through the RTC watchdog, and that path is dead here. `OALIoCtlHalReboot` waits forever on its first indexed RTC read, because this board has no working RTC clock domain, and the wait has no timeout.
+
+What remains is re-entry. A program that already runs on the part jumps to the bootrom reset vector at `0x00000000`. The bootrom then probes storage again and loads the boot chain from the start. The device does not lose power, thus this is a restart of the software, not of the hardware. Anyka uses the same idea in the `reboot` command of their own USB boot stub.
+
+## What the Jump Needs
+
+Turn the USB block off first. This is the one step that decides whether the restart works. See [The USB Block](#the-usb-block) below.
+
+Mask the module interrupt sources at `SYSCTRL+0x34` and `SYSCTRL+0x38`. The bootrom writes `CPSR = 0x13` at entry, which unmasks IRQ and FIQ, and the IRQ vector forwards to a DDR word that no longer holds a handler.
+
+Restore no register. The bootrom entry sets its own `CPSR` and `SP`, thus nothing of the caller survives into it.
+
+Turn off any other bus master that writes memory the bootrom uses. The LCD controller only reads, thus it can stay on. Its output goes white part way through the restart, because the DDR init script in the image header runs again.
+
+## The USB Block
+
+The USB block is a bus master into the L2 buffer SRAM, and three of its windows overlap the memory that the bootrom needs:
+
+| L2 window | USB use | Bootrom use |
+| --- | --- | --- |
+| `0x48000000` | EP2 bulk IN staging | inside buffer 0, the NAND read buffer |
+| `0x48000200` | EP3 bulk OUT DMA target | SPI and NAND read target |
+| `0x48001500` | EP0 staging | 0x7C bytes below the stack top at `0x4800157C` |
+
+A restart that leaves the block live succeeds less than one time in ten. Any transfer that the host starts lands in one of these windows and corrupts a read buffer or the stack. The result looks random, because the outcome depends on what the host does in the first moments after the jump. With the block off, the restart worked on every attempt in the test.
+
+Clear the low three bits of `SYSCTRL+0x58`. This is the same way the bootrom turns the block off before it sets them to 6 to turn it on.
+
+Do not use the software reset bits in the high half of `SYSCTRL+0x0C`. A probe that set bit 31 there stopped the boot earlier than a bare jump does. The names of those bits come from reverse engineering, and bit 31 is not confirmed to be the USB reset.
+
+This part has no SOFTCONN bit. The pull-up stays, thus the host still sees an attached device after the block goes off, and the host tools show no change.
+
+## Bootrom Properties That the Restart Depends On
+
+The bootrom samples the DGPIO[3:2] straps at entry, and `detect_boot_override` forces GPIO104 and GPIO105 to inputs before it reads them. Software therefore cannot hold a strap value across a restart. There is no way to restart into USB boot mode, and there is no equivalent of a `reboot bootloader` command. On this board both pins read low once released, thus a restart takes the normal boot path.
+
+The SPI probe and the NAND probe do not write the sharepin registers at `SYSCTRL+0x74` and `SYSCTRL+0x78`. Only the diagnostic self-test clears them. Both probes therefore run with the pin multiplexer that the previous image left. The probes work under the multiplexer that aipc-boot sets, but an image that gives the NAND pins to another function must restore these two registers before the jump.
+
+See [boot-flow.md](../bootrom/boot-flow.md) for the decision tree that runs after the jump, and [memory-map.md](../bootrom/memory-map.md) for the L2 layout.
+
+## Probe
+
+[baremetal/probes/reset/README.md](../../baremetal/probes/reset/README.md) has a probe that does all of the above, and a table of the stage colors it writes to the screen.

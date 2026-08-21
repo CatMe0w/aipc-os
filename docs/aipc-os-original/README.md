@@ -11,3 +11,4 @@ The split also settles a question that comes up in every driver: does the hardwa
 - Johnson-Nyquist Noise TRNG: a true random number generator from the thermal noise that the unconnected L2 SRAM address window returns. The work is under way, and the document is not written yet.
 - [Faster SD/MMC Driver](faster-sd-driver.md): request size, clock and DMA choices in the Linux MMC host driver, and the throughput they reach.
 - [Ethernet Driver](ethernet-driver.md): the GPIO-bitbanged (software-timed) DM9000 backend, the offloads it enables, and the gap against the mainline driver.
+- [Warm Restart](warm-restart.md): the software restart that this device does not have, built from a jump back into the bootrom, and the one condition that makes it reliable.
