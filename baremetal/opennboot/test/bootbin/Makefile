@@ -17,7 +17,7 @@ stub.bin: stub.elf
 	$(OBJCOPY) -O binary $< $@
 
 BOOT.BIN: stub.bin pack.py
-	uv run pack.py
+	uv run --no-project pack.py
 
 clean:
 	rm -f *.o *.elf stub.bin BOOT.BIN
