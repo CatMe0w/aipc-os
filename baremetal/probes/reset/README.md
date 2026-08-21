@@ -1,5 +1,7 @@
 # Reset probes
 
+## RTC probes
+
 `stub/rtc_diag.bin` is the default, non-destructive probe. It runs from DRAM at `0x32000000`, issues only the index 4 read used at the start of the WinCE reboot handler, bounds the ready wait at 10000000 polls, records the result at `0x32008000`, restores `RTC_CONF`, and traps back into gdbstub.
 
 Build and run it with:
@@ -57,3 +59,35 @@ If the target remains connected, the result words are:
 | 8-9 | POWER_ON input level immediately and after a delay |
 | 10-11 | Output register and POWER_ON input level immediately after driving low |
 | 12-15 | Final direction, output, input and POWER_ON input level |
+
+## Warm restart
+
+`stub/warm_restart.bin` restarts the device through the bootrom. It runs from DRAM at `0x32000000`. It masks the module interrupt sources, it turns off the USB block, then it jumps to the bootrom reset vector at `0x0`.
+
+See [docs/aipc-os-original/warm-restart.md](../../../docs/aipc-os-original/warm-restart.md) for why each step is there. The USB shutdown is the step that decides whether the restart works.
+
+```sh
+make -C baremetal/probes/reset/stub TARGET=warm_restart
+arm-none-eabi-gdb -ex 'target remote /dev/cu.usbmodem00011'
+```
+
+Then in GDB:
+
+```gdb
+restore baremetal/probes/reset/stub/warm_restart.bin binary 0x32000000
+set $pc = 0x32000000
+continue
+```
+
+The device runs the bootrom NAND probe again, then nboot, then the payload on the card. GDB loses the target, because the old USB device goes away with it. Start a new GDB session after the payload loads the stub again.
+
+The probe writes a stage color to the framebuffer before each step. The LCD scans DRAM without CPU help, thus the last color on the panel names the last stage that ran:
+
+| Screen | Meaning |
+| --- | --- |
+| No change | The probe did not start. |
+| Red | The probe started. It stopped at the interrupt masks. |
+| Yellow | The masks are set. It stopped at the USB shutdown. |
+| Green | The USB block is off. The jump ran, and the bootrom stopped before the DDR init script. |
+| Green, then white | The bootrom ran the DDR init script, then it stopped. |
+| Boot menu | The restart is complete. |
