@@ -1,0 +1,221 @@
+name: Release
+
+on:
+  push:
+    tags: ["20*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  baremetal:
+    name: Bare-metal images
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: false
+
+      - name: Check out submodules
+        run: |
+          git submodule update --init --depth 1 baremetal/aipc-boot/third_party/lvgl
+          git submodule update --init --depth 1 baremetal/doom/doomgeneric
+
+      - uses: carlosperate/arm-none-eabi-gcc-action@v1
+        with:
+          release: "15.3.Rel1"
+
+      - name: Build
+        run: |
+          make -C baremetal/opennboot
+          make -C baremetal/aipc-boot
+          make -C baremetal/gdbstub
+          make -C baremetal/doom
+          make -C tools/opennboot/stub
+          make -C tools/aipc-ddr-init/stub
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: baremetal
+          if-no-files-found: error
+          path: |
+            baremetal/opennboot/opennboot.bin
+            baremetal/aipc-boot/BOOT.BIN
+            baremetal/gdbstub/gdbstub.bin
+            baremetal/doom/doom.bin
+            tools/opennboot/stub/nf_read.bin
+            tools/opennboot/stub/nf_write.bin
+            tools/aipc-ddr-init/stub/ddr_init_v1_88.bin
+
+  kernel:
+    name: Linux kernel
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: false
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-linux-gnueabi bc flex bison libssl-dev
+
+      - name: Fetch Linux
+        run: |
+          curl -fSL -o linux.tar.xz https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.0.tar.xz
+          tar -xf linux.tar.xz
+          mv linux-7.0 linux
+
+      - name: Apply patches
+        working-directory: linux
+        run: |
+          for p in ../kernel/patches/v1-*.patch; do
+            echo "applying $(basename "$p")"
+            patch -p1 --forward < "$p"
+          done
+
+      - name: Build
+        working-directory: linux
+        env:
+          ARCH: arm
+          CROSS_COMPILE: arm-linux-gnueabi-
+          LOCALVERSION: -aipc-${{ github.ref_name }}
+        run: |
+          make aipc_defconfig
+          make -j"$(nproc)"
+          cat arch/arm/boot/zImage \
+              arch/arm/boot/dts/anyka/ak7802-netbook.dtb > ../zImage
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kernel
+          if-no-files-found: error
+          path: zImage
+
+  wheel:
+    name: opennboot wheel
+    needs: baremetal
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: false
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: baremetal
+          path: images
+
+      - name: Pack the images
+        run: |
+          cp images/baremetal/opennboot/opennboot.bin \
+             images/tools/opennboot/stub/nf_read.bin \
+             images/tools/opennboot/stub/nf_write.bin \
+             images/tools/aipc-ddr-init/stub/ddr_init_v1_88.bin \
+             tools/opennboot/src/opennboot/data/
+
+      - name: Build
+        run: |
+          for p in opennboot ak7802-usbboot aipc-ddr-init; do
+            uv build --package "$p" --out-dir dist
+          done
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheel
+          if-no-files-found: error
+          path: dist/*
+
+  pypi:
+    name: Publish to PyPI
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: wheel
+    runs-on: ubuntu-26.04
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: wheel
+          path: dist
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+
+  sdcard:
+    name: SD card image
+    needs: [baremetal, kernel]
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: false
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y genimage mtools dosfstools e2fsprogs xz-utils
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: baremetal
+          path: images
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: kernel
+          path: kernel-out
+
+      - name: Build
+        run: |
+          cp images/baremetal/aipc-boot/BOOT.BIN baremetal/aipc-boot/
+          cp images/baremetal/gdbstub/gdbstub.bin baremetal/gdbstub/
+          ZIMAGE="$PWD/kernel-out/zImage" ./sdcard/build.sh
+
+      - name: Compress
+        run: |
+          xz -T0 -c \
+            sdcard/build/images/aipc-os-sdcard.img \
+            > aipc-os-sdcard.img.xz
+          sha256sum aipc-os-sdcard.img.xz > aipc-os-sdcard.img.xz.sha256
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sdcard
+          if-no-files-found: error
+          path: |
+            aipc-os-sdcard.img.xz
+            aipc-os-sdcard.img.xz.sha256
+
+  publish:
+    name: Publish the release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [baremetal, wheel, sdcard]
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Collect
+        run: |
+          mkdir -p release
+          cp artifacts/baremetal/baremetal/opennboot/opennboot.bin release/
+          cp artifacts/baremetal/baremetal/aipc-boot/BOOT.BIN release/
+          cp artifacts/baremetal/baremetal/gdbstub/gdbstub.bin release/
+          cp artifacts/baremetal/baremetal/doom/doom.bin release/
+          cp artifacts/wheel/* release/
+          cp artifacts/sdcard/* release/
+          ls -la release
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: release/*
+          fail_on_unmatched_files: true
