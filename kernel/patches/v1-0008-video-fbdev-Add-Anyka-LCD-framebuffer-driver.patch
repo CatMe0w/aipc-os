@@ -1,4 +1,4 @@
-From 1a0f2c4d44f0d9e1b3bdc718eeef32ad7d6d10ba Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Fri, 1 May 2026 10:42:24 +0800
 Subject: [PATCH v1 08/12] video: fbdev: Add Anyka LCD framebuffer driver
@@ -516,6 +516,3 @@ index 000000000..6585ad75d
 +
 +MODULE_DESCRIPTION("Anyka AK7802 LCD framebuffer driver");
 +MODULE_LICENSE("GPL");
--- 
-2.47.3
-

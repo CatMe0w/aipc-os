@@ -1,4 +1,4 @@
-From 208761e03d529b52423c1c9a960e18b2310425d3 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Sat, 1 Aug 2026 23:51:57 +0800
 Subject: [PATCH v1 09/12] pinctrl: anyka: Add AK7802 pin controller driver
@@ -615,6 +615,3 @@ index 6585ad75d..eae1adeff 100644
  	anyka_lcdfb_set_gpio_output(par, 104, true);
  	anyka_lcdfb_set_gpio_output(par, 69, false);
  	anyka_lcdfb_set_gpio_output(par, 4, false);
--- 
-2.47.3
-

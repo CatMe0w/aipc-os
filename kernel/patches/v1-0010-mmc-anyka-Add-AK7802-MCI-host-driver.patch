@@ -1,4 +1,4 @@
-From 7f0b7dec97fb7565cd6bbb1f6d72286cb73588e8 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Mon, 3 Aug 2026 11:09:03 +0800
 Subject: [PATCH v1 10/12] mmc: anyka: Add AK7802 MCI host driver
@@ -1314,6 +1314,3 @@ index 000000000..85837f776
 +MODULE_DESCRIPTION("Anyka MCI SD/MMC host driver");
 +MODULE_AUTHOR("CatMe0w");
 +MODULE_LICENSE("GPL");
--- 
-2.47.3
-

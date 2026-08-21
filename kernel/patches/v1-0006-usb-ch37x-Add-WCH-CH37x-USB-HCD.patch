@@ -1,17 +1,30 @@
-From 5787e913b1193d22e8a1b009cdf8d7c3319d24fe Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Fri, 1 May 2026 10:42:24 +0800
 Subject: [PATCH v1 06/12] usb: ch37x: Add WCH CH37x USB HCD
 
 ---
+ drivers/usb/Makefile         |    1 +
  drivers/usb/host/Kconfig     |   10 +
  drivers/usb/host/Makefile    |    1 +
- drivers/usb/host/ch37x-hcd.c | 2607 ++++++++++++++++++++++++++++++++++
+ drivers/usb/host/ch37x-hcd.c | 2611 ++++++++++++++++++++++++++++++++++
  drivers/usb/host/ch37x.h     |  168 +++
- 4 files changed, 2786 insertions(+)
+ 5 files changed, 2791 insertions(+)
  create mode 100644 drivers/usb/host/ch37x-hcd.c
  create mode 100644 drivers/usb/host/ch37x.h
 
+diff --git a/drivers/usb/Makefile b/drivers/usb/Makefile
+index eecbd631f..31dc68890 100644
+--- a/drivers/usb/Makefile
++++ b/drivers/usb/Makefile
+@@ -33,6 +33,7 @@ obj-$(CONFIG_USB_FSL_USB2)	+= host/
+ obj-$(CONFIG_USB_FOTG210_HCD)	+= host/
+ obj-$(CONFIG_USB_MAX3421_HCD)	+= host/
+ obj-$(CONFIG_USB_XEN_HCD)	+= host/
++obj-$(CONFIG_USB_CH37X_HCD)	+= host/
+ 
+ obj-$(CONFIG_USB_C67X00_HCD)	+= c67x00/
+ 
 diff --git a/drivers/usb/host/Kconfig b/drivers/usb/host/Kconfig
 index b3b1ec696..17c5cf9a6 100644
 --- a/drivers/usb/host/Kconfig
@@ -47,10 +60,10 @@ index 174580c12..6021cb1d6 100644
  obj-$(CONFIG_USB_EHCI_PCI)	+= ehci-pci.o
 diff --git a/drivers/usb/host/ch37x-hcd.c b/drivers/usb/host/ch37x-hcd.c
 new file mode 100644
-index 000000000..6330955dc
+index 000000000..6b6173864
 --- /dev/null
 +++ b/drivers/usb/host/ch37x-hcd.c
-@@ -0,0 +1,2607 @@
+@@ -0,0 +1,2611 @@
 +/*
 + * USB host controller driver for SPI to USB chip ch370/ch374.
 + *
@@ -603,6 +616,10 @@ index 000000000..6330955dc
 +static inline int ch37x_debugfs_init(struct usb_hcd *hcd)
 +{
 +	return 0;
++}
++
++static inline void ch37x_debugfs_exit(struct usb_hcd *hcd)
++{
 +}
 +
 +#endif /* CONFIG_DEBUG_FS */
@@ -2832,6 +2849,3 @@ index 000000000..314ec751c
 +#define	BIT_HOST_TRAN_TOG	0x40		/* 仅USB主机方式: 主机发送同步标志: 0-DATA0, 1-DATA1 */
 +#define	BIT_HOST_RECV_TOG	0x80		/* 仅USB主机方式: 主机接收同步标志: 0-DATA0, 1-DATA1 */
 +
--- 
-2.47.3
-

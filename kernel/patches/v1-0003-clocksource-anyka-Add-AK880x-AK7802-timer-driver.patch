@@ -1,4 +1,4 @@
-From 3d2ffe5f1dbafb6a7924613f87c23d6c5edc6d2e Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Fri, 1 May 2026 10:42:24 +0800
 Subject: [PATCH v1 03/12] clocksource: anyka: Add AK880x/AK7802 timer driver
@@ -238,6 +238,3 @@ index 000000000..2d5a2bb94
 +	return 0;
 +}
 +TIMER_OF_DECLARE(anyka_timer, "anyka,ak880x-timer", anyka_timer_init);
--- 
-2.47.3
-

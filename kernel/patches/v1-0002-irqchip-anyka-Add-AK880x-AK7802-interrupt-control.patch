@@ -1,4 +1,4 @@
-From fb34ee934ec8136fff77c16f8ca4f009378f38c6 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Fri, 1 May 2026 10:42:24 +0800
 Subject: [PATCH v1 02/12] irqchip: anyka: Add AK880x/AK7802 interrupt
@@ -277,6 +277,3 @@ index 000000000..eddcb9b97
 +}
 +IRQCHIP_DECLARE(anyka_sysctrl_intc, "anyka,ak880x-sysctrl-intc",
 +		anyka_sysctrl_of_init);
--- 
-2.47.3
-

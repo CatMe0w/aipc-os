@@ -1,4 +1,4 @@
-From 30700c2d103d447b25c4361b4b32f9c067644a96 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Fri, 1 May 2026 10:42:24 +0800
 Subject: [PATCH v1 05/12] spi: anyka: Add AK88 SPI controller driver
@@ -598,6 +598,3 @@ index 000000000..8dc61e4cc
 +
 +MODULE_DESCRIPTION("Anyka AK88/98 minimal SPI master");
 +MODULE_LICENSE("GPL");
--- 
-2.47.3
-

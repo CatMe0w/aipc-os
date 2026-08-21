@@ -1,4 +1,4 @@
-From c8b96adef5a057b575a9960fe68a0cf1d06d7d33 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Fri, 1 May 2026 10:42:24 +0800
 Subject: [PATCH v1 01/12] ARM: anyka: Add base architecture and device tree
@@ -294,6 +294,3 @@ index 000000000..b569d8dce
 +DT_MACHINE_START(ANYKA_DT, "Anyka SoC (Flattened Device Tree)")
 +	.dt_compat = anyka_dt_compat,
 +MACHINE_END
--- 
-2.47.3
-

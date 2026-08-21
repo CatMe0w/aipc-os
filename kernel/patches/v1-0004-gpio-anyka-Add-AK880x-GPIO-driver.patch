@@ -1,4 +1,4 @@
-From 831ec3aa6852764d1b63a1c4bcb812d663f0bd73 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Fri, 1 May 2026 10:42:24 +0800
 Subject: [PATCH v1 04/12] gpio: anyka: Add AK880x GPIO driver
@@ -591,6 +591,3 @@ index 000000000..76a6fce3a
 +
 +MODULE_DESCRIPTION("Anyka AK78/AK88/AK98 GPIO driver");
 +MODULE_LICENSE("GPL");
--- 
-2.47.3
-

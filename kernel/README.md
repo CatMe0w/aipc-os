@@ -20,13 +20,20 @@ Then proceed to the build section below.
 
 ## Source: git
 
-Use this method if you want to change the patches. `git am` keeps each patch as a commit, so you can edit the series and export it again with `git format-patch`.
+Use this method if you want to change the patches. `git am` keeps each patch as a commit, so you can edit the series and export it again.
 
 ```
 mkdir -p build && cd build
 git clone --depth 1 --branch v7.2 --single-branch https://github.com/torvalds/linux
 cd linux
 git am ../../patches/v1-*.patch
+```
+
+To export the patches:
+
+```
+rm -f ../../patches/v1-*.patch
+git format-patch -v1 --zero-commit --no-signature -o ../../patches v7.2..HEAD
 ```
 
 ## Build
@@ -46,10 +53,14 @@ That file is what both boot paths load. Put it in the root of the FAT partition.
 `CONFIG_ARM_ATAG_DTB_COMPAT` is off and the device tree carries no `bootargs`, so a bootloader cannot pass a command line to this kernel. It always uses:
 
 ```
-console=tty0 root=/dev/mmcblk0p2 rootfstype=ext4 rootwait rw init=/sbin/init
+console=tty0 root=/dev/mmcblk0p2 rootfstype=ext4 rootwait rw
 ```
 
 That matches the SD card image built by [sdcard](../sdcard/README.md), where partition 2 is the root filesystem. To change it, edit `CONFIG_CMDLINE` in `aipc_defconfig` and rebuild.
+
+### There are no loadable modules
+
+`CONFIG_MODULES` is off. The machine has 64 MB of RAM, and the module tables cost about 370 kB. Every driver is built in, so a new driver needs a full kernel build and a new `zImage` on the card.
 
 ## License
 
