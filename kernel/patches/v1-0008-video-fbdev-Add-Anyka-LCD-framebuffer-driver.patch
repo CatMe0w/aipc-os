@@ -1,4 +1,4 @@
-From 342e2ce4feec367222367ce17f8b14c6708510e5 Mon Sep 17 00:00:00 2001
+From 1a0f2c4d44f0d9e1b3bdc718eeef32ad7d6d10ba Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Fri, 1 May 2026 10:42:24 +0800
 Subject: [PATCH v1 08/12] video: fbdev: Add Anyka LCD framebuffer driver
@@ -11,10 +11,10 @@ Subject: [PATCH v1 08/12] video: fbdev: Add Anyka LCD framebuffer driver
  create mode 100644 drivers/video/fbdev/anyka-lcdfb.c
 
 diff --git a/drivers/video/fbdev/Kconfig b/drivers/video/fbdev/Kconfig
-index ac9ac4287..fdde3536d 100644
+index 085d3a202..57f3ff814 100644
 --- a/drivers/video/fbdev/Kconfig
 +++ b/drivers/video/fbdev/Kconfig
-@@ -1787,6 +1787,17 @@ config FB_SIMPLE
+@@ -1776,6 +1776,17 @@ config FB_SIMPLE
  	  Configuration re: surface address, size, and format must be provided
  	  through device tree, or plain old platform data.
  
@@ -33,10 +33,10 @@ index ac9ac4287..fdde3536d 100644
  	tristate "Solomon SSD1307 framebuffer support"
  	depends on FB && I2C
 diff --git a/drivers/video/fbdev/Makefile b/drivers/video/fbdev/Makefile
-index 36a18d958..ea091a1fc 100644
+index 0b17c8781..7f0b8d3d4 100644
 --- a/drivers/video/fbdev/Makefile
 +++ b/drivers/video/fbdev/Makefile
-@@ -121,6 +121,7 @@ obj-$(CONFIG_FB_EFI)              += efifb.o
+@@ -120,6 +120,7 @@ obj-$(CONFIG_FB_EFI)              += efifb.o
  obj-$(CONFIG_FB_VGA16)            += vga16fb.o
  obj-$(CONFIG_FB_OF)               += offb.o
  obj-$(CONFIG_FB_SSD1307)	  += ssd1307fb.o

@@ -1,4 +1,4 @@
-From d862876d6aa3b2dce2ef2f7a44ee10b24f19883c Mon Sep 17 00:00:00 2001
+From c8b96adef5a057b575a9960fe68a0cf1d06d7d33 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Fri, 1 May 2026 10:42:24 +0800
 Subject: [PATCH v1 01/12] ARM: anyka: Add base architecture and device tree
@@ -22,10 +22,10 @@ Subject: [PATCH v1 01/12] ARM: anyka: Add base architecture and device tree
  create mode 100644 arch/arm/mach-anyka/anyka.c
 
 diff --git a/arch/arm/Kconfig b/arch/arm/Kconfig
-index ec33376f8..d5ca6c5af 100644
+index 9187240a0..a55602128 100644
 --- a/arch/arm/Kconfig
 +++ b/arch/arm/Kconfig
-@@ -360,6 +360,8 @@ source "arch/arm/Kconfig.platforms"
+@@ -361,6 +361,8 @@ source "arch/arm/Kconfig.platforms"
  #
  source "arch/arm/mach-actions/Kconfig"
  
@@ -35,7 +35,7 @@ index ec33376f8..d5ca6c5af 100644
  
  source "arch/arm/mach-artpec/Kconfig"
 diff --git a/arch/arm/Makefile b/arch/arm/Makefile
-index b7de4b6b2..8f81b7956 100644
+index 573813ef5..ff13b25ab 100644
 --- a/arch/arm/Makefile
 +++ b/arch/arm/Makefile
 @@ -173,6 +173,7 @@ textofs-$(CONFIG_ARCH_AXXIA) := 0x00308000
@@ -47,7 +47,7 @@ index b7de4b6b2..8f81b7956 100644
  machine-$(CONFIG_ARCH_ARTPEC)		+= artpec
  machine-$(CONFIG_ARCH_ASPEED)           += aspeed
 diff --git a/arch/arm/boot/dts/Makefile b/arch/arm/boot/dts/Makefile
-index efe38eb25..6a1f71dae 100644
+index 28fba538d..baf9c266e 100644
 --- a/arch/arm/boot/dts/Makefile
 +++ b/arch/arm/boot/dts/Makefile
 @@ -5,6 +5,7 @@ subdir-y += allwinner

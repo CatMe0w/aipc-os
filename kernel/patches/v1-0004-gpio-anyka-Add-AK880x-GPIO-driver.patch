@@ -1,4 +1,4 @@
-From 0aa371e3eb7cad23a0135de20dfc4bb6f24b8346 Mon Sep 17 00:00:00 2001
+From 831ec3aa6852764d1b63a1c4bcb812d663f0bd73 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Fri, 1 May 2026 10:42:24 +0800
 Subject: [PATCH v1 04/12] gpio: anyka: Add AK880x GPIO driver
@@ -11,10 +11,10 @@ Subject: [PATCH v1 04/12] gpio: anyka: Add AK880x GPIO driver
  create mode 100644 drivers/gpio/gpio-anyka.c
 
 diff --git a/drivers/gpio/Kconfig b/drivers/gpio/Kconfig
-index b45fb799e..1d676d3eb 100644
+index 28cf6d2e8..f5e6922b4 100644
 --- a/drivers/gpio/Kconfig
 +++ b/drivers/gpio/Kconfig
-@@ -173,6 +173,14 @@ config GPIO_AMDPT
+@@ -179,6 +179,14 @@ config GPIO_AMDPT
  	  Driver for GPIO functionality on Promontory IOHub.
  	  Requires ACPI ASL code to enumerate as a platform device.
  
@@ -28,12 +28,12 @@ index b45fb799e..1d676d3eb 100644
 +
  config GPIO_ASPEED
  	tristate "Aspeed GPIO support"
- 	depends on (ARCH_ASPEED || COMPILE_TEST) && OF_GPIO
+ 	depends on ARCH_ASPEED || COMPILE_TEST
 diff --git a/drivers/gpio/Makefile b/drivers/gpio/Makefile
-index c05f7d795..9b20e6745 100644
+index 4d0e90040..feff5cf9d 100644
 --- a/drivers/gpio/Makefile
 +++ b/drivers/gpio/Makefile
-@@ -38,6 +38,7 @@ obj-$(CONFIG_GPIO_ALTERA)  		+= gpio-altera.o
+@@ -36,6 +36,7 @@ obj-$(CONFIG_GPIO_ALTERA)  		+= gpio-altera.o
  obj-$(CONFIG_GPIO_AMD8111)		+= gpio-amd8111.o
  obj-$(CONFIG_GPIO_AMD_FCH)		+= gpio-amd-fch.o
  obj-$(CONFIG_GPIO_AMDPT)		+= gpio-amdpt.o

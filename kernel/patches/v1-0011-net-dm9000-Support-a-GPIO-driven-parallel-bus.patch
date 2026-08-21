@@ -1,4 +1,4 @@
-From db994e87f3da629b091830a8f94881398d8cb934 Mon Sep 17 00:00:00 2001
+From 7d26ebe6fbafafb5692d4fda4bc97794e8be8c15 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Tue, 4 Aug 2026 13:08:08 +0800
 Subject: [PATCH v1 11/12] net: dm9000: Support a GPIO-driven parallel bus

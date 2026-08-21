@@ -1,4 +1,4 @@
-From 3f80fdacbc9134d2742a38a4d590a2db4685d615 Mon Sep 17 00:00:00 2001
+From bd9b1b7bdca475c0bebdeea192608db009d80b8e Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Fri, 1 May 2026 10:42:24 +0800
 Subject: [PATCH v1 07/12] usb: anyka: Add AK98 full-speed HCD
@@ -13,10 +13,10 @@ Subject: [PATCH v1 07/12] usb: anyka: Add AK98 full-speed HCD
  create mode 100644 drivers/usb/host/ak98-fs-hcd.h
 
 diff --git a/drivers/usb/host/Kconfig b/drivers/usb/host/Kconfig
-index d1f397ec4..41354c9ab 100644
+index 17c5cf9a6..30ac4ee67 100644
 --- a/drivers/usb/host/Kconfig
 +++ b/drivers/usb/host/Kconfig
-@@ -641,6 +641,20 @@ config USB_SL811_HCD
+@@ -647,6 +647,20 @@ config USB_SL811_HCD
  	  To compile this driver as a module, choose M here: the
  	  module will be called sl811-hcd.
  
@@ -38,10 +38,10 @@ index d1f397ec4..41354c9ab 100644
  	bool "partial ISO support"
  	depends on USB_SL811_HCD
 diff --git a/drivers/usb/host/Makefile b/drivers/usb/host/Makefile
-index 2e856c3b8..4343001f8 100644
+index 6021cb1d6..023407c60 100644
 --- a/drivers/usb/host/Makefile
 +++ b/drivers/usb/host/Makefile
-@@ -89,3 +89,4 @@ obj-$(CONFIG_USB_HCD_BCMA)	+= bcma-hcd.o
+@@ -90,3 +90,4 @@ obj-$(CONFIG_USB_HCD_BCMA)	+= bcma-hcd.o
  obj-$(CONFIG_USB_HCD_SSB)	+= ssb-hcd.o
  obj-$(CONFIG_USB_MAX3421_HCD)	+= max3421-hcd.o
  obj-$(CONFIG_USB_XEN_HCD)	+= xen-hcd.o

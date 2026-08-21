@@ -1,4 +1,4 @@
-From c2e8414557554f7c6bac9ab571fdae3a5bc1ed09 Mon Sep 17 00:00:00 2001
+From 5787e913b1193d22e8a1b009cdf8d7c3319d24fe Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Fri, 1 May 2026 10:42:24 +0800
 Subject: [PATCH v1 06/12] usb: ch37x: Add WCH CH37x USB HCD
@@ -6,14 +6,14 @@ Subject: [PATCH v1 06/12] usb: ch37x: Add WCH CH37x USB HCD
 ---
  drivers/usb/host/Kconfig     |   10 +
  drivers/usb/host/Makefile    |    1 +
- drivers/usb/host/ch37x-hcd.c | 2609 ++++++++++++++++++++++++++++++++++
+ drivers/usb/host/ch37x-hcd.c | 2607 ++++++++++++++++++++++++++++++++++
  drivers/usb/host/ch37x.h     |  168 +++
- 4 files changed, 2788 insertions(+)
+ 4 files changed, 2786 insertions(+)
  create mode 100644 drivers/usb/host/ch37x-hcd.c
  create mode 100644 drivers/usb/host/ch37x.h
 
 diff --git a/drivers/usb/host/Kconfig b/drivers/usb/host/Kconfig
-index 0a277a07c..d1f397ec4 100644
+index b3b1ec696..17c5cf9a6 100644
 --- a/drivers/usb/host/Kconfig
 +++ b/drivers/usb/host/Kconfig
 @@ -4,6 +4,16 @@
@@ -34,7 +34,7 @@ index 0a277a07c..d1f397ec4 100644
  	tristate "Cypress C67x00 HCD support"
  	depends on HAS_IOMEM
 diff --git a/drivers/usb/host/Makefile b/drivers/usb/host/Makefile
-index a07e7ba9c..2e856c3b8 100644
+index 174580c12..6021cb1d6 100644
 --- a/drivers/usb/host/Makefile
 +++ b/drivers/usb/host/Makefile
 @@ -37,6 +37,7 @@ ifneq ($(CONFIG_USB_XHCI_SIDEBAND),)
@@ -47,10 +47,10 @@ index a07e7ba9c..2e856c3b8 100644
  obj-$(CONFIG_USB_EHCI_PCI)	+= ehci-pci.o
 diff --git a/drivers/usb/host/ch37x-hcd.c b/drivers/usb/host/ch37x-hcd.c
 new file mode 100644
-index 000000000..5c95b0ac9
+index 000000000..6330955dc
 --- /dev/null
 +++ b/drivers/usb/host/ch37x-hcd.c
-@@ -0,0 +1,2609 @@
+@@ -0,0 +1,2607 @@
 +/*
 + * USB host controller driver for SPI to USB chip ch370/ch374.
 + *
@@ -78,7 +78,6 @@ index 000000000..5c95b0ac9
 +#include <asm/irq.h>
 +#include <asm/byteorder.h>
 +#include <linux/of.h>
-+#include <linux/of_gpio.h>
 +#include <linux/jiffies.h>
 +#include <linux/module.h>
 +#include <linux/kernel.h>
@@ -105,7 +104,6 @@ index 000000000..5c95b0ac9
 +#include <linux/slab.h>
 +#include <linux/of.h>
 +#include <linux/of_platform.h>
-+#include <linux/of_gpio.h>
 +#include <linux/delay.h>
 +
 +#include <asm/io.h>

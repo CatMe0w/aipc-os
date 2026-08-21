@@ -1,6 +1,6 @@
 # Linux kernel
 
-Patches against Linux v7.0, plus the config they are built with.
+Patches against Linux v7.2 (`8d3ae59288f1e7d58d76558a6ee96d533bc5019f`).
 
 Choose one of the two methods below to build the kernel. Run every command in this file from the `kernel/` directory.
 
@@ -10,9 +10,9 @@ Use this method if you only want a `zImage`. The CI build uses it.
 
 ```
 mkdir -p build && cd build
-curl -fSLO https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.0.tar.xz
-tar -xf linux-7.0.tar.xz
-cd linux-7.0
+curl -fSLO https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.2.tar.xz
+tar -xf linux-7.2.tar.xz
+cd linux-7.2
 for p in ../../patches/v1-*.patch; do patch -p1 --forward < "$p"; done
 ```
 
@@ -24,7 +24,7 @@ Use this method if you want to change the patches. `git am` keeps each patch as 
 
 ```
 mkdir -p build && cd build
-git clone --depth 1 --branch v7.0 --single-branch https://github.com/torvalds/linux
+git clone --depth 1 --branch v7.2 --single-branch https://github.com/torvalds/linux
 cd linux
 git am ../../patches/v1-*.patch
 ```

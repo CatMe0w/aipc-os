@@ -1,4 +1,4 @@
-From f201cf50127d97feb80ea5e1a7572834d84a96f6 Mon Sep 17 00:00:00 2001
+From 40295621cee9a733083b2d84320351dfa10a03f9 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Thu, 20 Aug 2026 10:47:49 +0800
 Subject: [PATCH v1 12/12] ARM: configs: Add aipc_defconfig for the AIPC

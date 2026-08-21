@@ -65,9 +65,9 @@ jobs:
 
       - name: Fetch Linux
         run: |
-          curl -fSL -o linux.tar.xz https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.0.tar.xz
+          curl -fSL -o linux.tar.xz https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.2.tar.xz
           tar -xf linux.tar.xz
-          mv linux-7.0 linux
+          mv linux-7.2 linux
 
       - name: Apply patches
         working-directory: linux

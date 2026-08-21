@@ -1,4 +1,4 @@
-From c71b83ef36cc6d5b34b7becca4c3810d03b66ecc Mon Sep 17 00:00:00 2001
+From 7f0b7dec97fb7565cd6bbb1f6d72286cb73588e8 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Mon, 3 Aug 2026 11:09:03 +0800
 Subject: [PATCH v1 10/12] mmc: anyka: Add AK7802 MCI host driver
@@ -58,10 +58,10 @@ index f3bafd793..e37ad790f 100644
  		compatible = "anyka,ak98-fshc";
  		reg = <0x70000000 0x1000>;
 diff --git a/drivers/mmc/host/Kconfig b/drivers/mmc/host/Kconfig
-index 6d79cc9a7..73a38b2c9 100644
+index 4f060d3e5..b2081a9c5 100644
 --- a/drivers/mmc/host/Kconfig
 +++ b/drivers/mmc/host/Kconfig
-@@ -521,6 +521,16 @@ config MMC_MOXART
+@@ -535,6 +535,16 @@ config MMC_MOXART
  	  be found on some embedded hardware such as UC-7112-LX.
  	  If you have a controller with this interface, say Y here.
  
@@ -79,10 +79,10 @@ index 6d79cc9a7..73a38b2c9 100644
  	tristate "SDHCI support on STMicroelectronics SoC"
  	depends on ARCH_STI || FSP2 || COMPILE_TEST
 diff --git a/drivers/mmc/host/Makefile b/drivers/mmc/host/Makefile
-index 5057fea8a..0af1c225a 100644
+index ee412e6b8..728207043 100644
 --- a/drivers/mmc/host/Makefile
 +++ b/drivers/mmc/host/Makefile
-@@ -67,6 +67,7 @@ meson-mx-sdhc-objs 		:= meson-mx-sdhc-clkc.o meson-mx-sdhc-mmc.o
+@@ -68,6 +68,7 @@ meson-mx-sdhc-objs 		:= meson-mx-sdhc-clkc.o meson-mx-sdhc-mmc.o
  obj-$(CONFIG_MMC_MESON_MX_SDHC)	+= meson-mx-sdhc.o
  obj-$(CONFIG_MMC_MESON_MX_SDIO)	+= meson-mx-sdio.o
  obj-$(CONFIG_MMC_MOXART)	+= moxart-mmc.o

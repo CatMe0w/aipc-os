@@ -1,4 +1,4 @@
-From 017e1ce41267fcfa990c682e12ecda7b8fd62291 Mon Sep 17 00:00:00 2001
+From fb34ee934ec8136fff77c16f8ca4f009378f38c6 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Fri, 1 May 2026 10:42:24 +0800
 Subject: [PATCH v1 02/12] irqchip: anyka: Add AK880x/AK7802 interrupt
@@ -11,7 +11,7 @@ Subject: [PATCH v1 02/12] irqchip: anyka: Add AK880x/AK7802 interrupt
  create mode 100644 drivers/irqchip/irq-anyka.c
 
 diff --git a/drivers/irqchip/Makefile b/drivers/irqchip/Makefile
-index 26aa3b6ec..a58afaf1d 100644
+index 74912429c..579849631 100644
 --- a/drivers/irqchip/Makefile
 +++ b/drivers/irqchip/Makefile
 @@ -8,6 +8,7 @@ obj-$(CONFIG_ATH79)			+= irq-ath79-misc.o
