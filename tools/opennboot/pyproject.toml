@@ -1,6 +1,6 @@
 [project]
 name = "opennboot"
-version = "0.1.0"
+version = "1.0.0"
 description = "Install openNBOOT, a replacement bootloader for the AIPC netbook (Anyka AK7802)"
 readme = "README.md"
 authors = [

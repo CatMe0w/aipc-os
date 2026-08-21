@@ -1,6 +1,6 @@
 [project]
 name = "aipc-ddr-init"
-version = "0.1.0"
+version = "1.0.0"
 description = "DDR initialization tool for AIPC via USB boot mode"
 authors = [
     { name = "CatMe0w", email = "CatMe0w@live.cn" }

@@ -34,7 +34,7 @@ requires-dist = [
 
 [[package]]
 name = "aipc-ddr-init"
-version = "0.1.0"
+version = "1.0.0"
 source = { editable = "tools/aipc-ddr-init" }
 dependencies = [
     { name = "ak7802-usbboot" },
@@ -98,7 +98,7 @@ requires-dist = [
 
 [[package]]
 name = "ak7802-usbboot"
-version = "0.1.0"
+version = "1.0.0"
 source = { editable = "tools/ak7802-usbboot" }
 dependencies = [
     { name = "click" },
@@ -211,7 +211,7 @@ wheels = [
 
 [[package]]
 name = "opennboot"
-version = "0.1.0"
+version = "1.0.0"
 source = { editable = "tools/opennboot" }
 dependencies = [
     { name = "aipc-ddr-init" },

@@ -1,6 +1,6 @@
 [project]
 name = "ak7802-usbboot"
-version = "0.1.0"
+version = "1.0.0"
 description = "USB boot/download tool for Anyka AK7802 SoC"
 readme = "README.md"
 authors = [
