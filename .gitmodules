@@ -1,9 +1,6 @@
 [submodule "doom/doomgeneric"]
 	path = baremetal/doom/doomgeneric
 	url = https://github.com/ozkl/doomgeneric
-[submodule "kernel/linux"]
-	path = kernel/linux
-	url = https://github.com/torvalds/linux
 [submodule "baremetal/aipc-boot/third_party/lvgl"]
 	path = baremetal/aipc-boot/third_party/lvgl
 	url = https://github.com/lvgl/lvgl
