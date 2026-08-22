@@ -15,6 +15,8 @@ Partition 1 is first in the table because openNBOOT takes the first FAT partitio
 
 [rootfs.lock](rootfs.lock) pins the root filesystem by URL and SHA256.
 
+The build sets the default login to `root` with the password `root`.
+
 ## Build
 
 ```
