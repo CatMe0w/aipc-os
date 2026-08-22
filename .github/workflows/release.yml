@@ -201,6 +201,8 @@ jobs:
     runs-on: ubuntu-26.04
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -213,9 +215,13 @@ jobs:
           cp artifacts/baremetal/baremetal/aipc-boot/BOOT.BIN release/
           cp artifacts/baremetal/baremetal/gdbstub/gdbstub.bin release/
           cp artifacts/baremetal/baremetal/doom/doom.bin release/
-          cp artifacts/wheel/* release/
           cp artifacts/sdcard/* release/
           ls -la release
+
+      - name: Attest release assets
+        uses: actions/attest@v4
+        with:
+          subject-path: release/*
 
       - uses: softprops/action-gh-release@v3
         with:
