@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CatMe0w <CatMe0w@live.cn>
+Date: Sun, 23 Aug 2026 01:51:15 +0800
+Subject: [PATCH v1 5/6] Disable sized deallocation
+
+---
+ Makefile | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index c78573b..87c74a0 100644
+--- a/Makefile
++++ b/Makefile
+@@ -14,8 +14,8 @@ VERSION=pre-0.5.3-$(shell date +"%Y%m%d_%H%M%S")
+ OUT=out/
+ 
+ # Default compiler flags (note -march=armv4 is needed for 16 bit insns)
+-CXXFLAGS = -Wall -O -g -MD -march=armv4 -Iinclude -fno-exceptions -fno-rtti -fno-jump-tables
+-CXXFLAGS_ARMV5 = -Wall -O -g -MD -march=armv5t -Iinclude -fno-exceptions -fno-rtti -fno-jump-tables
++CXXFLAGS = -Wall -O -g -MD -march=armv4 -Iinclude -fno-exceptions -fno-rtti -fno-sized-deallocation -fno-jump-tables
++CXXFLAGS_ARMV5 = -Wall -O -g -MD -march=armv5t -Iinclude -fno-exceptions -fno-rtti -fno-sized-deallocation -fno-jump-tables
+ LDFLAGS = -Wl,--major-subsystem-version=2,--minor-subsystem-version=10
+ # LDFLAGS to debug invalid imports in exe
+ #LDFLAGS = -Wl,-M -Wl,--cref

@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CatMe0w <CatMe0w@live.cn>
+Date: Sun, 23 Aug 2026 01:51:15 +0800
+Subject: [PATCH v1 1/6] Define min() for cegcc 9
+
+---
+ include/xtypes.h | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/include/xtypes.h b/include/xtypes.h
+index dbb9b4a..bca5b80 100644
+--- a/include/xtypes.h
++++ b/include/xtypes.h
+@@ -10,6 +10,14 @@
+ 
+ #define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
+ 
++#ifndef min
++template <typename T>
++static inline T min(T a, T b)
++{
++    return a < b ? a : b;
++}
++#endif
++
+ typedef signed char int8;
+ typedef unsigned char uint8;
+ typedef signed short int16;

@@ -1,0 +1,22 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CatMe0w <CatMe0w@live.cn>
+Date: Sun, 23 Aug 2026 01:51:15 +0800
+Subject: [PATCH v1 2/6] Use -march=armv5t
+
+---
+ Makefile | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Makefile b/Makefile
+index c136518..249b692 100644
+--- a/Makefile
++++ b/Makefile
+@@ -15,7 +15,7 @@ OUT=out/
+ 
+ # Default compiler flags (note -march=armv4 is needed for 16 bit insns)
+ CXXFLAGS = -Wall -O -g -MD -march=armv4 -Iinclude -fno-exceptions -fno-rtti
+-CXXFLAGS_ARMV5 = -Wall -O -g -MD -march=armv5 -Iinclude -fno-exceptions -fno-rtti
++CXXFLAGS_ARMV5 = -Wall -O -g -MD -march=armv5t -Iinclude -fno-exceptions -fno-rtti
+ LDFLAGS = -Wl,--major-subsystem-version=2,--minor-subsystem-version=10
+ # LDFLAGS to debug invalid imports in exe
+ #LDFLAGS = -Wl,-M -Wl,--cref

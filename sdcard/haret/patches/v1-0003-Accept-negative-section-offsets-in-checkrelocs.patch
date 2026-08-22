@@ -1,0 +1,22 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CatMe0w <CatMe0w@live.cn>
+Date: Sun, 23 Aug 2026 01:51:15 +0800
+Subject: [PATCH v1 3/6] Accept negative section offsets in checkrelocs
+
+---
+ tools/checkrelocs | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tools/checkrelocs b/tools/checkrelocs
+index 3be35f2..e1f8aca 100755
+--- a/tools/checkrelocs
++++ b/tools/checkrelocs
+@@ -11,7 +11,7 @@
+ LD=$BASE/bin/arm-mingw32ce-ld
+ OBJDUMP=$BASE/bin/arm-mingw32ce-objdump
+ TMP=tmp_link.o
+-IGNORE=" ARM_26D | ARM_32[ ]*\.text\+"
++IGNORE=" ARM_26D | ARM_32[ ]*\.text[+-]"
+ 
+ $LD -r "$@" -o $TMP
+ $OBJDUMP -C -r -j .text.preload -j .text.irq $TMP | egrep -v "$IGNORE" | grep -q '^0'

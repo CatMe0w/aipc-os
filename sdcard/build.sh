@@ -58,6 +58,13 @@ set_root_password() {
 
 mkdir -p "$build/download" "$build/input" "$build/images" "$build/tmp"
 
+if [ -n "${HARET_DIST:-}" ]; then
+    haret_dist="$HARET_DIST"
+else
+    haret_dist="$build/haret/dist"
+    BUILD_DIR="$build/haret" "$here/haret/build.sh"
+fi
+
 probe="$build/.probe"
 sudo rm -rf "${probe:?}"
 sudo mkdir -p "$probe"
@@ -94,8 +101,8 @@ stage "$root/baremetal/aipc-boot/BOOT.BIN"  BOOT.BIN \
     "Build it with: make -C baremetal/aipc-boot"
 stage "$root/baremetal/gdbstub/gdbstub.bin" gdbstub.bin \
     "Build it with: make -C baremetal/gdbstub"
-stage "$here/haret/haret.exe"               haret.exe \
-    "It is committed. Check out the repository again"
+stage "$haret_dist/haret.exe"               haret.exe \
+    "Build it with: ./sdcard/haret/build.sh"
 stage "$here/haret/startup.txt"             startup.txt \
     "It is committed. Check out the repository again"
 stage "${ZIMAGE:-$build/zImage}"            zImage \

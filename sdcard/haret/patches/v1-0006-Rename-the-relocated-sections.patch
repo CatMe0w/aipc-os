@@ -1,0 +1,175 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CatMe0w <CatMe0w@live.cn>
+Date: Sun, 23 Aug 2026 01:51:15 +0800
+Subject: [PATCH v1 6/6] Rename the relocated sections
+
+---
+ include/irq.h           | 2 +-
+ include/linboot.h       | 2 +-
+ src/haret.lds           | 6 +++---
+ src/linboot.cpp         | 2 +-
+ src/mach/arch-msm-asm.S | 2 +-
+ src/mach/arch-s3.cpp    | 2 +-
+ src/wince/asmstuff.S    | 4 ++--
+ src/wince/irqchain.S    | 2 +-
+ tools/checkrelocs       | 6 +++---
+ 9 files changed, 14 insertions(+), 14 deletions(-)
+
+diff --git a/include/irq.h b/include/irq.h
+index 9862474..a8a88b3 100644
+--- a/include/irq.h
++++ b/include/irq.h
+@@ -10,7 +10,7 @@
+ // Functions marked with this attribute will be relocated to an
+ // independant area of memory during interrupt watching.  Code in this
+ // section must not reference data or code in any other sections.
+-#define __irq __attribute__ ((__section__ (".text.irq")))
++#define __irq __attribute__ ((__section__ (".textirq")))
+ 
+ 
+ /****************************************************************
+diff --git a/include/linboot.h b/include/linboot.h
+index 47a6fab..92b29ef 100644
+--- a/include/linboot.h
++++ b/include/linboot.h
+@@ -6,7 +6,7 @@
+ // preloading and are run with the MMU disabled.  These functions must
+ // be careful to not call functions that aren't also marked this way.
+ // They must also not use any global variables.
+-#define __preload __attribute__ ((__section__ (".text.preload")))
++#define __preload __attribute__ ((__section__ (".textpreload")))
+ 
+ void __preload do_copy(char *dest, const char *src, int count);
+ 
+diff --git a/src/haret.lds b/src/haret.lds
+index 33687f4..acdd431 100644
+--- a/src/haret.lds
++++ b/src/haret.lds
+@@ -11,19 +11,19 @@ SECTIONS
+      * memory.
+      */
+     irq_start = .;
+-    *(.text.irq)
++    *(.textirq)
+     irq_end = .;
+ 
+     /* As above, create two symbols for the preloader code. */
+     preload_start = .;
+-    *(.text.preload)
++    *(.textpreload)
+     preload_end = .;
+ 
+     /* Make sure the trampline is on one page (if it would span to a
+      * second page, align it to the start of a page). */
+     . = ((. + mmu_trampoline_end - mmu_trampoline) > ALIGN(4096))
+          ? ALIGN(4096) : .;
+-    *(.text.trampoline)
++    *(.texttrampoline)
+   }
+   .rdata : {
+     /* Create two symbols around the list of machine init functions. */
+diff --git a/src/linboot.cpp b/src/linboot.cpp
+index 28bc9b1..158a4e8 100644
+--- a/src/linboot.cpp
++++ b/src/linboot.cpp
+@@ -244,7 +244,7 @@ static inline uint32 __preload do_cpuGetPSR(void) {
+     __str;                                      \
+ })
+ 
+-#define FB_PRINTF(fbi,fmt,args...) fb_printf((fbi), STR_IN_CODE(.text.preload, fmt) , ##args )
++#define FB_PRINTF(fbi,fmt,args...) fb_printf((fbi), STR_IN_CODE(.textpreload, fmt) , ##args )
+ 
+ static inline int __preload
+ fbOverlaps(struct preloadData *pd)
+diff --git a/src/mach/arch-msm-asm.S b/src/mach/arch-msm-asm.S
+index da534a0..e0f2487 100644
+--- a/src/mach/arch-msm-asm.S
++++ b/src/mach/arch-msm-asm.S
+@@ -41,7 +41,7 @@
+ #define DSB .byte 0x4f, 0xf0, 0x7f, 0xf5
+ #define ISB .byte 0x6f, 0xf0, 0x7f, 0xf5
+ 
+-.section .text.preload
++.section .textpreload
+ 	.global bootQSD8xxx
+ bootQSD8xxx:
+ 
+diff --git a/src/mach/arch-s3.cpp b/src/mach/arch-s3.cpp
+index 98906b2..2b3dffd 100644
+--- a/src/mach/arch-s3.cpp
++++ b/src/mach/arch-s3.cpp
+@@ -130,7 +130,7 @@ REGMACHINE(MachineS3c2442)
+  * S3c64x0 - Tanguy Pruvot on Gmail
+  ****************************************************************/
+ 
+-//#define FB_PRINTF(fbi,fmt,args...) fb_printf((fbi), STR_IN_CODE(.text.preload, fmt) , ##args )
++//#define FB_PRINTF(fbi,fmt,args...) fb_printf((fbi), STR_IN_CODE(.textpreload, fmt) , ##args )
+ 
+ MachineS3c6400::MachineS3c6400()
+ {
+diff --git a/src/wince/asmstuff.S b/src/wince/asmstuff.S
+index 076c6ae..64e70ea 100644
+--- a/src/wince/asmstuff.S
++++ b/src/wince/asmstuff.S
+@@ -124,7 +124,7 @@ cpuFlushCache_arm6:
+ 
+ @ Assembler stub that (when relocated) can store the location of a
+ @ stack and C executable function to jump to.
+-        .section .text.preload
++        .section .textpreload
+         .global stackJumper
+ stackJumper:
+ stack:          .long 0
+@@ -142,7 +142,7 @@ asm_handler:
+ @       r1 = Virtual address of MMU in non-cached ram.
+ @       r2 = Physical address of code to jump to
+ @       r3 = cpu flush cache function
+-        .section .text.trampoline
++        .section .texttrampoline
+         .global mmu_trampoline, mmu_trampoline_end
+ mmu_trampoline:
+ 	@ Store previous registers on stack.
+diff --git a/src/wince/irqchain.S b/src/wince/irqchain.S
+index 8993d33..5bd3f57 100644
+--- a/src/wince/irqchain.S
++++ b/src/wince/irqchain.S
+@@ -4,7 +4,7 @@
+ @
+ @ This file may be distributed under the terms of the GNU GPL license.
+ 
+-        .section .text.irq
++        .section .textirq
+ 
+ @ This handler is copied to a malloc'd memory area in the irq.c C
+ @ code.  The following variables are designed to overlap with the
+diff --git a/tools/checkrelocs b/tools/checkrelocs
+index e1f8aca..862b3fb 100755
+--- a/tools/checkrelocs
++++ b/tools/checkrelocs
+@@ -3,7 +3,7 @@
+ # Usage: checkrelocs <objs.o> [...]
+ 
+ # This script checks for any outstanding relocations in the
+-# .text.preload and .text.irq sections.  Since these sections are
++# .textpreload and .textirq sections.  Since these sections are
+ # moved to new areas in memory during the haret runtime, the code can
+ # not reliably access other parts of the haret system.  (Having an
+ # external relocation will result in a mysterious runtime error.)
+@@ -14,7 +14,7 @@ TMP=tmp_link.o
+ IGNORE=" ARM_26D | ARM_32[ ]*\.text[+-]"
+ 
+ $LD -r "$@" -o $TMP
+-$OBJDUMP -C -r -j .text.preload -j .text.irq $TMP | egrep -v "$IGNORE" | grep -q '^0'
++$OBJDUMP -C -r -j .textpreload -j .textirq $TMP | egrep -v "$IGNORE" | grep -q '^0'
+ STATUS=$?
+ 
+ if [ $STATUS != 0 ]; then
+@@ -26,7 +26,7 @@ echo "ERROR:"
+ echo "ERROR: There is an external reference from a standalone haret section."
+ echo "ERROR:"
+ 
+-$OBJDUMP -C -r -j .text.preload -j .text.irq $TMP | egrep -v "$IGNORE"
++$OBJDUMP -C -r -j .textpreload -j .textirq $TMP | egrep -v "$IGNORE"
+ rm -f $TMP
+ 
+ exit 1
