@@ -71,7 +71,9 @@ The key sits on the panel assembly and reaches the mainboard as `ON/OFF`, pin 14
 
 `POWER_KEY` is the second name of the `TDO` net, thus it lands on pin 3, `GPIO3` on the schematic. The JTAG group is pins 0 to 3, and bit 0 of `SYSCTRL + 0x78` muxes it. The pin reads as a GPIO input only when that bit is clear.
 
-The sense is active low, and the base divider is what keeps the two power sources apart. With the key released and only the `POWER_ON` latch holding the rail, `+5V_EN` sits near 3 V, and the divider puts the base near 0.5 V. That is below `Vbe`, thus `Q3` stays off and `POWER_KEY` reads high. With the key pressed, `+5V_EN` rises toward the 7.4 V battery rail, the base passes `Vbe`, `Q3` turns on, and `POWER_KEY` reads low. The signal therefore reports the key alone and does not follow the software power hold. Both levels come from the schematic values. Neither is measured yet.
+The sense is active low, and the base divider is what keeps the two power sources apart. With the key released and only the `POWER_ON` latch holding the rail, `+5V_EN` sits near 3 V, and the divider puts the base near 0.5 V. That is below `Vbe`, thus `Q3` stays off and `POWER_KEY` reads high. With the key pressed, `+5V_EN` rises toward the 7.4 V battery rail, the base passes `Vbe`, `Q3` turns on, and `POWER_KEY` reads low. The signal therefore reports the key alone and does not follow the software power hold. Hardware confirms both levels: the pin reads high with the key released and low with it held.
+
+The sense needs the main supply. The key reaches no pin of its own. It connects `BAT-7.4V` to `ON/OFF`, thus it can only raise `+5V_EN` while that rail has a source. USB back-powers `+5V`, which is downstream of the enable, and it does not feed `BAT-7.4V`. On USB alone the key therefore moves nothing and software sees no change, which hardware confirms. A supply on the DC jack restores the sense, with or without the cable.
 
 ## USB Back-Power
 
@@ -89,6 +91,8 @@ Three consequences follow:
 
 The reverse case is also true. With the device on its own supply, `+5V` drives VBUS out of `J4` and into the host port.
 
+USB reaches `+5V` and no further. `BAT-7.4V` and `SWO`, which sit before the converter, stay dead, thus a USB-only setup runs the machine but leaves the power key inert. See [Power Key Sense](#power-key-sense).
+
 No software works around this. Unplug USB for any test of the power path. A cable with the VBUS conductor lifted is the other option, because it keeps the data link and gives the power control back.
 
 The main converter has two footprints on this board, `U5` for a `DS8272` and `U17` for a `KB7008`. `U5` carries an `NC` mark, thus `U17` is the fitted part. Both footprints take the same `+5V_EN`, and the behavior above does not depend on which one is fitted.
@@ -101,13 +105,8 @@ Three other things identify the power routine above: the unique read of `0x8061F
 
 ## Driver Boundary
 
-The confirmed Linux poweroff primitive is the GPIO105 active-high power hold. Keep a high output latch while you select output mode, then drive the line low for the final shutdown. This works only with USB unplugged, see [USB Back-Power](#usb-back-power). A USB-powered development setup continues to execute afterward, and that is not a fault in the driver.
-
-No whole-chip reboot primitive is confirmed. The WinCE `IOCTL_HAL_REBOOT` sequence depends on an RTC sideband that never becomes ready on the v1.58.2 device board, and `PowerOff.exe REBOOT` requests only the ordinary OFF state. A Linux reboot implementation must not copy either path as a verified reset.
+No whole-chip reboot primitive is confirmed. The WinCE `IOCTL_HAL_REBOOT` sequence depends on an RTC sideband that never becomes ready on the v1.58.2 device board, and `PowerOff.exe REBOOT` requests only the ordinary OFF state. Do not copy either path as a verified reset.
 
 ## Unresolved
 
-- The two `POWER_KEY` levels. The circuit gives an active-low sense on GPIO3, but no measurement confirms the pressed and released levels, or that the released level stays high while the software power hold is up.
-- Whether another AK7802 register, an external supervisor action, or a carefully defined boot-chain handoff can give a reliable warm reboot without the absent RTC clock domain.
-- Whether the removal of USB power, while GPIO105 stays low, causes the expected complete main-rail shutdown and needs a new external power-on event. The USB path into `+5V` explains why the rail stays up, but no test has confirmed the shutdown after the cable comes out.
-- Whether a back-fed `+5V` pushes current through `L17` into the switch node of the converter, and from there back to `SWO` and the battery. That depends on the internal topology of the fitted part, which this document does not cover.
+- Whether anything on this part can perform a true hardware reset. A re-entry into the bootrom restarts the software and is reliable, see [warm-restart.md](../aipc-os-original/warm-restart.md), but no register, pin or external part is known that resets the chip itself.
