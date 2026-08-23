@@ -231,6 +231,18 @@ If an `EDBG_CMD_JUMPIMG` command already filled the launch-state globals, `check
 
 The keep-power-on GPIO is board-specific, and the lookup is indirect. The fixed pin `104` write is present in the verified v1.88 path.
 
+### What the Keep-Power-On Pin Does
+
+On this board the lookup gives pin `105` with active level 1. (That is the GPIO number, not a package pin. See [docs/bootrom/gpio-crosswalk.md](../bootrom/gpio-crosswalk.md).) v1.58.2 EBOOT holds the same two constants, and the WinCE OAL reads that setting back to cut power at shutdown. See [docs/nk/power-management.md](../nk/power-management.md).
+
+Pin 105 is `DGPIO3` on the schematic, register bit `GPIO4[9]`, and it carries the `POWER_ON` net. The main 5 V converter has one enable input, `+5V_EN`, with two sources. The power key reaches it from `BAT-7.4V` through `CON30` pin 14, the `ON/OFF` net and `R121` 10K. `POWER_ON` reaches it through `R122` 1K and `D7`. Each source has a part that stops it from driving the other.
+
+The bootrom leaves 105 as an input, because the same pad is the `BOOT0` strap. Nothing before this point in the boot chain drives it. **The user must therefore keep the power key pressed from the moment they start the device until `power_on_reason_init` runs.** The rail collapses the instant they let go. Anything that replaces EBOOT inherits that requirement and has to raise the same latch.
+
+Note the order inside step 2. EBOOT writes the direction first and the data last, thus the pin drives low for the time between the two writes, because `sysctrl_clock_init` cleared every GPIO output register earlier. That glitch is harmless here only because the user still holds the key at this point, and the key holds the rail by itself. Code that raises the latch at a moment when the key may already be released has to write the output latch first and the direction second.
+
+The board also has a `RESET` button across `+5V_EN` to ground, which cuts the rail whatever the latch does.
+
 ## Version Differences
 
 This documentation targets firmware v1.88. An earlier v1.58.2 EBOOT also exists on some units. The two versions share the same boot flow structure. The differences so far stay inside individual drivers and constants, and none of them changes the overall sequence. Where v1.58.2 differs from v1.88 in a documented area, the relevant driver document says so. The top-level boot flow here applies to both versions.

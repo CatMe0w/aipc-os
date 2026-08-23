@@ -45,7 +45,7 @@ make -C baremetal/probes/reset/stub TARGET=wince_reboot
 
 It is intentionally not the default target. It writes RTC indexed registers 4 and 5 and does not return if reset fails.
 
-`TARGET=gpio105_poweroff` is a destructive power-hold-line probe. It records the entry state at `0x32008000`, preloads GPIO105 high before changing it to an output, verifies the corresponding GPIO4 input bit, then drives GPIO105 low. The target may lose power or disconnect and require the device to be switched off and on again.
+`TARGET=gpio105_poweroff` is a destructive power-hold-line probe. It records the entry state at `0x32008000`, preloads GPIO105 high before changing it to an output, verifies the corresponding GPIO4 input bit, then drives GPIO105 low. The target may lose power or disconnect and require the device to be switched off and on again. With a USB cable attached it does none of that, because the host feeds the `+5V` rail past the enable that GPIO105 drives. See [docs/nk/power-management.md](../../../docs/nk/power-management.md).
 
 If the target remains connected, the result words are:
 

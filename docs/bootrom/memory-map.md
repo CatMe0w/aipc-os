@@ -68,7 +68,7 @@ No stage of the boot chain claims this table. openNBOOT loads at 0x30000000 and 
 | +0x50 | RTC/USB indexed sideband write register (see [diag-mode.md](diag-mode.md)) |
 | +0x4C | RTC/USB sideband status. Bit 24 = transfer-done flag. |
 | +0x54 | Boot stage marker and RTC sideband read-back |
-| +0x58 | USB control. The bootrom clears the low 3 bits, then sets them to 6 to enable the USB block. |
+| +0x58 | USB control. The low 3 bits are a field. The bootrom clears them, then sets the field to 6 (`0b110`), which enables the USB block. |
 | +0x74 | Sharepin config register 0. It selects the peripheral function against the GPIO function. |
 | +0x78 | Sharepin config register 1. It holds more mux bits and the UART enable bit. |
 | +0x7C | GPIO1 direction register |

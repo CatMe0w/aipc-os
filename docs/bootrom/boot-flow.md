@@ -11,7 +11,10 @@ The event that releases the CPU into this path can be power-on, RTC wake, extern
 ## Initialization
 
 1. Write 0x59DB to SYSCTRL+0x0C, the module clock gate register. A set bit gates a module off, thus this leaves a clock only on the modules that the bootrom needs. nboot later clears the whole register and turns every module clock back on. See [memory-map.md](memory-map.md).
-2. Switch the CPU to SVC mode (CPSR = 0x13).
+2. Switch the CPU to SVC mode (CPSR = 0x13). This unmasks IRQ and FIQ.
+3. Set SP to 0x48000FFC.
+
+These three steps occupy `0x20` through `0x38`. The call to `detect_boot_override` is at `0x40`.
 
 ## Boot Override Detection
 
@@ -33,17 +36,35 @@ The sampling loop runs 5 times with a delay of 800 ticks between each pass. A pi
 
 ## Mode Dispatch
 
-```
-detect_boot_override()
-  |
-  +- 1 -> usbboot_main_loop()           [never returns]
-  |
-  +- 2 -> enter_ap2_bios_console()      [never returns]
-  |
-  +- 3 -> bootrom_diag_mode()           [never returns]
-  |
-  +- 0 -> Normal boot (continue below)
-```
+`detect_boot_override` returns the mode in `r0`. The entry code tests that value with three compare-and-load-pc pairs at `0x44` through `0x58`, and falls through when none of them matches. Each target address comes from a literal in the pool at `0x104` through `0x10C`:
+
+| `r0` | Mode | Target | What is there |
+| --- | --- | --- | --- |
+| 1 | USB Boot | `0x3110` | `usbboot_main_loop` |
+| 2 | AP2-BIOS console | `0x00C4` | UART boot entry block |
+| 3 | Diagnostic mode | `0x1260` | `bootrom_diag_mode` |
+| 0 | Normal boot | `0x005C` | the storage probe sequence below |
+
+None of the first three targets comes back.
+
+`0x00C4` (AP2-BIOS console) is a six-instruction block inside the entry code. It sets `CPSR = 0x13`, sets `SP = 0x4800157C`, writes `SYSCTRL+0x54 = 0x02000000`, then loads `pc` with `enter_ap2_bios_console` at `0x0A80`. A `b .` at `0x00E4` catches the return, because that function does return. The same block is the fall-through target when both storage probes fail, which is the second way into the UART console.
+
+The stage marker at `SYSCTRL+0x54` comes from inside `detect_boot_override`, which writes it before it returns 1, 2 or 3. The dispatch instructions do not write it. `0x00C4` (AP2-BIOS console) is the one target that writes its own marker, because it is also the fall-through of the normal boot path.
+
+## Entering a Mode Directly
+
+Each of the four targets is a fixed address, and three of them are ordinary functions with a full procedure prologue. A program that already runs on the part can enter any of them, thus mode selection is not limited to the straps. What the straps decide is only which one the bootrom picks for itself.
+
+| Target | What the caller must set up first |
+| --- | --- |
+| `0x005C` (Normal boot) | nothing. The block sets its own `CPSR` and `SP`. |
+| `0x00C4` (AP2-BIOS console) | nothing. The block sets its own `CPSR`, `SP` and stage marker. |
+| `0x3110` (USB Boot) | `CPSR = 0x13`, `SP = 0x48000FFC`. The dispatch relies on `0x2C` to `0x38` for these. |
+| `0x1260` (Diagnostic mode) | the same as `0x3110`. |
+
+A direct jump skips `detect_boot_override`, thus it also skips the write of the stage marker. Write `SYSCTRL+0x54` yourself to match what a strap entry leaves behind: `0x01000000` for `0x3110` (USB Boot), `0x05000000` for `0x1260` (Diagnostic mode). `0x00C4` needs nothing, because it writes its own. Nothing is known to read the marker, thus this is for fidelity and not a requirement.
+
+`usbboot_main_loop` starts the UART console and the USB block on its own. Its second call, at `0x3150`, clears the low three bits of `SYSCTRL+0x58` and then sets that field to 6 (`0b110`), and it assigns L2 buffers through `0x2002C090`. A caller therefore must not pre-configure USB, and should leave the block off so that it cannot write L2 during the jump.
 
 ## Normal Boot: Storage Probe Sequence
 
@@ -100,7 +121,7 @@ bootrom_entry
   v
 detect_boot_override()
   |
-  +-- 1 (USB Boot) ------------------------------> usbboot_main_loop()
+  +-- 1 (USB Boot) -> SYSCTRL+0x54 = 0x01000000 -> usbboot_main_loop()
   |
   +-- 2 (AP2-BIOS) -> SYSCTRL+0x54 = 0x02000000 -> enter_ap2_bios_console()
   |

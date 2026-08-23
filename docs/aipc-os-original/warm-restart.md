@@ -4,7 +4,32 @@ The device has no software restart. This document describes the one we built.
 
 The AK7802 has no full-chip reset register. The high half of `SYSCTRL+0x0C` holds a software reset bit for each module, but no bit resets the part. The `#RST` pin is an input, and no net on this board drives it from the SoC side. The reset path of the original firmware goes through the RTC watchdog, and that path is dead here. `OALIoCtlHalReboot` waits forever on its first indexed RTC read, because this board has no working RTC clock domain, and the wait has no timeout.
 
-What remains is re-entry. A program that already runs on the part jumps to the bootrom reset vector at `0x00000000`. The bootrom then probes storage again and loads the boot chain from the start. The device does not lose power, thus this is a restart of the software, not of the hardware. Anyka uses the same idea in the `reboot` command of their own USB boot stub.
+What remains is re-entry. A program that already runs on the part jumps back into the bootrom. The bootrom then probes storage again and loads the boot chain from the start. The device does not lose power, thus this is a restart of the software, not of the hardware. Anyka uses the same idea in the `reboot` command of their own USB boot stub.
+
+## Which Entry Point
+
+Enter at `0x0000005C`, the normal-boot path, not at the reset vector at `0x00000000`.
+
+Both entries work, but only one keeps the device on. The reset vector runs `detect_boot_override` to sample the DGPIO[3:2] straps, and that function first writes `SYSCTRL+0x94 |= 0x300` to force GPIO104 and GPIO105 back to inputs. GPIO105 is the `POWER_ON` hold. A restart through the reset vector therefore releases the main 5 V enable for the length of the strap sampling, and the device switches off unless the user holds the power key. See [docs/eboot/boot-flow.md](../eboot/boot-flow.md).
+
+`0x5C` starts after the strap check. It keeps the GPIO direction and output registers, thus `POWER_ON` stays driven. It sets its own `CPSR = 0x13` and `SP = 0x4800157C`. It does not write `SYSCTRL+0x0C`, which the reset vector sets to `0x59DB`, thus the module clock state of the caller survives into the bootrom. All module clocks on is a state that works.
+
+This entry is reliable with the USB block off. The screen flickers twice on the way through. That is cosmetic.
+
+## Restarting Into Another Mode
+
+`0x5C` is one of four fixed entry points, and the caller picks which one. The strap decides only what the bootrom picks when it starts by itself. A jump goes straight past the strap check to the handler:
+
+| Mode | Entry | Setup the caller owes |
+| --- | --- | --- |
+| Normal boot | `0x005C` | none |
+| USB boot | `0x3110` | `CPSR = 0x13`, `SP = 0x48000FFC`, `SYSCTRL+0x54 = 0x01000000` |
+| UART console | `0x00C4` | none |
+| Diagnostic | `0x1260` | `CPSR = 0x13`, `SP = 0x48000FFC`, `SYSCTRL+0x54 = 0x05000000` |
+
+The USB entry gives the equivalent of a `reboot bootloader`, because the host then talks to the device with [ak7802-usbboot](../../tools/ak7802-usbboot/). Every other way into that mode needs the `USB_BOOT` pin held high across a power cycle. All of the setup and register work of [What the Jump Needs](#what-the-jump-needs) applies to these entries too.
+
+[docs/bootrom/boot-flow.md](../bootrom/boot-flow.md) has the dispatch addresses and the per-target preconditions. No test has exercised any entry other than `0x5C`.
 
 ## What the Jump Needs
 
@@ -34,9 +59,11 @@ Do not use the software reset bits in the high half of `SYSCTRL+0x0C`. A probe t
 
 This part has no SOFTCONN bit. The pull-up stays, thus the host still sees an attached device after the block goes off, and the host tools show no change.
 
-## Bootrom Properties That the Restart Depends On
+## Straps
 
-The bootrom samples the DGPIO[3:2] straps at entry, and `detect_boot_override` forces GPIO104 and GPIO105 to inputs before it reads them. Software therefore cannot hold a strap value across a restart. There is no way to restart into USB boot mode, and there is no equivalent of a `reboot bootloader` command. On this board both pins read low once released, thus a restart takes the normal boot path.
+`detect_boot_override` forces GPIO104 and GPIO105 to inputs before it reads them. Software therefore cannot hold a strap value across a restart. A restart that goes through the reset vector always takes the normal boot path on this board, because both pins read low once released. To reach another mode, enter its handler directly. See [Restarting Into Another Mode](#restarting-into-another-mode).
+
+## Bootrom Properties That the Restart Depends On
 
 Each probe sets its own pins, thus the caller does not need to repair the pin multiplexer before the jump. The NAND probe calls a hardware init function first, which clears `SYSCTRL+0x74` bits 4 and 3, sets bit 3, then sets `0x00C70200` in `SYSCTRL+0x78`. The SPI probe sets bit 30 of `SYSCTRL+0x78`, and the UART console sets bit 9.
 

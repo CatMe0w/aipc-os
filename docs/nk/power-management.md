@@ -51,9 +51,47 @@ The matching OAL handler accepts only 0 and 1, and it stores the value in the gl
 
 The only consumer of `0x8061F4DC` is the final OAL power routine of the board. A zero value enters the full suspend path, with peripheral state handling and SDRAM self-refresh. A non-zero value skips that path, calls the board power-control helper with false, and returns if power remains.
 
-The board helper gets the configured power-hold pin and its active level, configures the pin as an output, and writes the inverse of the active level when the caller passes false. v1.58.2 EBOOT independently identifies this setting as pin 105 with active level 1. Pin 105 is `DGPIO3`, which the GPIO4 output bit 9 represents, and it connects to the `POWER_ON` net on the schematic. The original battery-powered shutdown path therefore drives GPIO105 low.
+The board helper gets the configured power-hold pin and its active level, configures the pin as an output, and writes the inverse of the active level when the caller passes false. v1.58.2 EBOOT independently identifies this setting as pin 105 with active level 1. Pin 105 is `DGPIO3` on the schematic, which the GPIO4 output bit 9 represents, and it connects to the `POWER_ON` net on the schematic. The original battery-powered shutdown path therefore drives GPIO105 low.
 
-Hardware confirms the pin number, the direction polarity, the output bit, the special input-bit mapping and the electrical connection. A high output latch preloaded before the switch to output mode reads back high on the physical input, and a drive low reads back low. USB power can keep the CPU and the debug link alive after `POWER_ON` goes low, thus USB continuity is not evidence that the main 5 V hold signal stayed asserted.
+Hardware confirms the pin number, the direction polarity, the output bit, the special input-bit mapping and the electrical connection. A high output latch preloaded before the switch to output mode reads back high on the physical input, and a drive low reads back low. USB power can keep the CPU and the debug link alive after `POWER_ON` goes low, thus USB continuity is not evidence that the main 5 V hold signal stayed asserted. See [USB Back-Power](#usb-back-power) for the reason.
+
+## Power Key Sense
+
+The power key is not only a hardware enable. The schematic routes a sense signal from it back into the SoC, thus software can see the key.
+
+The key sits on the panel assembly and reaches the mainboard as `ON/OFF`, pin 14 of `CON30`. `SW2` is an unfitted mainboard footprint for the same function. Pressing the key connects `BAT-7.4V` to `ON/OFF`, which feeds `+5V_EN` through `R121` 10K. `POWER_ON` feeds the same node through `R122` 1K and `D7`. The two sources are a wired-OR, and each has a diode or a resistor that stops it from driving the other.
+
+`Q3`, a 2N3904 NPN, inverts and level-shifts:
+
+| Terminal | Connection |
+| --- | --- |
+| Base | `+5V_EN` through `D11` and `R125` 47K, with `R127` 10K to ground |
+| Collector | `POWER_KEY`, with `R117` 47K to `3V3` |
+| Emitter | Ground |
+
+`POWER_KEY` is the second name of the `TDO` net, thus it lands on pin 3, `GPIO3` on the schematic. The JTAG group is pins 0 to 3, and bit 0 of `SYSCTRL + 0x78` muxes it. The pin reads as a GPIO input only when that bit is clear.
+
+The sense is active low, and the base divider is what keeps the two power sources apart. With the key released and only the `POWER_ON` latch holding the rail, `+5V_EN` sits near 3 V, and the divider puts the base near 0.5 V. That is below `Vbe`, thus `Q3` stays off and `POWER_KEY` reads high. With the key pressed, `+5V_EN` rises toward the 7.4 V battery rail, the base passes `Vbe`, `Q3` turns on, and `POWER_KEY` reads low. The signal therefore reports the key alone and does not follow the software power hold. Both levels come from the schematic values. Neither is measured yet.
+
+## USB Back-Power
+
+Every USB connector takes its VBUS from one net, and that net is the main `+5V` rail.
+
+`J4` is the connector that carries `OTG_DP` and `OTG_DM` to the SoC, thus it is the port that USB boot mode and the GDB stub use. Pin 1 of `J4` is `USB-V0`, which joins the `USB1-5V` net, which connects to `+5V`. Between the connector pin and the rail there is one ESD clamp to ground and nothing else: no resistor, no fuse, no diode and no load switch. `J9` and `J10` take VBUS from the same net.
+
+`+5V` is the output of the main step-down converter, and `+5V_EN` is the enable of that converter. The power key and `POWER_ON` both drive the enable. A host that supplies VBUS therefore injects power **downstream** of the only gate that the key or software can operate.
+
+Three consequences follow:
+
+- The device runs with no press of the power key, because the rail is already up.
+- `OEMPowerOff`, and any Linux equivalent, cannot switch the device off. A low on GPIO105 turns off a converter that is not the source.
+- The host port supplies the whole machine. The schematic budgets 3000 mA for the system and 1500 mA for the USB ports alone, thus a 500 mA host port may not hold the rail up and the rail sags.
+
+The reverse case is also true. With the device on its own supply, `+5V` drives VBUS out of `J4` and into the host port.
+
+No software works around this. Unplug USB for any test of the power path. A cable with the VBUS conductor lifted is the other option, because it keeps the data link and gives the power control back.
+
+The main converter has two footprints on this board, `U5` for a `DS8272` and `U17` for a `KB7008`. `U5` carries an `NC` mark, thus `U17` is the fitted part. Both footprints take the same `+5V_EN`, and the behavior above does not depend on which one is fitted.
 
 ## NK Rebuild Address Caveat
 
@@ -63,11 +101,13 @@ Three other things identify the power routine above: the unique read of `0x8061F
 
 ## Driver Boundary
 
-The confirmed Linux poweroff primitive is the GPIO105 active-high power hold. Keep a high output latch while you select output mode, then drive the line low for the final shutdown. A USB-powered development setup can continue to execute afterward.
+The confirmed Linux poweroff primitive is the GPIO105 active-high power hold. Keep a high output latch while you select output mode, then drive the line low for the final shutdown. This works only with USB unplugged, see [USB Back-Power](#usb-back-power). A USB-powered development setup continues to execute afterward, and that is not a fault in the driver.
 
 No whole-chip reboot primitive is confirmed. The WinCE `IOCTL_HAL_REBOOT` sequence depends on an RTC sideband that never becomes ready on the v1.58.2 device board, and `PowerOff.exe REBOOT` requests only the ordinary OFF state. A Linux reboot implementation must not copy either path as a verified reset.
 
 ## Unresolved
 
+- The two `POWER_KEY` levels. The circuit gives an active-low sense on GPIO3, but no measurement confirms the pressed and released levels, or that the released level stays high while the software power hold is up.
 - Whether another AK7802 register, an external supervisor action, or a carefully defined boot-chain handoff can give a reliable warm reboot without the absent RTC clock domain.
-- Whether the removal of USB power, while GPIO105 stays low, causes the expected complete main-rail shutdown and needs a new external power-on event.
+- Whether the removal of USB power, while GPIO105 stays low, causes the expected complete main-rail shutdown and needs a new external power-on event. The USB path into `+5V` explains why the rail stays up, but no test has confirmed the shutdown after the cable comes out.
+- Whether a back-fed `+5V` pushes current through `L17` into the switch node of the converter, and from there back to `SWO` and the battery. That depends on the internal topology of the fitted part, which this document does not cover.

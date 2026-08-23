@@ -16,7 +16,7 @@ When `detect_boot_override()` returns 1, the bootrom calls `usbboot_main_loop()`
 
 `usbboot_hw_init()` does the following:
 
-1. Clear the low 3 bits of SYSCTRL+0x58, then set them to 6. This enables the USB block.
+1. Clear the low 3 bits of SYSCTRL+0x58, then set them to 6 (`0b110`). This enables the USB block.
 2. Configure the L2 buffer assignment. Clear the low 6 bits of L2CTR_ASSIGN_REG1 (0x2002C090), then set bit 3, which gives 0x08 and assigns the USB data path.
 3. Force full-speed mode: write 1 to USB+0x344.
 4. Clear the USB POWER register: USB+0x01 = 0.
