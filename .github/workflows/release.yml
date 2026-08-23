@@ -240,10 +240,10 @@ jobs:
       - name: Collect
         run: |
           mkdir -p release
-          cp artifacts/baremetal/baremetal/opennboot/opennboot.bin release/
           cp artifacts/baremetal/baremetal/aipc-boot/BOOT.BIN release/
           cp artifacts/baremetal/baremetal/gdbstub/gdbstub.bin release/
           cp artifacts/baremetal/baremetal/doom/doom.bin release/
+          cp artifacts/kernel/zImage release/
           cp artifacts/haret/* release/
           cp artifacts/sdcard/* release/
           ls -la release
