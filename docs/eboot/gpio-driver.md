@@ -6,15 +6,15 @@ The GPIO driver of EBOOT sits on top of the raw SYSCTRL registers in the bootrom
 
 EBOOT code routinely passes "a GPIO number" to two families of helpers that mean **different things**:
 
-1. **Physical pin number**, range `0..117`. This is the linear space of the bootrom GPIO crosswalk: `bank * 32 + bit_in_bank`. Bank 0 is `GPIO1`, bank 1 is `GPIO2`, bank 2 is `GPIO3`, bank 3 is `GPIO4`. The driver enforces the maximum value `0x75 = 117` as a bounds check.
+1. **Pin number**, range `0..117`. This is the linear space of the bootrom GPIO crosswalk: `bank * 32 + bit_in_bank`. Bank 0 is `GPIO1`, bank 1 is `GPIO2`, bank 2 is `GPIO3`, bank 3 is `GPIO4`. The driver enforces the maximum value `0x75 = 117` as a bounds check.
 
-2. **Alt function ID**, range `0..56`. This is an unrelated 57-entry index into a function-pointer table in `.data`. Each entry is a small stub. It knows which sharepin-mux bits belong to one specific alt function, and it writes those bits directly. Alt function ID `N` has no relation to physical pin `N`.
+2. **Alt function ID**, range `0..56`. This is an unrelated 57-entry index into a function-pointer table in `.data`. Each entry is a small stub. It knows which sharepin-mux bits belong to one specific alt function, and it writes those bits directly. Alt function ID `N` has no relation to pin `N`.
 
 The two spaces overlap numerically, because both can hold the value 20, for example. This causes endless confusion in decompiler output. A snippet such as `gpio_enable_alt(20)` carries an **alt function ID**, not "GPIO pin 20".
 
 Where the two must coexist in one analysis, these documents use this convention:
 
-- "physical pin", "pin number", or a bank and bit pair (`GPIO1[9]`) means the physical space.
+- "pin number", or a bank and bit pair (`GPIO1[9]`), means the pin space.
 - "alt function ID" or "alt ID" means the 0..56 space.
 
 ## GPIO Register Layout
@@ -51,17 +51,17 @@ The relevant SYSCTRL offsets, all relative to the SYSCTRL base `0x08000000`:
 | +0xF8  | GPIO3 interrupt polarity                                |
 | +0xFC  | GPIO4 interrupt polarity                                |
 
-Physical pin `N` maps to bank `(N >> 5) & 3` and bit `N & 0x1F`. For bank `B`, the direction register is at `SYSCTRL + 0x7C + 8*B`, the output register at `SYSCTRL + 0x80 + 8*B`, the input register at `SYSCTRL + 0xBC + 4*B`, and the aux register at `SYSCTRL + 0x9C + 4*B`.
+Pin `N` maps to bank `(N >> 5) & 3` and bit `N & 0x1F`. For bank `B`, the direction register is at `SYSCTRL + 0x7C + 8*B`, the output register at `SYSCTRL + 0x80 + 8*B`, the input register at `SYSCTRL + 0xBC + 4*B`, and the aux register at `SYSCTRL + 0x9C + 4*B`.
 
 ### GPIO4 Input Data Alignment
 
-The GPIO read helper (`sub_800629BC`) treats bank 3 specially, and only for physical pins `99..117` (`0x63..0x75`). Before it tests the requested bit, it shifts the `SYSCTRL + 0xC8` word left by 3. This aligns `GPIO4[in N]` with logical pin `GPIO4[N+3]`, which matches the `GPIO4[in 5], GPIO4[8]` style entries in the bootrom crosswalk.
+The GPIO read helper (`sub_800629BC`) treats bank 3 specially, and only for pins `99..117` (`0x63..0x75`). Before it tests the requested bit, it shifts the `SYSCTRL + 0xC8` word left by 3. This aligns `GPIO4[in N]` with the output bit `GPIO4[N+3]`, which matches the `GPIO4[in 5], GPIO4[8]` style entries in the bootrom crosswalk.
 
 Pins `96..98` read without that shift. Banks 0 to 2 also read with no adjustment.
 
 ## Driver Function Layer
 
-Every helper reads the SYSCTRL virtual base from one global pointer, set at init time. No absolute SYSCTRL address appears inside a driver function. The parameter named "pin" in this section is the **physical pin number**, 0..117, unless the text says otherwise.
+Every helper reads the SYSCTRL virtual base from one global pointer, set at init time. No absolute SYSCTRL address appears inside a driver function. The parameter named "pin" in this section is the **pin number**, 0..117, unless the text says otherwise.
 
 ### `gpio_bank_config_write(pin, direction)`
 
@@ -77,7 +77,7 @@ Writes the output bit of a pin. A `value == 0` clears the bit, and any other val
 
 ### GPIO read helper
 
-Reads the input bit of a pin and returns it as 0 or 1. It reads from `SYSCTRL + 0xBC + 4*bank`. For physical pins `99..117` it applies the 3-bit left shift above before it tests the bit.
+Reads the input bit of a pin and returns it as 0 or 1. It reads from `SYSCTRL + 0xBC + 4*bank`. For pins `99..117` it applies the 3-bit left shift above before it tests the bit.
 
 ### `gpio_enable_alt(alt_id)`
 
@@ -141,7 +141,7 @@ The `+0xE0..+0xFC` block is the GPIO interrupt controller. EBOOT zeroes it at in
 
 There is no separate pending register. A consumer finds the asserting pin by a comparison of the live input register against the polarity register, for the pins that it enabled.
 
-In `hw_phase1_init`, after `sysctrl_clock_init`, `hw_phase1_step2` and `hw_phase1_step3`, EBOOT enables eight mandatory alt functions. It calls `gpio_enable_alt` with IDs `44, 8, 53, 13, 12, 16, 51, 52`. These IDs are the prerequisites for the later driver inits: NAND, SPI0, SPI2, UART and LCD. The code references them by ID only. This documentation does not tabulate the mapping from ID to physical pin. See `Unresolved` below.
+In `hw_phase1_init`, after `sysctrl_clock_init`, `hw_phase1_step2` and `hw_phase1_step3`, EBOOT enables eight mandatory alt functions. It calls `gpio_enable_alt` with IDs `44, 8, 53, 13, 12, 16, 51, 52`. These IDs are the prerequisites for the later driver inits: NAND, SPI0, SPI2, UART and LCD. The code references them by ID only. This documentation does not tabulate the mapping from ID to pin. See `Unresolved` below.
 
 ## Bank-0 Input Filter Table
 
@@ -151,7 +151,7 @@ In the current clean image this RAM-resident table reads as all `0xFF`. The stat
 
 ## Cross-Reference
 
-[docs/bootrom/gpio-naming-crosswalk.md](../bootrom/gpio-naming-crosswalk.md) documents the mapping between the physical pin number, the SoC pin name on the AK7802 QFP216 schematic, and the board net. That document is authoritative for "which pin is which signal". The driver layer of EBOOT agrees with the crosswalk, and it needs no correction.
+[docs/bootrom/gpio-crosswalk.md](../bootrom/gpio-crosswalk.md) documents the mapping between the pin number, the SoC pin name on the AK7802 QFP216 schematic, and the board net. That document is authoritative for "which pin is which signal". The driver layer of EBOOT agrees with the crosswalk, and it needs no correction.
 
 Key signals that other EBOOT documents reference:
 
@@ -163,6 +163,6 @@ Key signals that other EBOOT documents reference:
 - Pull-up and pull-down registers `SYSCTRL+0x9C..+0xA8`. The single-bit-per-pin encoding is confirmed and the name is the established one, but EBOOT behavior does not confirm the per-bit meaning.
 - GPIO interrupt registers `SYSCTRL+0xE0..+0xFC`. The names are the established ones. No EBOOT driver path exercises them.
 - `SYSCTRL+0xD4`. The bit-level semantics of the bank-0 input filter and wake enable register are unconfirmed.
-- The alt function ID to physical pin mapping. The 57-entry table in `.data` at `0x800F0140` is understood structurally, because each entry is a stub that touches `+0x78` and sometimes `+0x74`, but no complete ID-to-pin table exists yet. To build one, walk all 57 stubs, record the masks that they write, and cross-reference the bit positions against the sharepin assignments.
+- The alt function ID to pin mapping. The 57-entry table in `.data` at `0x800F0140` is understood structurally, because each entry is a stub that touches `+0x78` and sometimes `+0x74`, but no complete ID-to-pin table exists yet. To build one, walk all 57 stubs, record the masks that they write, and cross-reference the bit positions against the sharepin assignments.
 - The alt-function validator table at `0x800F0270`. Structurally this is a runtime interval table that `gpio_table_ready` and `sub_800638CC` walk, but this document does not tabulate the final interval contents.
 - The bank-0 input filter table at `0x800F011C`. This documentation does not tabulate the exact non-`0xFF` values, because the clean binary dump does not preserve the final runtime contents.

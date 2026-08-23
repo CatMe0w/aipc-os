@@ -8,7 +8,7 @@ The WinCE NK image drives it with `dm9000x.dll`, an NDIS miniport built from `la
 
 The controller sits on twelve pins of the `GPIO2` register window, plus one pin of `GPIO4`. The `Z_nSM*` and `HBI_*` net names on the schematic follow a static-memory-controller convention, but they do not describe the AK7802 functions on these pins. Pins 47 through 58 switch as one group between GPIO and the camera interface: `VISCLK`, `VIPCLK`, `VIHREF`, `VIVREF` and `VI_DATA[0:7]`. No shared-pin function gives these twelve pins a third alternative, and `DGPIO0` has no static-bus alternative. Sharepin bit 24 therefore selects camera operation or GPIO operation, and nothing else. The camera mapping does not line up with the `CMD`, `SD0..SD7`, `INT`, `IOR#` and `IOW#` signals of the DM9000, and `CS#` sits on the separate `DGPIO0`. That mapping therefore cannot run these bus cycles.
 
-| Board net   | AK7802 pin | Physical pin | Bank/bit    | DM9000 pin    |
+| Board net   | AK7802 pin | Pin          | Bank/bit    | DM9000 pin    |
 | ----------- | ---------- | ------------ | ----------- | ------------- |
 | `HBI_D0`    | `GPIO48`   | 48           | `GPIO2[16]` | `SD0` (18)    |
 | `HBI_D1`    | `GPIO49`   | 49           | `GPIO2[17]` | `SD1` (17)    |

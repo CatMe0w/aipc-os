@@ -87,7 +87,7 @@ The menu entry wrapper zeroes four specific bytes of menu state, `0x801045F0`, `
 
 3. **`hw_phase1_step2` and `hw_phase1_step3`.** Further early initialization stages. This document does not cover their per-function behavior in detail.
 
-4. **Eight mandatory alt-function enables.** It calls `gpio_enable_alt` with the alt function IDs `44, 8, 53, 13, 12, 16, 51, 52`, in that order. These eight alt functions are the minimum pin routing that the later drivers need: the NAND controller, SPI, UART and LCD. They go on in every boot path. This documentation does not map the physical pin behind each alt ID. See the `Unresolved` entry in [gpio-driver.md](gpio-driver.md).
+4. **Eight mandatory alt-function enables.** It calls `gpio_enable_alt` with the alt function IDs `44, 8, 53, 13, 12, 16, 51, 52`, in that order. These eight alt functions are the minimum pin routing that the later drivers need: the NAND controller, SPI, UART and LCD. They go on in every boot path. This documentation does not map the pin behind each alt ID. See the `Unresolved` entry in [gpio-driver.md](gpio-driver.md).
 
 The respective drivers enable their own alt functions later, not `hw_phase1_init`. Examples are ID `20` for the backlight PWM pad, and ID `51`, which `lcd_init` enables again.
 

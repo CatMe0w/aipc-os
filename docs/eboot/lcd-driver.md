@@ -188,7 +188,7 @@ That gives a 1 kHz backlight PWM at 70% duty. A 100% duty encodes as `high = 0xF
 
 ### PWM Routing
 
-The output of the PWM generator must reach a pad through the alt function mux. `oem_platform_init` does this with `gpio_enable_alt(20)`, where `20` is an **alt function ID**, not a physical pin number. The alt function behind ID `20` is probably the PWM pad routing to physical `GPIO1[9]`, which the bootrom GPIO crosswalk identifies as `WLED_PWM`. See the `Unresolved` section below for the caveat.
+The output of the PWM generator must reach a pad through the alt function mux. `oem_platform_init` does this with `gpio_enable_alt(20)`, where `20` is an **alt function ID**, not a pin number. The alt function behind ID `20` is probably the PWM pad routing to pin `9`, which the bootrom GPIO crosswalk identifies as `WLED_PWM`. See the `Unresolved` section below for the caveat.
 
 ## Framebuffer Placement
 

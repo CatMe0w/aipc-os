@@ -13,6 +13,6 @@ This directory holds reverse-engineered documentation for the AK7802 bootrom.
 - [USB Boot Mode](usb-boot.md): USB boot and download mode behavior, and the host protocol.
 - [AP2-BIOS UART Console](uart-console.md): UART console entry conditions and command interface.
 - [Diagnostic Self-Test Mode](diag-mode.md): factory diagnostic boot mode and self-test behavior.
-- [GPIO Naming Crosswalk](gpio-naming-crosswalk.md): AIPC OS GPIO naming against schematic `GPIOn` / `DGPIOn` naming, and the board nets.
+- [GPIO Crosswalk](gpio-crosswalk.md): the GPIO number, the schematic `GPIOn` and `DGPIOn` pin names, and the board nets.
 
 The function names in these documents are our names from the reverse engineering. [overview.md](overview.md) gives the address of each one.
