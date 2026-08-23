@@ -1,0 +1,63 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CatMe0w <CatMe0w@live.cn>
+Date: Sun, 23 Aug 2026 22:55:22 +0800
+Subject: [PATCH v1 14/14] ARM: anyka: Add power key and GPIO poweroff
+
+---
+ arch/arm/boot/dts/anyka/ak7802-netbook.dts | 17 +++++++++++++++++
+ arch/arm/configs/aipc_defconfig            |  3 +++
+ 2 files changed, 20 insertions(+)
+
+diff --git a/arch/arm/boot/dts/anyka/ak7802-netbook.dts b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
+index f5eb6882e..aef35b16f 100644
+--- a/arch/arm/boot/dts/anyka/ak7802-netbook.dts
++++ b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
+@@ -2,6 +2,7 @@
+ /dts-v1/;
+ 
+ #include <dt-bindings/gpio/gpio.h>
++#include <dt-bindings/input/input.h>
+ #include <dt-bindings/interrupt-controller/irq.h>
+ #include "ak7802.dtsi"
+ 
+@@ -27,6 +28,22 @@ memory@30000000 {
+ 		reg = <0x30000000 0x04000000>;
+ 	};
+ 
++	poweroff {
++		compatible = "gpio-poweroff";
++		gpios = <&gpio 105 GPIO_ACTIVE_LOW>;
++	};
++
++	gpio-keys {
++		compatible = "gpio-keys-polled";
++		poll-interval = <100>;
++
++		key-power {
++			label = "Power";
++			gpios = <&gpio 3 GPIO_ACTIVE_LOW>;
++			linux,code = <KEY_POWER>;
++		};
++	};
++
+ 	enet: ethernet {
+ 		compatible = "davicom,dm9000";
+ 		interrupt-parent = <&gpio>;
+diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
+index 21de3bd89..ee2de0158 100644
+--- a/arch/arm/configs/aipc_defconfig
++++ b/arch/arm/configs/aipc_defconfig
+@@ -37,10 +37,13 @@ CONFIG_DM9000_GPIO_BUS=y
+ # CONFIG_WLAN is not set
+ CONFIG_INPUT_EVDEV=y
+ # CONFIG_KEYBOARD_ATKBD is not set
++CONFIG_KEYBOARD_GPIO_POLLED=y
+ # CONFIG_MOUSE_PS2 is not set
+ # CONFIG_SERIO is not set
+ # CONFIG_HW_RANDOM is not set
+ # CONFIG_PTP_1588_CLOCK is not set
++CONFIG_POWER_RESET=y
++CONFIG_POWER_RESET_GPIO=y
+ # CONFIG_HWMON is not set
+ CONFIG_FB=y
+ CONFIG_FRAMEBUFFER_CONSOLE=y

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Fri, 1 May 2026 10:42:24 +0800
-Subject: [PATCH v1 06/13] usb: ch37x: Add WCH CH37x USB HCD
+Subject: [PATCH v1 06/14] usb: ch37x: Add WCH CH37x USB HCD
 
 ---
  drivers/usb/Makefile         |    1 +

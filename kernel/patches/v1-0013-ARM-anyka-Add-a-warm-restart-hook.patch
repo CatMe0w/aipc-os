@@ -1,12 +1,12 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Sat, 22 Aug 2026 01:59:13 +0800
-Subject: [PATCH v1 13/13] ARM: anyka: Add a warm restart hook
+Subject: [PATCH v1 13/14] ARM: anyka: Add a warm restart hook
 
 ---
  arch/arm/mach-anyka/Makefile  |  2 +-
  arch/arm/mach-anyka/anyka.c   | 12 ++++++++++
- arch/arm/mach-anyka/restart.S | 42 ++++++++++++++++++++++++++++++++++++++++
+ arch/arm/mach-anyka/restart.S | 42 +++++++++++++++++++++++++++++++++++
  3 files changed, 55 insertions(+), 1 deletion(-)
  create mode 100644 arch/arm/mach-anyka/restart.S
 
@@ -49,7 +49,7 @@ index b569d8dce..a56b1317f 100644
  MACHINE_END
 diff --git a/arch/arm/mach-anyka/restart.S b/arch/arm/mach-anyka/restart.S
 new file mode 100644
-index 000000000..8c04c15a3
+index 000000000..41e19d423
 --- /dev/null
 +++ b/arch/arm/mach-anyka/restart.S
 @@ -0,0 +1,42 @@
