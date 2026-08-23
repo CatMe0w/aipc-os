@@ -62,9 +62,9 @@ If the target remains connected, the result words are:
 
 ## Warm restart
 
-`stub/warm_restart.bin` restarts the device through the bootrom. It runs from DRAM at `0x32000000`. It masks the module interrupt sources, it turns off the USB block, then it jumps to the bootrom reset vector at `0x0`.
+`stub/warm_restart.bin` restarts the device through the bootrom. It runs from DRAM at `0x32000000`. It masks the module interrupt sources, it turns off the USB block, then it jumps to the bootrom normal-boot entry at `0x5C`.
 
-See [docs/aipc-os-original/warm-restart.md](../../../docs/aipc-os-original/warm-restart.md) for why each step is there. The USB shutdown is the step that decides whether the restart works.
+See [docs/aipc-os-original/warm-restart.md](../../../docs/aipc-os-original/warm-restart.md) for why each step is there. The USB shutdown is the step that decides whether the restart works. The entry is `0x5C` and not the reset vector at `0x0`, because the reset vector releases the `POWER_ON` hold to sample the boot straps.
 
 ```sh
 make -C baremetal/probes/reset/stub TARGET=warm_restart

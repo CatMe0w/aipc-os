@@ -39,6 +39,8 @@ static void map_memory(void)
 
 void boot_main(void)
 {
+    power_hold();
+
     uart_init();
     log_init();
     log_puts("aipc-boot\n");

@@ -21,6 +21,10 @@
 
 #define NF_TIMING0_BLK0     REG32(0x2002A05Cu)
 
+#define SYSCTRL_GPIO4_DIR   REG32(0x08000094u)
+#define SYSCTRL_GPIO4_OUT   REG32(0x08000098u)
+#define POWER_ON_BIT        0x00000200u   /* GPIO105 = DGPIO3 = POWER_ON */
+
 #define UART_TX_LIMIT       0x00100000u
 
 #define EBOOT_ENTRY         0x30038000
@@ -57,6 +61,13 @@ void uart_putc(char c)
 void l2_init(void)
 {
     L2CTR_DMA_PATH_CFG |= 0x30000000u;
+}
+
+/* Latch the 5 V rail on, so that the user can release the power key. */
+void power_hold(void)
+{
+    SYSCTRL_GPIO4_OUT |= POWER_ON_BIT;
+    SYSCTRL_GPIO4_DIR &= ~POWER_ON_BIT;
 }
 
 void nf_hw_init(void)

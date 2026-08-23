@@ -4,6 +4,8 @@
 void uart_init(void);
 void uart_putc(char c);
 
+void power_hold(void);
+
 void l2_init(void);
 void nf_hw_init(void);
 

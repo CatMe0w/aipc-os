@@ -5,7 +5,11 @@
  * time in ten, because the block stays live and writes L2 SRAM that the
  * bootrom uses for its NAND read buffer and its stack.
  *
- * The reset vector sets its own CPSR and SP, so no register needs a restore.
+ * The entry is 0x5c, the normal-boot path, not the reset vector at 0x0. The
+ * reset vector runs the strap check, and that check forces GPIO104 and GPIO105
+ * back to inputs. GPIO105 is the POWER_ON hold, thus 0x0 cuts the main rail.
+ *
+ * The entry sets its own CPSR and SP, so no register needs a restore.
  *
  * The stage colors are the only output channel left once the target hangs.
  * The LCD keeps scanning the framebuffer out of DRAM with no CPU help, so the
@@ -31,7 +35,7 @@
 #define USB_INTRRX1E         (USB + 0x08u)
 #define USB_INTRUSBE         (USB + 0x0Bu)
 
-#define BOOTROM_RESET_VECTOR 0x00000000u
+#define BOOTROM_NORMAL_BOOT  0x0000005Cu
 
 #define FB_ADDR              0x33B00000u
 #define FB_PIXELS            (800u * 480u)
@@ -67,6 +71,6 @@ void stub_main(void)
     REG32(MULFUN_CON1) &= ~MULFUN_USB_SEL;
     mark(GREEN);
 
-    __asm__ volatile ("mov pc, %0" : : "r"(BOOTROM_RESET_VECTOR));
+    __asm__ volatile ("mov pc, %0" : : "r"(BOOTROM_NORMAL_BOOT));
     __builtin_unreachable();
 }
