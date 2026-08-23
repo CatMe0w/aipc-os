@@ -6,7 +6,7 @@ Subject: [PATCH v1 13/13] ARM: anyka: Add a warm restart hook
 ---
  arch/arm/mach-anyka/Makefile  |  2 +-
  arch/arm/mach-anyka/anyka.c   | 12 ++++++++++
- arch/arm/mach-anyka/restart.S | 42 +++++++++++++++++++++++++++++++++++
+ arch/arm/mach-anyka/restart.S | 42 ++++++++++++++++++++++++++++++++++++++++
  3 files changed, 55 insertions(+), 1 deletion(-)
  create mode 100644 arch/arm/mach-anyka/restart.S
 
@@ -73,7 +73,7 @@ index 000000000..8c04c15a3
 +#define USB_INTRRX1E		0x08
 +#define USB_INTRUSBE		0x0b
 +
-+#define BOOTROM_RESET_VECTOR	0x00000000
++#define BOOTROM_NORMAL_BOOT	0x0000005c
 +
 +	.pushsection	.idmap.text, "ax"
 +	.align	5
@@ -92,6 +92,6 @@ index 000000000..8c04c15a3
 +	bic	r3, r3, #MULFUN_CON1_USB_SEL
 +	str	r3, [r0, #SYSCTRL_MULFUN_CON1]
 +
-+	mov	pc, #BOOTROM_RESET_VECTOR
++	mov	pc, #BOOTROM_NORMAL_BOOT
 +SYM_FUNC_END(anyka_reset)
 +	.popsection
