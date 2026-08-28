@@ -29,7 +29,7 @@ index 9656471ac..008f8b388 100644
 +	status = "okay";
 +};
 diff --git a/arch/arm/boot/dts/anyka/ak7802.dtsi b/arch/arm/boot/dts/anyka/ak7802.dtsi
-index f3bafd793..e37ad790f 100644
+index 61aac4de6..4b8755c01 100644
 --- a/arch/arm/boot/dts/anyka/ak7802.dtsi
 +++ b/arch/arm/boot/dts/anyka/ak7802.dtsi
 @@ -108,6 +108,24 @@ spi0: spi@20024000 {

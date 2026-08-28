@@ -9,7 +9,7 @@ Subject: [PATCH v1 14/14] ARM: anyka: Add power key and GPIO poweroff
  2 files changed, 20 insertions(+)
 
 diff --git a/arch/arm/boot/dts/anyka/ak7802-netbook.dts b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
-index f5eb6882e..aef35b16f 100644
+index f5eb6882e..4904e7d92 100644
 --- a/arch/arm/boot/dts/anyka/ak7802-netbook.dts
 +++ b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
 @@ -2,6 +2,7 @@
@@ -44,10 +44,10 @@ index f5eb6882e..aef35b16f 100644
  		compatible = "davicom,dm9000";
  		interrupt-parent = <&gpio>;
 diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
-index 21de3bd89..ee2de0158 100644
+index a34c6bd2a..0c9dde6f1 100644
 --- a/arch/arm/configs/aipc_defconfig
 +++ b/arch/arm/configs/aipc_defconfig
-@@ -37,10 +37,13 @@ CONFIG_DM9000_GPIO_BUS=y
+@@ -39,10 +39,13 @@ CONFIG_DM9000_GPIO_BUS=y
  # CONFIG_WLAN is not set
  CONFIG_INPUT_EVDEV=y
  # CONFIG_KEYBOARD_ATKBD is not set

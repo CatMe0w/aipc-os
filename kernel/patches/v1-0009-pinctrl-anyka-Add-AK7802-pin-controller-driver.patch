@@ -38,7 +38,7 @@ index 0dea79362..9656471ac 100644
  	anyka,input-clock-hz = <248000000>;
  	status = "okay";
 diff --git a/arch/arm/boot/dts/anyka/ak7802.dtsi b/arch/arm/boot/dts/anyka/ak7802.dtsi
-index dbdf85842..f3bafd793 100644
+index a7c978a6e..61aac4de6 100644
 --- a/arch/arm/boot/dts/anyka/ak7802.dtsi
 +++ b/arch/arm/boot/dts/anyka/ak7802.dtsi
 @@ -19,6 +19,39 @@ sysctrl: system-controller@8000000 {

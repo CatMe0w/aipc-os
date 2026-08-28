@@ -147,7 +147,7 @@ index 000000000..0dea79362
 +};
 diff --git a/arch/arm/boot/dts/anyka/ak7802.dtsi b/arch/arm/boot/dts/anyka/ak7802.dtsi
 new file mode 100644
-index 000000000..dbdf85842
+index 000000000..a7c978a6e
 --- /dev/null
 +++ b/arch/arm/boot/dts/anyka/ak7802.dtsi
 @@ -0,0 +1,86 @@
@@ -200,12 +200,12 @@ index 000000000..dbdf85842
 +		#interrupt-cells = <1>;
 +	};
 +
-+	timer@80000018 {
++	timer@8000018 {
 +		compatible = "anyka,ak880x-timer";
-+		reg = <0x8000018 0x08>, <0x8000100 0x08>;
++		reg = <0x8000018 0x14>, <0x8000100 0x14>;
 +		reg-names = "ctrl", "readback";
 +		interrupt-parent = <&sysctrl_intc>;
-+		interrupts = <5>, <4>;
++		interrupts = <5>;
 +		clocks = <&xin12m>;
 +	};
 +
