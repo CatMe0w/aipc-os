@@ -16,9 +16,10 @@ See [https://aipc-os.catme0w.org/](https://aipc-os.catme0w.org/) for the project
 
 - **[bootrom](docs/bootrom/README.md)**: The mask ROM baked into the AK7802 die. USB boot mode, NAND/SPI boot, UART console, GPIO naming crosswalk, full memory map.
 - **[nboot](docs/nboot/README.md)**: First-stage NAND bootloader. DDR init script, EBOOT loading.
-- **[EBOOT](docs/eboot/README.md)**" WinCE second-stage bootloader. LCD bring-up, ENC28J60 SPI Ethernet, CH374 USB HID keyboard, NAND driver, vendor partition table, TFTP/EDBG download protocol, maintenance mode password and menu, GPIO driver with two independent pin numbering systems, CPU PLL formula.
+- **[EBOOT](docs/eboot/README.md)**: WinCE second-stage bootloader. LCD bring-up, ENC28J60 SPI Ethernet, CH374 USB HID keyboard, NAND driver, vendor partition table, TFTP/EDBG download protocol, maintenance mode password and menu, GPIO driver with two independent pin numbering systems, CPU PLL formula.
 - **[NK](docs/nk/README.md)**: WinCE kernel and vendor drivers.
-- **[AIPC OS Original](docs/aipc-os-original/README.md)**: Original research from us. Johnson–Nyquist noise TRNG, faster SD/MMC driver.
+- **[SoC](docs/soc/README.md)**: AK7802 peripheral hardware reference.
+- **[AIPC OS Original](docs/aipc-os-original/README.md)**: Original research from us. Johnson-Nyquist noise TRNG, faster SD/MMC driver.
 
 Reverse-engineered from scratch.
 

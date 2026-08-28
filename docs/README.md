@@ -8,6 +8,7 @@ This directory holds reverse-engineering notes and reference documents for the A
 - [nboot](nboot/README.md): first-stage bootloader of AIPC netbook firmware v1.58.2 and v1.88, its architecture and boot flow.
 - [eboot](eboot/README.md): second-stage bootloader WinCE EBOOT. Memory map, GPIO, NAND, LCD and Ethernet drivers, partition format, download protocol, and maintenance mode.
 - [nk](nk/README.md): WinCE NK image internals. NK child partition layout, ECEC scatter-load container, ROMHDR and ROM module and file tables, and ROM module PE rebuild.
+- [soc](soc/README.md): AK7802 peripheral hardware reference, recovered by measurement on the device.
 - [aipc-os-original](aipc-os-original/README.md): original research from us. Johnson–Nyquist noise TRNG, faster SD/MMC driver.
 
 ## License
