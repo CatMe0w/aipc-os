@@ -7,9 +7,9 @@ Subject: [PATCH v1 06/14] usb: ch37x: Add WCH CH37x USB HCD
  drivers/usb/Makefile         |    1 +
  drivers/usb/host/Kconfig     |   10 +
  drivers/usb/host/Makefile    |    1 +
- drivers/usb/host/ch37x-hcd.c | 2611 ++++++++++++++++++++++++++++++++++
+ drivers/usb/host/ch37x-hcd.c | 2643 ++++++++++++++++++++++++++++++++++
  drivers/usb/host/ch37x.h     |  168 +++
- 5 files changed, 2791 insertions(+)
+ 5 files changed, 2823 insertions(+)
  create mode 100644 drivers/usb/host/ch37x-hcd.c
  create mode 100644 drivers/usb/host/ch37x.h
 
@@ -60,10 +60,10 @@ index 174580c12..6021cb1d6 100644
  obj-$(CONFIG_USB_EHCI_PCI)	+= ehci-pci.o
 diff --git a/drivers/usb/host/ch37x-hcd.c b/drivers/usb/host/ch37x-hcd.c
 new file mode 100644
-index 000000000..6b6173864
+index 000000000..15a263d56
 --- /dev/null
 +++ b/drivers/usb/host/ch37x-hcd.c
-@@ -0,0 +1,2611 @@
+@@ -0,0 +1,2643 @@
 +/*
 + * USB host controller driver for SPI to USB chip ch370/ch374.
 + *
@@ -92,6 +92,7 @@ index 000000000..6b6173864
 +#include <asm/byteorder.h>
 +#include <linux/of.h>
 +#include <linux/jiffies.h>
++#include <linux/hrtimer.h>
 +#include <linux/module.h>
 +#include <linux/kernel.h>
 +#include <linux/ioport.h>
@@ -314,6 +315,7 @@ index 000000000..6b6173864
 +	int addr;
 +	atomic_t debug_flag;
 +	atomic_t urb_process;
++	ktime_t next_poll; /* earliest deadline among held off endpoints */
 +#ifdef CONFIG_DEBUG_FS
 +	struct dentry *debugfs;
 +	struct dentry *debugfile;
@@ -325,11 +327,12 @@ index 000000000..6b6173864
 +	struct list_head ep_list;
 +	u32 naks;
 +	u8 retransmit; /* packet needs retransmission */
++	ktime_t next_poll; /* do not retry this endpoint before this time */
 +	enum pkt_state pkt_state;
 +	enum pkt_state curr_pkt;
 +};
 +
-+void ch37x_hcd_dbg(struct ch37x_hcd_data *hcd, const char *format, ...)
++static void ch37x_hcd_dbg(struct ch37x_hcd_data *hcd, const char *format, ...)
 +{
 +	va_list args;
 +
@@ -340,7 +343,7 @@ index 000000000..6b6173864
 +	}
 +}
 +
-+void ch37x_hcd_dbg_data(struct ch37x_hcd_data *hcd, const char *format, ...)
++static void ch37x_hcd_dbg_data(struct ch37x_hcd_data *hcd, const char *format, ...)
 +{
 +	va_list args;
 +
@@ -438,7 +441,7 @@ index 000000000..6b6173864
 +	return rxbuf[0];
 +}
 +
-+void Read374Block(struct usb_hcd *hcd, unsigned char mAddr, unsigned char mLen, unsigned char *mBuf)
++static void Read374Block(struct usb_hcd *hcd, unsigned char mAddr, unsigned char mLen, unsigned char *mBuf)
 +{
 +	int ret = 0;
 +	int i = 0;
@@ -463,7 +466,7 @@ index 000000000..6b6173864
 +	ch37x_hcd_dbg_data(ch37x_hcd, "\n");
 +}
 +
-+void Write374Block(struct usb_hcd *hcd, unsigned char mAddr, unsigned char mLen, unsigned char *mBuf)
++static void Write374Block(struct usb_hcd *hcd, unsigned char mAddr, unsigned char mLen, unsigned char *mBuf)
 +{
 +	unsigned char txbuf[256];
 +	int ret = 0;
@@ -1067,11 +1070,14 @@ index 000000000..6b6173864
 +	struct list_head *pos;
 +	unsigned long flags;
 +	int index;
++	ktime_t wake = KTIME_MAX;
++	ktime_t now;
 +	u8 setup_packet_suspend[] = { 0x00, 0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00 };
 +
 +	ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d] begin\n", __func__, __LINE__);
 +
 +	spin_lock_irqsave(&ch37x_hcd->lock, flags);
++	now = ktime_get();
 +	if (list_empty(&ch37x_hcd->ep_list)) {
 +		ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d] list empty now\n", __func__, __LINE__);
 +		spin_unlock_irqrestore(&ch37x_hcd->lock, flags);
@@ -1107,6 +1113,11 @@ index 000000000..6b6173864
 +				}
 +			}
 +		}
++		if (ktime_before(now, ch37x_ep->next_poll)) {
++			if (ktime_before(ch37x_ep->next_poll, wake))
++				wake = ch37x_ep->next_poll;
++			continue;
++		}
 +		/*move current ep to tail*/
 +		list_move_tail(pos, &ch37x_hcd->ep_list);
 +		curr_urb = urb;
@@ -1115,6 +1126,7 @@ index 000000000..6b6173864
 +done:
 +	atomic_set(&ch37x_hcd->urb_process, 0);
 +	if (!curr_urb) {
++		ch37x_hcd->next_poll = wake;
 +		spin_unlock_irqrestore(&ch37x_hcd->lock, flags);
 +		ch37x_hcd_dbg(ch37x_hcd, "%s: curr_urb null here!\n ", __func__);
 +		return 0;
@@ -1269,10 +1281,16 @@ index 000000000..6b6173864
 +	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
 +	struct urb *urb = ch37x_hcd->curr_urb;
 +	struct ch37x_ep *ch37x_ep;
++	unsigned int ms = 1;
 +
 +	ch37x_hcd_dbg(ch37x_hcd, "%s:line[%d] Slow retransmit\n", __func__, __LINE__);
 +	ch37x_ep = urb->ep->hcpriv;
 +	ch37x_ep->retransmit = 1;
++
++	if (usb_endpoint_xfer_int(&urb->ep->desc) || usb_endpoint_xfer_isoc(&urb->ep->desc))
++		ms = max(urb->interval, 1);
++	ch37x_ep->next_poll = ktime_add_ms(ktime_get(), ms);
++
 +	ch37x_hcd->curr_urb = NULL;
 +}
 +
@@ -1782,6 +1800,19 @@ index 000000000..6b6173864
 +	return retval;
 +}
 +
++static void ch37x_wait_for_work(struct ch37x_hcd_data *ch37x_hcd)
++{
++	ktime_t deadline = ch37x_hcd->next_poll;
++
++	if (deadline == KTIME_MAX) {
++		schedule();
++		return;
++	}
++
++	if (ktime_before(ktime_get(), deadline))
++		schedule_hrtimeout_range(&deadline, NSEC_PER_MSEC / 4, HRTIMER_MODE_ABS);
++}
++
 +static void ch37x_spi_thread(struct kthread_work *work)
 +{
 +	struct ch37x_hcd_data *ch37x_hcd = container_of(work, struct ch37x_hcd_data, spi_work);
@@ -1817,11 +1848,12 @@ index 000000000..6b6173864
 +				ch37x_hcd_dbg_data(ch37x_hcd, "%s:new urb_enqueue, dont schedule\n", __func__);
 +				continue;
 +			}
-+			schedule();
++			ch37x_wait_for_work(ch37x_hcd);
 +			set_current_state(TASK_RUNNING);
 +		}
 +
 +		i_worked = 0;
++		ch37x_hcd->next_poll = KTIME_MAX;
 +
 +		if (ch37x_hcd->urb_done)
 +			i_worked |= ch37x_urb_done(hcd);
