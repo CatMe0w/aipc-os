@@ -9,3 +9,4 @@ Provided as-is. May not be in English.
 - [SD/MMC](sd/README.md)
 - [Ethernet](eth/README.md)
 - [NAND read/write](nand/README.md)
+- [SYSCTRL timer semantics](timer-semantics/README.md)
