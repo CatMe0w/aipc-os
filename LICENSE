@@ -6,7 +6,7 @@ The AIPC OS repository is a collection of reverse-engineering tools, bootloaders
 - AIPC DOOM (baremetal/doom/): GNU General Public License v2.0 (GPLv2). See `baremetal/doom/COPYING`.
 - HaRET (sdcard/haret/): GNU General Public License v2.0 (GPLv2). See `sdcard/haret/COPYING`.
 - Documentation (docs/): Creative Commons Attribution-ShareAlike 4.0 (CC-BY-SA 4.0). See `docs/LICENSE`.
-- Talks (talks/): Creative Commons Attribution 4.0 (CC-BY 4.0). See `talks/LICENSE`. This covers our own content only. Third-party material in the slides, such as conference slide templates, event branding, and screenshots of other people's software, keeps its own terms.
+- Talks (talks/): Creative Commons Attribution 4.0 (CC-BY 4.0). See `talks/LICENSE`.
 
 For all other components not covered by a specific license above (unless otherwise stated in their respective directories), the following MIT License applies:
 
