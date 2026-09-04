@@ -17,6 +17,10 @@ sudo cp 99-ak7802.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
+On Windows, bind the WinUSB driver to the device. Use [Zadig](https://zadig.akeo.ie/) and select WinUSB for `Unknown Device #<number>` with USB ID `0471 0666`, or select WinUSB manually in Device Manager.
+
+macOS is not supported. The bootrom does not enumerate on macOS. See [Bootrom Errata](../../docs/bootrom/usb-boot.md#bootrom-errata).
+
 ## Usage
 
 Enter USB boot mode by pulling DGPIO[2] (DL_JUMP or USB_BOOT pin) high on the AK7802 before power-on.

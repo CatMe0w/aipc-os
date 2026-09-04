@@ -33,6 +33,14 @@ class ExecuteTimeoutError(Exception):
     pass
 
 
+def _detach_kernel_driver(dev: usb.core.Device) -> None:
+    try:
+        if dev.is_kernel_driver_active(0):
+            dev.detach_kernel_driver(0)
+    except NotImplementedError: # No need for this on Windows
+        pass
+
+
 class AK7802:
     """
     Represents an open connection to an AK7802 device in USB boot mode.
@@ -41,8 +49,7 @@ class AK7802:
 
     def __init__(self, dev: usb.core.Device) -> None:
         self._dev = dev
-        if dev.is_kernel_driver_active(0):
-            dev.detach_kernel_driver(0)
+        _detach_kernel_driver(dev)
         # USB bus reset: ensures both host and device data toggles are in
         # sync (DATA0).  The AK7802 bootrom does not reset endpoint data
         # toggles on SET_CONFIGURATION - only a bus reset does that at the
@@ -51,8 +58,7 @@ class AK7802:
         # bulk OUT packet is silently discarded by the device.
         dev.reset()
         # After reset the kernel may auto-bind a driver to the interface.
-        if dev.is_kernel_driver_active(0):
-            dev.detach_kernel_driver(0)
+        _detach_kernel_driver(dev)
         dev.set_configuration()
 
     # ------------------------------------------------------------------
