@@ -25,7 +25,7 @@ macOS + GDB: `arm-none-eabi-gdb -ex 'target remote /dev/cu.usbmodem*'`
 
 macOS + LLDB: `lldb -o "process connect serial:///dev/cu.usbmodem*"`
 
-Debian: `gdb-multiarch -ex 'target remote /dev/ttyACM*'`
+Debian: `gdb-multiarch -ex 'target remote /dev/aipc-gdbstub'`
 
 Linux also needs this udev rule:
 
