@@ -1,0 +1,572 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CatMe0w <CatMe0w@live.cn>
+Date: Mon, 7 Sep 2026 20:22:02 -0600
+Subject: [PATCH v1 16/16] Input: anyka-ps2: Add AK7802 touchpad host
+
+---
+ arch/arm/boot/dts/anyka/ak7802-netbook.dts |   9 +
+ arch/arm/boot/dts/anyka/ak7802.dtsi        |  28 +-
+ arch/arm/configs/aipc_defconfig            |   5 +-
+ drivers/input/serio/Kconfig                |  11 +
+ drivers/input/serio/Makefile               |   1 +
+ drivers/input/serio/anyka-ps2.c            | 432 +++++++++++++++++++++
+ 6 files changed, 483 insertions(+), 3 deletions(-)
+ create mode 100644 drivers/input/serio/anyka-ps2.c
+
+diff --git a/arch/arm/boot/dts/anyka/ak7802-netbook.dts b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
+index 4904e7d92..0d1307597 100644
+--- a/arch/arm/boot/dts/anyka/ak7802-netbook.dts
++++ b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
+@@ -128,3 +128,12 @@ &mmc0 {
+ 	anyka,input-clock-hz = <124000000>;
+ 	status = "okay";
+ };
++
++&ps2 {
++	pinctrl-names = "default", "gpio";
++	pinctrl-0 = <&uart1_pins>;
++	pinctrl-1 = <&uart1_gpio_pins>;
++	clk-gpios = <&gpio 14 GPIO_ACTIVE_HIGH>;
++	data-gpios = <&gpio 15 GPIO_ACTIVE_HIGH>;
++	status = "okay";
++};
+diff --git a/arch/arm/boot/dts/anyka/ak7802.dtsi b/arch/arm/boot/dts/anyka/ak7802.dtsi
+index 4b8755c01..b68b63ede 100644
+--- a/arch/arm/boot/dts/anyka/ak7802.dtsi
++++ b/arch/arm/boot/dts/anyka/ak7802.dtsi
+@@ -23,6 +23,16 @@ pinctrl: pinctrl {
+ 		compatible = "anyka,ak7802-pinctrl";
+ 		syscon = <&sysctrl>;
+ 
++		uart1_pins: uart1-pins {
++			function = "uart1";
++			groups = "uart1";
++		};
++
++		uart1_gpio_pins: uart1-gpio-pins {
++			function = "gpio";
++			groups = "uart1-gpio";
++		};
++
+ 		lcd_pins: lcd-pins {
+ 			function = "lcd";
+ 			groups = "lcd";
+@@ -53,7 +63,7 @@ sdio_pins: sdio-pins {
+ 	};
+ 
+ 	gpio: gpio-controller@8000074 {
+-		compatible = "anyka,ak880x-gpio";
++		compatible = "anyka,ak7802-gpio", "anyka,ak880x-gpio";
+ 		reg = <0x8000074 0x8c>;
+ 		interrupt-parent = <&sysctrl_intc>;
+ 		interrupts = <10>;
+@@ -64,6 +74,22 @@ gpio: gpio-controller@8000074 {
+ 		ngpios = <117>;
+ 	};
+ 
++	l2ctrl: system-controller@2002c000 {
++		compatible = "anyka,ak7802-l2ctrl", "syscon";
++		reg = <0x2002c000 0x100>;
++	};
++
++	ps2: ps2@20026000 {
++		compatible = "anyka,ak7802-ps2";
++		reg = <0x20026000 0x10>, <0x48001080 0x80>;
++		reg-names = "uart", "rx-buffer";
++		interrupt-parent = <&main_intc>;
++		interrupts = <16>;
++		syscon = <&sysctrl>;
++		anyka,l2-syscon = <&l2ctrl>;
++		status = "disabled";
++	};
++
+ 	main_intc: interrupt-controller@8000000 {
+ 		compatible = "anyka,ak880x-intc";
+ 		reg = <0x8000000 0x1000>;
+diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
+index 0c9dde6f1..fd56b3fba 100644
+--- a/arch/arm/configs/aipc_defconfig
++++ b/arch/arm/configs/aipc_defconfig
+@@ -40,8 +40,9 @@ CONFIG_DM9000_GPIO_BUS=y
+ CONFIG_INPUT_EVDEV=y
+ # CONFIG_KEYBOARD_ATKBD is not set
+ CONFIG_KEYBOARD_GPIO_POLLED=y
+-# CONFIG_MOUSE_PS2 is not set
+-# CONFIG_SERIO is not set
++CONFIG_MOUSE_PS2=y
++CONFIG_SERIO=y
++CONFIG_SERIO_ANYKA_PS2=y
+ # CONFIG_HW_RANDOM is not set
+ # CONFIG_PTP_1588_CLOCK is not set
+ CONFIG_POWER_RESET=y
+diff --git a/drivers/input/serio/Kconfig b/drivers/input/serio/Kconfig
+index bacab1f58..6ae4185f8 100644
+--- a/drivers/input/serio/Kconfig
++++ b/drivers/input/serio/Kconfig
+@@ -271,6 +271,17 @@ config SERIO_SUN4I_PS2
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called sun4i-ps2.
+ 
++config SERIO_ANYKA_PS2
++	tristate "Anyka AK7802 PS/2 touchpad host"
++	depends on ARCH_ANYKA && GPIOLIB && PINCTRL
++	select MFD_SYSCON
++	help
++	  Use GPIO to send PS/2 commands and UART1 to receive touchpad data.
++	  The serio port supports the standard psmouse driver.
++
++	  To build a module, choose M here.
++	  The module name is anyka-ps2.
++
+ config SERIO_GPIO_PS2
+ 	tristate "GPIO PS/2 bit banging driver"
+ 	depends on GPIOLIB
+diff --git a/drivers/input/serio/Makefile b/drivers/input/serio/Makefile
+index 7f5137dc0..145c64809 100644
+--- a/drivers/input/serio/Makefile
++++ b/drivers/input/serio/Makefile
+@@ -29,5 +29,6 @@ obj-$(CONFIG_SERIO_APBPS2)	+= apbps2.o
+ obj-$(CONFIG_SERIO_OLPC_APSP)	+= olpc_apsp.o
+ obj-$(CONFIG_HYPERV_KEYBOARD)	+= hyperv-keyboard.o
+ obj-$(CONFIG_SERIO_SUN4I_PS2)	+= sun4i-ps2.o
++obj-$(CONFIG_SERIO_ANYKA_PS2)	+= anyka-ps2.o
+ obj-$(CONFIG_SERIO_GPIO_PS2)	+= ps2-gpio.o
+ obj-$(CONFIG_USERIO)		+= userio.o
+diff --git a/drivers/input/serio/anyka-ps2.c b/drivers/input/serio/anyka-ps2.c
+new file mode 100644
+index 000000000..a891e832d
+--- /dev/null
++++ b/drivers/input/serio/anyka-ps2.c
+@@ -0,0 +1,432 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include <linux/bitfield.h>
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/ktime.h>
++#include <linux/mfd/syscon.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/pinctrl/consumer.h>
++#include <linux/platform_device.h>
++#include <linux/regmap.h>
++#include <linux/serio.h>
++#include <linux/slab.h>
++#include <linux/workqueue.h>
++
++#define UART_CTRL		0x00
++#define UART_STATUS		0x04
++#define UART_CONFIG		0x08
++#define UART_THRESHOLD		0x0c
++#define UART_ENABLE		BIT(21)
++#define UART_DIV_HALF		BIT(22)
++#define UART_TIMEOUT_ENABLE	BIT(23)
++#define UART_ODD_PARITY		BIT(26)
++#define UART_RESET		(BIT(28) | BIT(29))
++#define UART_RX_FULL		BIT(1)
++#define UART_RX_TIMEOUT		BIT(2)
++#define UART_RX_ERROR		BIT(3)
++#define UART_RX_READY		BIT(30)
++#define UART_RX_EVENTS		(UART_RX_FULL | UART_RX_TIMEOUT | \
++				 UART_RX_ERROR | UART_RX_READY)
++#define UART_RX_IRQS		(BIT(21) | BIT(22) | BIT(23) | BIT(28))
++#define UART_RX_INDEX		GENMASK(17, 13)
++#define UART_RX_FRACTION		GENMASK(24, 23)
++#define L2_PATH			0x84
++#define L2_UART_PATH		GENMASK(29, 28)
++#define PS2_BAUD			13600
++#define PS2_SEND_NS		(20 * NSEC_PER_MSEC)
++
++struct anyka_ps2 {
++	struct device *dev;
++	struct serio *serio;
++	void __iomem *base;
++	void __iomem *rx_buf;
++	struct regmap *sysctrl;
++	struct regmap *l2;
++	struct pinctrl *pinctrl;
++	struct pinctrl_state *uart_pins;
++	struct pinctrl_state *gpio_pins;
++	struct gpio_desc *clk;
++	struct gpio_desc *data;
++	struct work_struct tx_work;
++	spinlock_t lock;
++	int irq;
++	u32 control;
++	u32 rx_index;
++	u8 tx_byte;
++	bool tx_busy;
++	bool opened;
++};
++
++static irqreturn_t anyka_ps2_irq(int irq, void *cookie)
++{
++	struct anyka_ps2 *ps2 = cookie;
++	irqreturn_t handled = IRQ_NONE;
++	unsigned int pass;
++
++	for (pass = 0; pass < 8; pass++) {
++		u32 status = readl(ps2->base + UART_STATUS);
++		u32 config, next, words, i, n = 0;
++		unsigned int flags = 0;
++		u8 bytes[128];
++
++		/* The word index can advance before receive status is set. */
++		if (!(status & UART_RX_EVENTS))
++			break;
++		handled = IRQ_HANDLED;
++		config = readl(ps2->base + UART_CONFIG);
++		next = FIELD_GET(UART_RX_INDEX, config);
++		words = (next - ps2->rx_index) & 31;
++		if (status & UART_RX_ERROR)
++			flags |= SERIO_FRAME;
++		if (status & UART_RX_FULL) {
++			flags |= SERIO_TIMEOUT;
++			if (!words)
++				words = 32;
++		}
++		if (!(status & (UART_RX_READY | UART_RX_TIMEOUT | UART_RX_FULL)))
++			words = 0;
++
++		for (i = 0; i < words; i++) {
++			u32 word = readl(ps2->rx_buf + ps2->rx_index * 4);
++			u32 count = 4, j;
++
++			if (i + 1 == words && (status & UART_RX_TIMEOUT)) {
++				u32 fraction = FIELD_GET(UART_RX_FRACTION, config);
++
++				if (fraction)
++					count = fraction;
++			}
++			for (j = 0; j < count; j++)
++				bytes[n++] = word >> (8 * j);
++			ps2->rx_index = (ps2->rx_index + 1) & 31;
++		}
++		writel(UART_RX_IRQS | (status & UART_RX_EVENTS),
++		       ps2->base + UART_STATUS);
++		for (i = 0; i < n; i++)
++			serio_interrupt(ps2->serio, bytes[i], flags);
++		if (flags && !n)
++			serio_interrupt(ps2->serio, 0, flags);
++	}
++	return handled;
++}
++
++static int anyka_ps2_wait(struct gpio_desc *gpio, int level, u64 deadline)
++{
++	int value;
++
++	for (;;) {
++		value = gpiod_get_raw_value(gpio);
++		if (value < 0)
++			return value;
++		if (value == level)
++			return 0;
++		if (ktime_get_ns() >= deadline)
++			return -ETIMEDOUT;
++		cpu_relax();
++	}
++}
++
++static int anyka_ps2_data(struct anyka_ps2 *ps2, bool high)
++{
++	return high ? gpiod_direction_input(ps2->data) :
++		      gpiod_direction_output_raw(ps2->data, 0);
++}
++
++static int anyka_ps2_send(struct anyka_ps2 *ps2, u8 byte)
++{
++	u64 deadline = ktime_get_ns() + PS2_SEND_NS;
++	unsigned int bit, parity = 1;
++	int ret;
++
++	ret = gpiod_direction_input(ps2->data);
++	if (ret)
++		return ret;
++	ret = gpiod_direction_input(ps2->clk);
++	if (ret)
++		return ret;
++	ret = anyka_ps2_wait(ps2->clk, 1, deadline);
++	if (ret)
++		return ret;
++	ret = anyka_ps2_wait(ps2->data, 1, deadline);
++	if (ret)
++		return ret;
++	ret = gpiod_direction_output_raw(ps2->clk, 0);
++	if (ret)
++		return ret;
++	udelay(136);
++	ret = anyka_ps2_data(ps2, false);
++	if (ret)
++		return ret;
++	ret = gpiod_direction_input(ps2->clk);
++	if (ret)
++		return ret;
++	ret = anyka_ps2_wait(ps2->clk, 1, deadline);
++	if (ret)
++		return ret;
++	ret = anyka_ps2_wait(ps2->clk, 0, deadline);
++	if (ret)
++		return ret;
++	for (bit = 0; bit < 10; bit++) {
++		bool value = bit < 8 ? !!(byte & BIT(bit)) :
++			     bit == 8 ? parity : true;
++
++		if (bit < 8)
++			parity ^= value;
++		ret = anyka_ps2_data(ps2, value);
++		if (ret)
++			return ret;
++		ret = anyka_ps2_wait(ps2->clk, 1, deadline);
++		if (ret)
++			return ret;
++		ret = anyka_ps2_wait(ps2->clk, 0, deadline);
++		if (ret)
++			return ret;
++	}
++	ret = anyka_ps2_wait(ps2->data, 0, deadline);
++	if (ret)
++		return ret;
++	ret = anyka_ps2_wait(ps2->clk, 1, deadline);
++	if (ret)
++		return ret;
++	ret = anyka_ps2_wait(ps2->data, 1, deadline);
++	if (ret)
++		return ret;
++
++	/* Hold the reply until pinctrl selects the UART input. */
++	return gpiod_direction_output_raw(ps2->clk, 0);
++}
++
++static void anyka_ps2_tx_work(struct work_struct *work)
++{
++	struct anyka_ps2 *ps2 = container_of(work, struct anyka_ps2, tx_work);
++	unsigned long flags;
++	u8 byte;
++	int ret, mux_ret;
++
++	spin_lock_irqsave(&ps2->lock, flags);
++	if (!ps2->opened) {
++		ps2->tx_busy = false;
++		spin_unlock_irqrestore(&ps2->lock, flags);
++		return;
++	}
++	byte = ps2->tx_byte;
++	spin_unlock_irqrestore(&ps2->lock, flags);
++
++	disable_irq(ps2->irq);
++	anyka_ps2_irq(ps2->irq, ps2);
++	ret = pinctrl_select_state(ps2->pinctrl, ps2->gpio_pins);
++	if (!ret) {
++		local_irq_save(flags);
++		ret = anyka_ps2_send(ps2, byte);
++		if (ret) {
++			gpiod_direction_input(ps2->data);
++			gpiod_direction_input(ps2->clk);
++		}
++		local_irq_restore(flags);
++	}
++	mux_ret = pinctrl_select_state(ps2->pinctrl, ps2->uart_pins);
++	if (!ret)
++		ret = mux_ret;
++	spin_lock_irqsave(&ps2->lock, flags);
++	ps2->tx_busy = false;
++	spin_unlock_irqrestore(&ps2->lock, flags);
++	enable_irq(ps2->irq);
++	if (ret)
++		dev_warn_ratelimited(ps2->dev, "command %02x failed: %d\n", byte, ret);
++}
++
++static int anyka_ps2_write(struct serio *serio, unsigned char byte)
++{
++	struct anyka_ps2 *ps2 = serio->port_data;
++	unsigned long flags;
++	int ret = 0;
++
++	spin_lock_irqsave(&ps2->lock, flags);
++	if (!ps2->opened)
++		ret = -ENODEV;
++	else if (ps2->tx_busy)
++		ret = -EBUSY;
++	else {
++		ps2->tx_byte = byte;
++		ps2->tx_busy = true;
++		schedule_work(&ps2->tx_work);
++	}
++	spin_unlock_irqrestore(&ps2->lock, flags);
++	return ret;
++}
++
++static int anyka_ps2_open(struct serio *serio)
++{
++	struct anyka_ps2 *ps2 = serio->port_data;
++	u32 pll, div, asic, half;
++	unsigned long flags;
++	int ret;
++
++	ret = regmap_read(ps2->sysctrl, 4, &pll);
++	if (ret)
++		return ret;
++	div = FIELD_GET(GENMASK(8, 6), pll);
++	asic = 4000000 * (62 + FIELD_GET(GENMASK(5, 0), pll));
++	asic /= 1 + FIELD_GET(GENMASK(20, 17), pll);
++	asic /= div ? BIT(div) : 2;
++	half = (asic * 4 + PS2_BAUD) / (PS2_BAUD * 2);
++	ps2->control = ((half / 2 - 1) & 0xffff) | UART_ENABLE |
++		       UART_TIMEOUT_ENABLE | UART_ODD_PARITY;
++	if (half & 1)
++		ps2->control |= UART_DIV_HALF;
++	ret = regmap_update_bits(ps2->l2, L2_PATH, L2_UART_PATH, L2_UART_PATH);
++	if (ret)
++		return ret;
++	ret = pinctrl_select_state(ps2->pinctrl, ps2->gpio_pins);
++	if (ret)
++		return ret;
++	ret = gpiod_direction_input(ps2->data);
++	if (ret)
++		return ret;
++	ret = gpiod_direction_input(ps2->clk);
++	if (ret)
++		return ret;
++	writel(ps2->control & ~UART_ENABLE, ps2->base + UART_CTRL);
++	writel(ps2->control | UART_RESET, ps2->base + UART_CTRL);
++	writel(0, ps2->base + UART_THRESHOLD);
++	writel(UART_RX_EVENTS, ps2->base + UART_STATUS);
++	ps2->rx_index = FIELD_GET(UART_RX_INDEX, readl(ps2->base + UART_CONFIG));
++	ret = pinctrl_select_state(ps2->pinctrl, ps2->uart_pins);
++	if (ret) {
++		writel(ps2->control & ~UART_ENABLE, ps2->base + UART_CTRL);
++		return ret;
++	}
++	spin_lock_irqsave(&ps2->lock, flags);
++	ps2->opened = true;
++	spin_unlock_irqrestore(&ps2->lock, flags);
++	writel(UART_RX_IRQS, ps2->base + UART_STATUS);
++	enable_irq(ps2->irq);
++	return 0;
++}
++
++static void anyka_ps2_close(struct serio *serio)
++{
++	struct anyka_ps2 *ps2 = serio->port_data;
++	unsigned long flags;
++	bool opened;
++
++	spin_lock_irqsave(&ps2->lock, flags);
++	opened = ps2->opened;
++	ps2->opened = false;
++	spin_unlock_irqrestore(&ps2->lock, flags);
++	if (!opened)
++		return;
++	cancel_work_sync(&ps2->tx_work);
++	disable_irq(ps2->irq);
++	writel(UART_RX_EVENTS, ps2->base + UART_STATUS);
++	writel(ps2->control & ~UART_ENABLE, ps2->base + UART_CTRL);
++	pinctrl_select_state(ps2->pinctrl, ps2->gpio_pins);
++	gpiod_direction_input(ps2->data);
++	gpiod_direction_input(ps2->clk);
++	ps2->tx_busy = false;
++}
++
++static int anyka_ps2_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct anyka_ps2 *ps2;
++	struct serio *serio;
++	int ret;
++
++	ps2 = devm_kzalloc(dev, sizeof(*ps2), GFP_KERNEL);
++	if (!ps2)
++		return -ENOMEM;
++	ps2->dev = dev;
++	ps2->base = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(ps2->base))
++		return PTR_ERR(ps2->base);
++	ps2->rx_buf = devm_platform_ioremap_resource(pdev, 1);
++	if (IS_ERR(ps2->rx_buf))
++		return PTR_ERR(ps2->rx_buf);
++	ps2->sysctrl = syscon_regmap_lookup_by_phandle(dev->of_node, "syscon");
++	if (IS_ERR(ps2->sysctrl))
++		return dev_err_probe(dev, PTR_ERR(ps2->sysctrl), "no sysctrl\n");
++	ps2->l2 = syscon_regmap_lookup_by_phandle(dev->of_node, "anyka,l2-syscon");
++	if (IS_ERR(ps2->l2))
++		return dev_err_probe(dev, PTR_ERR(ps2->l2), "no L2 controller\n");
++	ps2->pinctrl = devm_pinctrl_get(dev);
++	if (IS_ERR(ps2->pinctrl))
++		return dev_err_probe(dev, PTR_ERR(ps2->pinctrl), "no pinctrl\n");
++	ps2->uart_pins = pinctrl_lookup_state(ps2->pinctrl, "default");
++	if (IS_ERR(ps2->uart_pins))
++		return PTR_ERR(ps2->uart_pins);
++	ps2->gpio_pins = pinctrl_lookup_state(ps2->pinctrl, "gpio");
++	if (IS_ERR(ps2->gpio_pins))
++		return PTR_ERR(ps2->gpio_pins);
++	ps2->clk = devm_gpiod_get(dev, "clk", GPIOD_IN);
++	if (IS_ERR(ps2->clk))
++		return dev_err_probe(dev, PTR_ERR(ps2->clk), "no clock GPIO\n");
++	ps2->data = devm_gpiod_get(dev, "data", GPIOD_IN);
++	if (IS_ERR(ps2->data))
++		return dev_err_probe(dev, PTR_ERR(ps2->data), "no data GPIO\n");
++	if (gpiod_cansleep(ps2->clk) || gpiod_cansleep(ps2->data))
++		return -EINVAL;
++	ps2->irq = platform_get_irq(pdev, 0);
++	if (ps2->irq < 0)
++		return ps2->irq;
++	spin_lock_init(&ps2->lock);
++	INIT_WORK(&ps2->tx_work, anyka_ps2_tx_work);
++	serio = kzalloc_obj(*serio);
++	if (!serio)
++		return -ENOMEM;
++	ps2->serio = serio;
++	serio->id.type = SERIO_8042;
++	serio->open = anyka_ps2_open;
++	serio->close = anyka_ps2_close;
++	serio->write = anyka_ps2_write;
++	serio->port_data = ps2;
++	serio->dev.parent = dev;
++	strscpy(serio->name, "AK7802 PS/2 touchpad", sizeof(serio->name));
++	strscpy(serio->phys, dev_name(dev), sizeof(serio->phys));
++	ret = devm_request_irq(dev, ps2->irq, anyka_ps2_irq,
++			       IRQF_NO_THREAD | IRQF_NO_AUTOEN, dev_name(dev), ps2);
++	if (ret) {
++		kfree(serio);
++		return ret;
++	}
++	platform_set_drvdata(pdev, ps2);
++	serio_register_port(serio);
++	return 0;
++}
++
++static void anyka_ps2_remove(struct platform_device *pdev)
++{
++	struct anyka_ps2 *ps2 = platform_get_drvdata(pdev);
++
++	serio_unregister_port(ps2->serio);
++}
++
++static void anyka_ps2_shutdown(struct platform_device *pdev)
++{
++	struct anyka_ps2 *ps2 = platform_get_drvdata(pdev);
++
++	anyka_ps2_close(ps2->serio);
++}
++
++static const struct of_device_id anyka_ps2_of_match[] = {
++	{ .compatible = "anyka,ak7802-ps2" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, anyka_ps2_of_match);
++
++static struct platform_driver anyka_ps2_driver = {
++	.probe = anyka_ps2_probe,
++	.remove = anyka_ps2_remove,
++	.shutdown = anyka_ps2_shutdown,
++	.driver = {
++		.name = "anyka-ps2",
++		.of_match_table = anyka_ps2_of_match,
++	},
++};
++module_platform_driver(anyka_ps2_driver);
++
++MODULE_DESCRIPTION("AK7802 GPIO transmit and UART receive PS/2 host");
++MODULE_LICENSE("GPL");
