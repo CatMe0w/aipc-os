@@ -106,7 +106,7 @@ A write of `CLEAR` alone stops the timer, because it puts `EN` low and the count
 
 The probe wrote a new count with `EN` and no `LOAD`. The live counter kept the earlier value and went on. A write of `LOAD` put the new value in the live counter at once. The first read after `LOAD` was about 10 ticks below the loaded value, which is the cost of the bus access. There was no start up delay beyond that.
 
-[/baremetal/lib/timer.c](/baremetal/lib/timer.c) and the touchpad probes start their timer with no `LOAD`. They work only because the period that was already in the register is large.
+[/baremetal/lib/timer.c](/baremetal/lib/timer.c) starts its timer with no `LOAD`. It works only because the period that was already in the register is large.
 
 ### One write cannot change the count and strobe LOAD
 
