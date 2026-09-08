@@ -104,6 +104,8 @@ writel_relaxed(count | CTRL_EN | CTRL_LOAD, reg);
 
 A periodic timer hides this fault, because it loads once and then acknowledges with no `LOAD`. A one shot timer loads a new count for every event, thus every event interrupts at once and the machine drowns in interrupts.
 
+This behavior has no useful purpose and must be worked around in software. Treat it as a hardware defect.
+
 ## Reading the counter is expensive
 
 A read of a system controller register costs about 580 ns with the caches off, against 65 ns for an empty loop. Two reads cost about twice that. A clocksource read is on a hot path, thus read the live counter once and let the kernel handle the wrap with a 26 bit mask, instead of counting overflows in software.
