@@ -633,8 +633,7 @@ static void handle_bulk_out(void)
 
 void musb_poll(void)
 {
-    /* Sample once. A second read part way through the dispatch can lose a
-     * bit. */
+    /* These registers clear on read. */
     uint8_t intrrx = REG8(USB_INTRRX1);
     uint8_t intrtx = REG8(USB_INTRTX1);
     uint8_t intrusb = REG8(USB_INTRUSB);
@@ -668,7 +667,6 @@ void musb_poll(void)
             if (g_ep0_remaining)
                 ep0_send_chunk();
         }
-        return;
     }
 
     if (intrtx & 0x04u) {
