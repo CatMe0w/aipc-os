@@ -8,8 +8,8 @@ Subject: [PATCH] mmc: anyka: Add AK7802 MCI host driver
  arch/arm/boot/dts/anyka/ak7802.dtsi        |   18 +
  drivers/mmc/host/Kconfig                   |   10 +
  drivers/mmc/host/Makefile                  |    1 +
- drivers/mmc/host/anyka-mmc.c               | 1218 ++++++++++++++++++++
- 5 files changed, 1255 insertions(+)
+ drivers/mmc/host/anyka-mmc.c               | 1235 ++++++++++++++++++++
+ 5 files changed, 1272 insertions(+)
  create mode 100644 drivers/mmc/host/anyka-mmc.c
 
 diff --git a/arch/arm/boot/dts/anyka/ak7802-netbook.dts b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
@@ -92,10 +92,10 @@ index ee412e6b8..728207043 100644
  obj-$(CONFIG_MMC_TOSHIBA_PCI)	+= toshsd.o
 diff --git a/drivers/mmc/host/anyka-mmc.c b/drivers/mmc/host/anyka-mmc.c
 new file mode 100644
-index 000000000..85837f776
+index 000000000..2127c2df7
 --- /dev/null
 +++ b/drivers/mmc/host/anyka-mmc.c
-@@ -0,0 +1,1218 @@
+@@ -0,0 +1,1235 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Anyka AK78/AK88/AK98 MCI host controller driver.
@@ -235,7 +235,7 @@ index 000000000..85837f776
 +	struct completion command_done;
 +	struct completion data_done;
 +	struct completion l2_done;
-+	/* Protects irq_mask. */
++	/* Protects irq_mask and the command/data status snapshots. */
 +	spinlock_t irq_lock;
 +	u32 irq_mask;
 +	u32 command_status;
@@ -318,6 +318,22 @@ index 000000000..85837f776
 +			   value | ANYKA_L2_BUFFER_CLEAR);
 +}
 +
++static void anyka_mmc_l2_enable_irq(struct anyka_mmc *host)
++{
++	u32 value = anyka_mmc_l2_read(host, ANYKA_L2_BUFINTEN);
++
++	anyka_mmc_l2_write(host, ANYKA_L2_BUFINTEN,
++			   value | ANYKA_L2_BUFFER_INTEN);
++}
++
++static void anyka_mmc_l2_disable_irq(struct anyka_mmc *host)
++{
++	u32 value = anyka_mmc_l2_read(host, ANYKA_L2_BUFINTEN);
++
++	anyka_mmc_l2_write(host, ANYKA_L2_BUFINTEN,
++			   value & ~ANYKA_L2_BUFFER_INTEN);
++}
++
 +static void anyka_mmc_l2_configure(struct anyka_mmc *host)
 +{
 +	u32 value;
@@ -339,13 +355,26 @@ index 000000000..85837f776
 +	anyka_mmc_l2_clear_status(host);
 +}
 +
-+static void anyka_mmc_l2_start_dma(struct anyka_mmc *host,
++static int anyka_mmc_data_error(u32 status)
++{
++	if (status & ANYKA_STA_DATATIMEOUT)
++		return -ETIMEDOUT;
++	if (status & ANYKA_DATA_ERROR)
++		return -EILSEQ;
++	return 0;
++}
++
++static int anyka_mmc_l2_start_dma(struct anyka_mmc *host,
 +				   dma_addr_t address, size_t bytes, bool write)
 +{
 +	unsigned long flags;
 +	u32 value;
++	int ret;
 +
-+	local_irq_save(flags);
++	spin_lock_irqsave(&host->irq_lock, flags);
++	ret = anyka_mmc_data_error(host->data_status);
++	if (ret)
++		goto out;
 +	anyka_mmc_l2_write(host, ANYKA_L2_DMA_ADDRESS(ANYKA_L2_BUFFER_ID),
 +			   lower_32_bits(address));
 +	anyka_mmc_l2_write(host, ANYKA_L2_DMA_COUNT(ANYKA_L2_BUFFER_ID),
@@ -368,19 +397,17 @@ index 000000000..85837f776
 +	value &= ~(ANYKA_L2_FRACTION_REQUEST | ANYKA_L2_REQUEST_MASK);
 +	value |= ANYKA_L2_DMAREQ_ENABLE | ANYKA_L2_BUFFER_REQUEST;
 +	anyka_mmc_l2_write(host, ANYKA_L2_DMAREQ, value);
-+	value = anyka_mmc_l2_read(host, ANYKA_L2_BUFINTEN);
-+	value |= ANYKA_L2_BUFFER_INTEN;
-+	anyka_mmc_l2_write(host, ANYKA_L2_BUFINTEN, value);
-+	local_irq_restore(flags);
++	anyka_mmc_l2_enable_irq(host);
++out:
++	spin_unlock_irqrestore(&host->irq_lock, flags);
++	return ret;
 +}
 +
 +static void anyka_mmc_l2_abort_dma(struct anyka_mmc *host)
 +{
 +	u32 value;
 +
-+	value = anyka_mmc_l2_read(host, ANYKA_L2_BUFINTEN);
-+	value &= ~ANYKA_L2_BUFFER_INTEN;
-+	anyka_mmc_l2_write(host, ANYKA_L2_BUFINTEN, value);
++	anyka_mmc_l2_disable_irq(host);
 +
 +	value = anyka_mmc_l2_read(host, ANYKA_L2_DMAREQ);
 +
@@ -447,28 +474,25 @@ index 000000000..85837f776
 +	return 0;
 +}
 +
-+static int anyka_mmc_wait_l2_irq(struct anyka_mmc *host, u32 *out)
++static int anyka_mmc_wait_l2_irq(struct anyka_mmc *host)
 +{
 +	unsigned long timeout = msecs_to_jiffies(ANYKA_TRANSFER_TIMEOUT_MS);
-+	u32 request;
-+	u32 value;
++	bool completed;
++	int ret;
 +
-+	if (!wait_for_completion_timeout(&host->l2_done,
-+					 max_t(unsigned long, timeout, 1))) {
-+		value = anyka_mmc_l2_read(host, ANYKA_L2_BUFINTEN);
-+		value &= ~ANYKA_L2_BUFFER_INTEN;
-+		anyka_mmc_l2_write(host, ANYKA_L2_BUFINTEN, value);
-+		request = anyka_mmc_l2_read(host, ANYKA_L2_DMAREQ);
-+		if (out)
-+			*out = request;
-+		return -ETIMEDOUT;
-+	}
++	completed = wait_for_completion_timeout(&host->l2_done,
++						max_t(unsigned long, timeout, 1));
 +
-+	request = READ_ONCE(host->l2_request);
-+	if (out)
-+		*out = request;
++	/* A data error can stop L2 before its request bit clears. */
++	ret = anyka_mmc_data_error(READ_ONCE(host->data_status));
++	if (!ret && !completed)
++		ret = -ETIMEDOUT;
++	if (!ret && (READ_ONCE(host->l2_request) & ANYKA_L2_BUFFER_REQUEST))
++		ret = -EIO;
++	if (ret)
++		anyka_mmc_l2_disable_irq(host);
 +
-+	return request & ANYKA_L2_BUFFER_REQUEST ? -EIO : 0;
++	return ret;
 +}
 +
 +static irqreturn_t anyka_mmc_irq(int irq, void *data)
@@ -499,8 +523,11 @@ index 000000000..85837f776
 +
 +	if (command_done)
 +		complete(&host->command_done);
-+	if (data_done)
++	if (data_done) {
 +		complete(&host->data_done);
++		if (status & ANYKA_DATA_ERROR)
++			complete(&host->l2_done);
++	}
 +
 +	return command_done || data_done ? IRQ_HANDLED : IRQ_NONE;
 +}
@@ -509,18 +536,16 @@ index 000000000..85837f776
 +{
 +	struct anyka_mmc *host = data;
 +	u32 request;
-+	u32 value;
 +
-+	value = anyka_mmc_l2_read(host, ANYKA_L2_BUFINTEN);
-+	if (!(value & ANYKA_L2_BUFFER_INTEN))
++	if (!(anyka_mmc_l2_read(host, ANYKA_L2_BUFINTEN) &
++	      ANYKA_L2_BUFFER_INTEN))
 +		return IRQ_NONE;
 +
 +	request = anyka_mmc_l2_read(host, ANYKA_L2_DMAREQ);
 +	if (request & ANYKA_L2_BUFFER_REQUEST)
 +		return IRQ_NONE;
 +
-+	value &= ~ANYKA_L2_BUFFER_INTEN;
-+	anyka_mmc_l2_write(host, ANYKA_L2_BUFINTEN, value);
++	anyka_mmc_l2_disable_irq(host);
 +	WRITE_ONCE(host->l2_request, request);
 +	complete(&host->l2_done);
 +
@@ -711,14 +736,17 @@ index 000000000..85837f776
 +	size_t bytes;
 +	u32 datactrl;
 +	u32 total = data->blksz * data->blocks;
++	int ret;
 +
 +	if (dma) {
 +		if (!anyka_mmc_next_dma_chunk(host, &address, &bytes))
 +			return -EIO;
 +		anyka_mmc_prepare_data_irq(host);
 +		anyka_mmc_l2_configure(host);
-+		anyka_mmc_l2_start_dma(host, address, bytes,
-+				       data->flags & MMC_DATA_WRITE);
++		ret = anyka_mmc_l2_start_dma(host, address, bytes,
++					     data->flags & MMC_DATA_WRITE);
++		if (ret)
++			return ret;
 +		anyka_mmc_write(host, ANYKA_MCI_DMACTRL,
 +				ANYKA_DMA_BUFEN |
 +				ANYKA_DMA_SIZE(ANYKA_MCI_BUFFER_WORDS));
@@ -758,10 +786,8 @@ index 000000000..85837f776
 +	for (i = 0; i < words; ) {
 +		status = anyka_mmc_read(host, ANYKA_MCI_STATUS);
 +		observed |= status;
-+		if (status & ANYKA_DATA_ERROR) {
-+			return (status & ANYKA_STA_DATATIMEOUT) ?
-+				-ETIMEDOUT : -EILSEQ;
-+		}
++		if (status & ANYKA_DATA_ERROR)
++			return anyka_mmc_data_error(status);
 +
 +		if ((status & ANYKA_DATA_READY) == ANYKA_DATA_READY) {
 +			buffer[i++] = anyka_mmc_read(host, ANYKA_MCI_FIFO);
@@ -781,8 +807,7 @@ index 000000000..85837f776
 +		status = anyka_mmc_read(host, ANYKA_MCI_STATUS);
 +		observed |= status;
 +		if (status & ANYKA_DATA_ERROR)
-+			return (status & ANYKA_STA_DATATIMEOUT) ?
-+				-ETIMEDOUT : -EILSEQ;
++			return anyka_mmc_data_error(status);
 +		if ((observed & (ANYKA_STA_DATAEND |
 +				 ANYKA_STA_DATABLOCKEND)) ==
 +		    (ANYKA_STA_DATAEND | ANYKA_STA_DATABLOCKEND))
@@ -810,10 +835,8 @@ index 000000000..85837f776
 +	for (i = 0; i < words; ) {
 +		status = anyka_mmc_read(host, ANYKA_MCI_STATUS);
 +		observed |= status;
-+		if (status & ANYKA_DATA_ERROR) {
-+			return (status & ANYKA_STA_DATATIMEOUT) ?
-+				-ETIMEDOUT : -EILSEQ;
-+		}
++		if (status & ANYKA_DATA_ERROR)
++			return anyka_mmc_data_error(status);
 +
 +		if ((status & ANYKA_WRITE_READY) == ANYKA_WRITE_READY) {
 +			anyka_mmc_write(host, ANYKA_MCI_FIFO, buffer[i++]);
@@ -834,8 +857,7 @@ index 000000000..85837f776
 +		status = anyka_mmc_read(host, ANYKA_MCI_STATUS);
 +		observed |= status;
 +		if (status & ANYKA_DATA_ERROR)
-+			return (status & ANYKA_STA_DATATIMEOUT) ?
-+				-ETIMEDOUT : -EILSEQ;
++			return anyka_mmc_data_error(status);
 +		if ((observed & (ANYKA_STA_DATAEND |
 +				 ANYKA_STA_DATABLOCKEND)) ==
 +		    (ANYKA_STA_DATAEND | ANYKA_STA_DATABLOCKEND))
@@ -852,41 +874,36 @@ index 000000000..85837f776
 +{
 +	size_t total = data->blksz * data->blocks;
 +	bool write = data->flags & MMC_DATA_WRITE;
-+	u32 request = 0;
 +	u32 status = 0;
 +	int ret;
 +
 +	for (;;) {
-+		ret = anyka_mmc_wait_l2_irq(host, &request);
++		ret = anyka_mmc_wait_l2_irq(host);
 +		if (ret)
-+			break;
++			return ret;
 +		if (host->dma_submitted < total) {
 +			dma_addr_t address;
 +			size_t bytes;
 +
 +			if (!anyka_mmc_next_dma_chunk(host, &address, &bytes))
 +				return -EIO;
-+			anyka_mmc_l2_start_dma(host, address, bytes, write);
++			ret = anyka_mmc_l2_start_dma(host, address, bytes, write);
++			if (ret)
++				return ret;
 +			continue;
 +		}
 +
 +		ret = anyka_mmc_wait_data_irq(host, &status);
 +		if (ret)
-+			break;
-+		if (status & ANYKA_DATA_ERROR)
-+			return (status & ANYKA_STA_DATATIMEOUT) ?
-+				-ETIMEDOUT : -EILSEQ;
++			return ret;
++		ret = anyka_mmc_data_error(status);
++		if (ret)
++			return ret;
 +		if (!(status & ANYKA_STA_DATAEND) ||
 +		    anyka_mmc_read(host, ANYKA_MCI_DATACNT))
 +			return -EIO;
 +		return 0;
 +	}
-+
-+	dev_err(host->dev,
-+		"data DMA timeout, sta=0x%08x req=0x%08x cnt=%u\n",
-+		READ_ONCE(host->data_status), request,
-+		anyka_mmc_read(host, ANYKA_MCI_DATACNT));
-+	return ret;
 +}
 +
 +static int anyka_mmc_read_data(struct anyka_mmc *host, struct mmc_data *data)
