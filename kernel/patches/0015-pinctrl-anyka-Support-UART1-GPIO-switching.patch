@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Mon, 7 Sep 2026 20:22:02 -0600
-Subject: [PATCH v1 15/16] pinctrl: anyka: Support UART1 GPIO switching
+Subject: [PATCH] pinctrl: anyka: Support UART1 GPIO switching
 
 ---
  drivers/gpio/Kconfig            |  1 +

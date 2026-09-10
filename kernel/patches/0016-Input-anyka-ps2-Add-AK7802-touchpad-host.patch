@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Mon, 7 Sep 2026 20:22:02 -0600
-Subject: [PATCH v1 16/16] Input: anyka-ps2: Add AK7802 touchpad host
+Subject: [PATCH] Input: anyka-ps2: Add AK7802 touchpad host
 
 ---
  arch/arm/boot/dts/anyka/ak7802-netbook.dts |   9 +

@@ -72,7 +72,7 @@ jobs:
       - name: Apply patches
         working-directory: linux
         run: |
-          for p in ../kernel/patches/v1-*.patch; do
+          for p in ../kernel/patches/*.patch; do
             echo "applying $(basename "$p")"
             patch -p1 --forward < "$p"
           done

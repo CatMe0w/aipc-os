@@ -13,7 +13,7 @@ mkdir -p build && cd build
 curl -fSLO https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.2.tar.xz
 tar -xf linux-7.2.tar.xz
 cd linux-7.2
-for p in ../../patches/v1-*.patch; do patch -p1 --forward < "$p"; done
+for p in ../../patches/*.patch; do patch -p1 --forward < "$p"; done
 ```
 
 Then proceed to the build section below.
@@ -26,14 +26,14 @@ Use this method if you want to change the patches. `git am` keeps each patch as 
 mkdir -p build && cd build
 git clone --depth 1 --branch v7.2 --single-branch https://github.com/torvalds/linux
 cd linux
-git am ../../patches/v1-*.patch
+git am ../../patches/*.patch
 ```
 
 To export the patches:
 
 ```
-rm -f ../../patches/v1-*.patch
-git format-patch -v1 --zero-commit --no-signature -o ../../patches v7.2..HEAD
+rm -f ../../patches/*.patch
+git format-patch --no-numbered --zero-commit --no-signature -o ../../patches v7.2..HEAD
 ```
 
 ## Build

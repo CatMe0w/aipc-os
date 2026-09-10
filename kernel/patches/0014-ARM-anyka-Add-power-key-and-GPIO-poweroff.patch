@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Sun, 23 Aug 2026 22:55:22 +0800
-Subject: [PATCH v1 14/14] ARM: anyka: Add power key and GPIO poweroff
+Subject: [PATCH] ARM: anyka: Add power key and GPIO poweroff
 
 ---
  arch/arm/boot/dts/anyka/ak7802-netbook.dts | 17 +++++++++++++++++
