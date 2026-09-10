@@ -127,18 +127,18 @@ index 76a6fce3a..03957780c 100644
  	{ }
  };
 diff --git a/drivers/pinctrl/pinctrl-anyka.c b/drivers/pinctrl/pinctrl-anyka.c
-index 19b2eef27..9b325fd0a 100644
+index 039ee4fe8..1f013785c 100644
 --- a/drivers/pinctrl/pinctrl-anyka.c
 +++ b/drivers/pinctrl/pinctrl-anyka.c
-@@ -130,6 +130,7 @@ static const unsigned int nand_pins[] = { 30, 31, 32, 33, 34, 35, 36, 37 };
+@@ -131,6 +131,7 @@ static const unsigned int nand_pins[] = { 30, 31, 32, 33, 34, 35, 36, 37 };
  static const unsigned int sdmmc1_pins[] = { 30, 31, 32, 33, 34, 35, 36, 37 };
  static const unsigned int sdmmc2_pins[] = { 72, 73, 74, 75 };
- static const unsigned int sdio_pins[] = { 14, 15, 16, 17, 28, 29 };
+ static const unsigned int sdio_pins[] = { 24, 25, 26, 27, 28, 29 };
 +static const unsigned int uart1_pins[] = { 14, 15 };
  static const unsigned int spi1_pins[] = { 76, 77, 78, 79 };
  
  static const struct anyka_pmx_reg lcd_regs[] = {
-@@ -161,7 +162,18 @@ static const struct anyka_pmx_reg spi1_regs[] = {
+@@ -162,7 +163,18 @@ static const struct anyka_pmx_reg spi1_regs[] = {
  	  BIT(30) | BIT(4) },
  };
  
@@ -157,7 +157,7 @@ index 19b2eef27..9b325fd0a 100644
  	{ "lcd", lcd_pins, ARRAY_SIZE(lcd_pins), lcd_regs, ARRAY_SIZE(lcd_regs) },
  	{ "nand", nand_pins, ARRAY_SIZE(nand_pins), nand_regs, ARRAY_SIZE(nand_regs) },
  	{ "sdmmc1", sdmmc1_pins, ARRAY_SIZE(sdmmc1_pins), sdmmc1_regs, ARRAY_SIZE(sdmmc1_regs) },
-@@ -176,7 +188,12 @@ static const char * const sdmmc_groups[] = { "sdmmc1", "sdmmc2" };
+@@ -177,7 +189,12 @@ static const char * const sdmmc_groups[] = { "sdmmc1", "sdmmc2" };
  static const char * const sdio_groups[] = { "sdio" };
  static const char * const spi1_groups[] = { "spi1" };
  

@@ -9,10 +9,10 @@ Subject: [PATCH] pinctrl: anyka: Add AK7802 pin controller driver
  arch/arm/mach-anyka/Kconfig                |   2 +
  drivers/pinctrl/Kconfig                    |  13 +
  drivers/pinctrl/Makefile                   |   1 +
- drivers/pinctrl/pinctrl-anyka.c            | 368 +++++++++++++++++++++
+ drivers/pinctrl/pinctrl-anyka.c            | 375 +++++++++++++++++++++
  drivers/spi/spi-ak88.c                     |  46 ---
  drivers/video/fbdev/anyka-lcdfb.c          |  10 -
- 8 files changed, 421 insertions(+), 56 deletions(-)
+ 8 files changed, 428 insertions(+), 56 deletions(-)
  create mode 100644 drivers/pinctrl/pinctrl-anyka.c
 
 diff --git a/arch/arm/boot/dts/anyka/ak7802-netbook.dts b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
@@ -132,10 +132,10 @@ index a35d71135..0bb9c7620 100644
  obj-$(CONFIG_PINCTRL_AT91)	+= pinctrl-at91.o
 diff --git a/drivers/pinctrl/pinctrl-anyka.c b/drivers/pinctrl/pinctrl-anyka.c
 new file mode 100644
-index 000000000..19b2eef27
+index 000000000..039ee4fe8
 --- /dev/null
 +++ b/drivers/pinctrl/pinctrl-anyka.c
-@@ -0,0 +1,368 @@
+@@ -0,0 +1,375 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * GPIO sharepin controller support for Anyka AK78/AK88/AK98 SoCs.
@@ -170,6 +170,7 @@ index 000000000..19b2eef27
 +#define ANYKA_PULLDOWN1		0x09c
 +#define ANYKA_PULLDOWN2		0x0a0
 +#define ANYKA_PULLDOWN3		0x0a4
++#define ANYKA_IOCTRL1		0x0d4
 +
 +struct anyka_pmx_reg {
 +	u32 offset;
@@ -267,7 +268,7 @@ index 000000000..19b2eef27
 +static const unsigned int nand_pins[] = { 30, 31, 32, 33, 34, 35, 36, 37 };
 +static const unsigned int sdmmc1_pins[] = { 30, 31, 32, 33, 34, 35, 36, 37 };
 +static const unsigned int sdmmc2_pins[] = { 72, 73, 74, 75 };
-+static const unsigned int sdio_pins[] = { 14, 15, 16, 17, 28, 29 };
++static const unsigned int sdio_pins[] = { 24, 25, 26, 27, 28, 29 };
 +static const unsigned int spi1_pins[] = { 76, 77, 78, 79 };
 +
 +static const struct anyka_pmx_reg lcd_regs[] = {
@@ -404,12 +405,18 @@ index 000000000..19b2eef27
 +							 ANYKA_PULLDOWN2,
 +							 GENMASK(8, 7),
 +							 GENMASK(8, 7));
-+			else if (!strcmp(name, "sdio"))
++			else if (!strcmp(name, "sdio")) {
++				/* CMD and CLK use the opposite pull polarity. */
 +				ret = regmap_update_bits(ap->syscon,
 +							 ANYKA_PULLDOWN1,
-+							 GENMASK(29, 26),
-+							 GENMASK(29, 26));
-+			else
++							 GENMASK(29, 24),
++							 GENMASK(27, 24));
++				if (!ret)
++					ret = regmap_update_bits(ap->syscon,
++								 ANYKA_IOCTRL1,
++								 GENMASK(25, 22),
++								 GENMASK(25, 22));
++			} else
 +				ret = -EOPNOTSUPP;
 +			break;
 +		default:
