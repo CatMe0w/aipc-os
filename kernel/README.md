@@ -2,49 +2,38 @@
 
 Patches against Linux v7.2 (`8d3ae59288f1e7d58d76558a6ee96d533bc5019f`).
 
-Choose one of the two methods below to build the kernel. Run every command in this file from the `kernel/` directory.
+## Build
 
-## Source: tarball
+Run `kernel/build.sh` to build the kernel. The result is `kernel/build/zImage`.
 
-Use this method if you only want a `zImage`. The CI build uses it.
+That file is what both boot paths load. Put it in the root of the FAT partition.
 
-```
-mkdir -p build && cd build
-curl -fSLO https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.2.tar.xz
-tar -xf linux-7.2.tar.xz
-cd linux-7.2
-for p in ../../patches/*.patch; do patch -p1 --forward < "$p"; done
-```
+## Work on the patches
 
-Then proceed to the build section below.
+```sh
+# Fetch the firmware
+./kernel/build.sh --firmware-only
 
-## Source: git
-
-Use this method if you want to change the patches. `git am` keeps each patch as a commit, so you can edit the series and export it again.
-
-```
-mkdir -p build && cd build
+# Fetch the Linux source
+cd kernel/build
 git clone --depth 1 --branch v7.2 --single-branch https://github.com/torvalds/linux
 cd linux
 git am ../../patches/*.patch
+
+# Build the kernel
+make ARCH=arm CROSS_COMPILE=arm-linux-gnueabi- aipc_defconfig
+make ARCH=arm CROSS_COMPILE=arm-linux-gnueabi- -j"$(nproc)"
+cat arch/arm/boot/zImage arch/arm/boot/dts/anyka/ak7802-netbook.dtb > ../zImage
 ```
 
-To export the patches:
+`--firmware-only` puts the firmware in `kernel/build/firmware`. That directory must stay next to the Linux source tree, so copy it there too if you clone Linux somewhere else.
 
-```
+To export the patches again:
+
+```sh
 rm -f ../../patches/*.patch
 git format-patch --no-numbered --zero-commit --no-signature -o ../../patches v7.2..HEAD
 ```
-
-## Build
-
-```
-make ARCH=arm CROSS_COMPILE=arm-linux-gnueabi- aipc_defconfig
-make ARCH=arm CROSS_COMPILE=arm-linux-gnueabi- -j"$(nproc)"
-cat arch/arm/boot/zImage arch/arm/boot/dts/anyka/ak7802-netbook.dtb > zImage
-```
-
-That file is what both boot paths load. Put it in the root of the FAT partition.
 
 ## Caveats
 
@@ -65,3 +54,5 @@ That matches the SD card image built by [sdcard](../sdcard/README.md), where par
 ## License
 
 GPLv2. See [COPYING](COPYING).
+
+The firmware is not under the GPL. See [LICENCE.atheros_firmware](LICENCE.atheros_firmware) for its license.

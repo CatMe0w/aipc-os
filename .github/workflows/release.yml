@@ -61,39 +61,18 @@ jobs:
       - name: Install toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-arm-linux-gnueabi bc flex bison libssl-dev
-
-      - name: Fetch Linux
-        run: |
-          curl -fSL -o linux.tar.xz https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.2.tar.xz
-          tar -xf linux.tar.xz
-          mv linux-7.2 linux
-
-      - name: Apply patches
-        working-directory: linux
-        run: |
-          for p in ../kernel/patches/*.patch; do
-            echo "applying $(basename "$p")"
-            patch -p1 --forward < "$p"
-          done
+          sudo apt-get install -y bc bison build-essential curl flex gcc-arm-linux-gnueabi libssl-dev xz-utils
 
       - name: Build
-        working-directory: linux
         env:
-          ARCH: arm
-          CROSS_COMPILE: arm-linux-gnueabi-
           LOCALVERSION: -aipc-${{ github.ref_name }}
-        run: |
-          make aipc_defconfig
-          make -j"$(nproc)"
-          cat arch/arm/boot/zImage \
-              arch/arm/boot/dts/anyka/ak7802-netbook.dtb > ../zImage
+        run: ./kernel/build.sh
 
       - uses: actions/upload-artifact@v7
         with:
           name: kernel
           if-no-files-found: error
-          path: zImage
+          path: kernel/build/zImage
 
   haret:
     name: HaRET
