@@ -1,0 +1,1089 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CatMe0w <CatMe0w@live.cn>
+Date: Thu, 10 Sep 2026 16:55:07 -0600
+Subject: [PATCH] ath6kl: Add AR6002 hw 2.0 support
+
+---
+ arch/arm/configs/aipc_defconfig            |   2 +
+ drivers/net/wireless/ath/ath6kl/Kconfig    |   9 +-
+ drivers/net/wireless/ath/ath6kl/Makefile   |   1 +
+ drivers/net/wireless/ath/ath6kl/ar6002.c   | 351 +++++++++++++++++++++
+ drivers/net/wireless/ath/ath6kl/bmi.h      |   1 +
+ drivers/net/wireless/ath/ath6kl/cfg80211.c |  31 +-
+ drivers/net/wireless/ath/ath6kl/core.c     |   8 +-
+ drivers/net/wireless/ath/ath6kl/core.h     |  35 +-
+ drivers/net/wireless/ath/ath6kl/hif.c      |   6 +-
+ drivers/net/wireless/ath/ath6kl/htc_mbox.c |   7 +
+ drivers/net/wireless/ath/ath6kl/init.c     |  45 ++-
+ drivers/net/wireless/ath/ath6kl/main.c     |   6 +-
+ drivers/net/wireless/ath/ath6kl/sdio.c     |  16 +
+ drivers/net/wireless/ath/ath6kl/target.h   |   5 +-
+ drivers/net/wireless/ath/ath6kl/txrx.c     |  22 +-
+ drivers/net/wireless/ath/ath6kl/wmi.c      |  78 ++++-
+ include/linux/mmc/sdio_ids.h               |   1 +
+ 17 files changed, 587 insertions(+), 37 deletions(-)
+ create mode 100644 drivers/net/wireless/ath/ath6kl/ar6002.c
+
+diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
+index 4fa4e9fc6..7befab846 100644
+--- a/arch/arm/configs/aipc_defconfig
++++ b/arch/arm/configs/aipc_defconfig
+@@ -29,6 +29,8 @@ CONFIG_IP_MULTICAST=y
+ # CONFIG_WIRELESS is not set
+ CONFIG_DEVTMPFS=y
+ CONFIG_DEVTMPFS_MOUNT=y
++CONFIG_EXTRA_FIRMWARE="ath6k/AR6002/athwlan.bin.z77 ath6k/AR6002/data.patch.hw2_0.bin ath6k/AR6002/eeprom.bin ath6k/AR6002/eeprom.data"
++CONFIG_EXTRA_FIRMWARE_DIR="../firmware"
+ CONFIG_BLK_DEV_LOOP=y
+ CONFIG_SCSI=y
+ CONFIG_BLK_DEV_SD=y
+diff --git a/drivers/net/wireless/ath/ath6kl/Kconfig b/drivers/net/wireless/ath/ath6kl/Kconfig
+index cd96cf8d9..381ced614 100644
+--- a/drivers/net/wireless/ath/ath6kl/Kconfig
++++ b/drivers/net/wireless/ath/ath6kl/Kconfig
+@@ -4,12 +4,13 @@ config ATH6KL
+ 	depends on CFG80211
+ 	help
+ 	  This module adds core support for wireless adapters based on
+-	  Atheros AR6003 and AR6004 chipsets. You still need separate
+-	  bus drivers for USB and SDIO to be able to use real devices.
++	  Atheros AR6002, AR6003 and AR6004 chipsets. You still need
++	  separate bus drivers for USB and SDIO to be able to use real
++	  devices.
+ 
+ 	  If you choose to build it as a module, it will be called
+-	  ath6kl_core. Please note that AR6002 and AR6001 are not
+-	  supported by this driver.
++	  ath6kl_core. Please note that AR6001 is not supported by this
++	  driver.
+ 
+ config ATH6KL_SDIO
+ 	tristate "Atheros ath6kl SDIO support"
+diff --git a/drivers/net/wireless/ath/ath6kl/Makefile b/drivers/net/wireless/ath/ath6kl/Makefile
+index dc2b3b467..ca15dd4e0 100644
+--- a/drivers/net/wireless/ath/ath6kl/Makefile
++++ b/drivers/net/wireless/ath/ath6kl/Makefile
+@@ -30,6 +30,7 @@ ath6kl_core-y += htc_pipe.o
+ ath6kl_core-y += bmi.o
+ ath6kl_core-y += cfg80211.o
+ ath6kl_core-y += init.o
++ath6kl_core-y += ar6002.o
+ ath6kl_core-y += main.o
+ ath6kl_core-y += txrx.o
+ ath6kl_core-y += wmi.o
+diff --git a/drivers/net/wireless/ath/ath6kl/ar6002.c b/drivers/net/wireless/ath/ath6kl/ar6002.c
+new file mode 100644
+index 000000000..007a2f72e
+--- /dev/null
++++ b/drivers/net/wireless/ath/ath6kl/ar6002.c
+@@ -0,0 +1,351 @@
++// SPDX-License-Identifier: ISC
++/*
++ * AR6002 firmware download and legacy WMI encoding.
++ *
++ * Copyright (c) 2026 CatMe0w
++ */
++
++#include <linux/firmware.h>
++#include <linux/unaligned.h>
++#include <linux/vmalloc.h>
++
++#include "core.h"
++#include "debug.h"
++#include "hif.h"
++#include "target.h"
++
++#define AR6002_CONNECT_CMD_LEN		52
++#define AR6002_ADD_CIPHER_KEY_CMD_LEN	51
++#define AR6002_CREATE_PSTREAM_CMD_LEN	64
++#define AR6002_POWER_PARAMS_CMD_LEN	6
++#define AR6002_LPREAMBLE_CMD_LEN	1
++
++static int ath6kl_ar6002_get_blob(struct ath6kl *ar, const char *name,
++				  bool use_vmalloc, u8 **data, size_t *len)
++{
++	const struct firmware *fw;
++	int ret;
++
++	ret = request_firmware(&fw, name, ar->dev);
++	if (ret) {
++		ath6kl_err("failed to get %s: %d\n", name, ret);
++		return ret;
++	}
++
++	*data = use_vmalloc ? vmalloc(fw->size) : kmalloc(fw->size, GFP_KERNEL);
++	if (*data) {
++		memcpy(*data, fw->data, fw->size);
++		*len = fw->size;
++	}
++
++	release_firmware(fw);
++
++	return *data ? 0 : -ENOMEM;
++}
++
++int ath6kl_ar6002_fetch_firmware(struct ath6kl *ar)
++{
++	int ret;
++
++	if (ar->testmode)
++		return -EOPNOTSUPP;
++
++	ret = ath6kl_ar6002_get_blob(ar, AR6002_FW_DIR "/" AR6002_FIRMWARE_FILE,
++				     true, &ar->fw, &ar->fw_len);
++	if (ret)
++		return ret;
++
++	ret = ath6kl_ar6002_get_blob(ar, AR6002_FW_DIR "/" AR6002_PATCH_FILE,
++				     false, &ar->fw_patch, &ar->fw_patch_len);
++	if (ret)
++		return ret;
++
++	ar->fw_api = 1;
++
++	return 0;
++}
++
++static int ath6kl_ar6002_eeprom_helper(struct ath6kl *ar)
++{
++	u8 *data = NULL, *code = NULL;
++	size_t data_len, code_len;
++	u32 result;
++	int ret;
++
++	ret = ath6kl_ar6002_get_blob(ar, AR6002_FW_DIR "/" AR6002_EEPROM_DATA_FILE,
++				     false, &data, &data_len);
++	if (ret)
++		goto out;
++	ret = ath6kl_ar6002_get_blob(ar, AR6002_FW_DIR "/" AR6002_EEPROM_FILE,
++				     false, &code, &code_len);
++	if (ret)
++		goto out;
++
++	ret = ath6kl_bmi_write(ar, 0x502070, data, data_len);
++	if (ret)
++		goto out;
++	ret = ath6kl_bmi_write(ar, 0x513950, code, code_len);
++	if (ret)
++		goto out;
++
++	ret = ath6kl_bmi_execute(ar, 0x913950, &result);
++out:
++	if (ret)
++		ath6kl_err("failed to run the AR6002 eeprom helper: %d\n", ret);
++
++	kfree(code);
++	kfree(data);
++
++	return ret;
++}
++
++int ath6kl_ar6002_upload(struct ath6kl *ar)
++{
++	u32 options, sleep, ext_clock;
++	int ret, restore;
++
++	ret = ath6kl_bmi_reg_read(ar, MBOX_BASE_ADDRESS + LOCAL_SCRATCH_ADDRESS,
++				  &options);
++	if (ret)
++		return ret;
++	ret = ath6kl_bmi_reg_read(ar, RTC_BASE_ADDRESS + SYSTEM_SLEEP_ADDRESS,
++				  &sleep);
++	if (ret)
++		return ret;
++
++	ret = ath6kl_bmi_reg_write(ar, MBOX_BASE_ADDRESS + LOCAL_SCRATCH_ADDRESS,
++				   options | ATH6KL_OPTION_SLEEP_DISABLE);
++	if (ret)
++		goto restore_sleep;
++	ret = ath6kl_bmi_reg_write(ar, RTC_BASE_ADDRESS + SYSTEM_SLEEP_ADDRESS,
++				   sleep | SM(SYSTEM_SLEEP_DISABLE, 1));
++	if (ret)
++		goto restore_sleep;
++
++	ret = ath6kl_bmi_reg_write(ar, RTC_BASE_ADDRESS + CPU_CLOCK_ADDRESS,
++				   SM(CPU_CLOCK_STANDARD, 0));
++	if (ret)
++		goto restore_sleep;
++
++	ret = ath6kl_bmi_read_hi32(ar, hi_ext_clk_detected, &ext_clock);
++	if (ret)
++		goto restore_sleep;
++	if (!ext_clock) {
++		ret = ath6kl_bmi_reg_write(ar, RTC_BASE_ADDRESS + LPO_CAL_ADDRESS,
++					   SM(LPO_CAL_ENABLE, 1));
++		if (ret)
++			goto restore_sleep;
++	}
++
++	ret = ath6kl_ar6002_eeprom_helper(ar);
++	if (ret)
++		goto restore_sleep;
++
++	ret = ath6kl_bmi_fast_download(ar, ar->hw.app_load_addr,
++				       ar->fw, ar->fw_len);
++	if (ret)
++		goto restore_sleep;
++	ret = ath6kl_bmi_set_app_start(ar, ar->hw.app_start_override_addr);
++	if (ret)
++		goto restore_sleep;
++
++	ret = ath6kl_bmi_write(ar, ar->hw.dataset_patch_addr,
++			       ar->fw_patch, ar->fw_patch_len);
++	if (ret)
++		goto restore_sleep;
++	ret = ath6kl_bmi_write_hi32(ar, hi_dset_list_head,
++				    ar->hw.dataset_patch_addr);
++
++restore_sleep:
++	restore = ath6kl_bmi_reg_write(ar, RTC_BASE_ADDRESS + SYSTEM_SLEEP_ADDRESS,
++				       sleep);
++	if (!ret)
++		ret = restore;
++	restore = ath6kl_bmi_reg_write(ar, MBOX_BASE_ADDRESS + LOCAL_SCRATCH_ADDRESS,
++				       options);
++	if (!ret)
++		ret = restore;
++
++	return ret;
++}
++
++static int ath6kl_ar6002_crypto(u8 type)
++{
++	switch (type) {
++	case NONE_CRYPT:
++		return 1;
++	case WEP_CRYPT:
++		return 2;
++	case TKIP_CRYPT:
++		return 3;
++	case AES_CRYPT:
++		return 4;
++	default:
++		return -EOPNOTSUPP;
++	}
++}
++
++int ath6kl_ar6002_wmi_encode(struct sk_buff *skb, enum wmi_cmd_id id)
++{
++	struct wmi_connect_cmd *connect = (void *)skb->data;
++	struct wmi_add_cipher_key_cmd *key = (void *)skb->data;
++	int pairwise, group, auth;
++
++	switch (id) {
++	case WMI_CONNECT_CMDID:
++		if (skb->len != sizeof(*connect) ||
++		    connect->nw_type != INFRA_NETWORK || connect->nw_subtype ||
++		    le32_to_cpu(connect->ctrl_flags) & ~0x3f)
++			return -EOPNOTSUPP;
++		switch (connect->auth_mode) {
++		case NONE_AUTH:
++			auth = 1;
++			break;
++		case WPA2_AUTH:
++			auth = 4;
++			break;
++		case WPA2_PSK_AUTH:
++			auth = 5;
++			break;
++		default:
++			return -EOPNOTSUPP;
++		}
++		pairwise = ath6kl_ar6002_crypto(connect->prwise_crypto_type);
++		group = ath6kl_ar6002_crypto(connect->grp_crypto_type);
++		if (pairwise < 0 || group < 0)
++			return -EOPNOTSUPP;
++		connect->auth_mode = auth;
++		connect->prwise_crypto_type = pairwise;
++		connect->grp_crypto_type = group;
++		skb_trim(skb, AR6002_CONNECT_CMD_LEN);
++		break;
++	case WMI_ADD_CIPHER_KEY_CMDID:
++		if (skb->len != sizeof(*key) || key->key_len > WLAN_MAX_KEY_LEN)
++			return -EINVAL;
++		pairwise = ath6kl_ar6002_crypto(key->key_type);
++		if (pairwise < 0)
++			return pairwise;
++		key->key_type = pairwise;
++		skb_trim(skb, AR6002_ADD_CIPHER_KEY_CMD_LEN);
++		break;
++	case WMI_CREATE_PSTREAM_CMDID:
++		if (skb->len != sizeof(struct wmi_create_pstream_cmd))
++			return -EINVAL;
++		skb_trim(skb, AR6002_CREATE_PSTREAM_CMD_LEN);
++		break;
++	case WMI_SET_POWER_PARAMS_CMDID:
++		if (skb->len != sizeof(struct wmi_power_params_cmd))
++			return -EINVAL;
++		skb_trim(skb, AR6002_POWER_PARAMS_CMD_LEN);
++		break;
++	case WMI_SET_LPREAMBLE_CMDID:
++		if (skb->len != 2)
++			return -EINVAL;
++		skb_trim(skb, AR6002_LPREAMBLE_CMD_LEN);
++		break;
++	case WMI_SET_PROBED_SSID_CMDID:
++		if (skb->len != sizeof(struct wmi_probed_ssid_cmd) ||
++		    skb->data[0] >= AR6002_MAX_PROBED_SSIDS)
++			return -EINVAL;
++		break;
++	case WMI_SET_APPIE_CMDID:
++		if (skb->len < 2 || skb->len != 2 + skb->data[1])
++			return -EINVAL;
++		if (skb->data[1] > AR6002_MAX_SCAN_IE_LEN)
++			return -EMSGSIZE;
++		break;
++	case WMI_RECONNECT_CMDID:
++	case WMI_DISCONNECT_CMDID:
++	case WMI_SYNCHRONIZE_CMDID:
++	case WMI_START_SCAN_CMDID:
++	case WMI_DELETE_PSTREAM_CMDID:
++	case WMI_SET_SCAN_PARAMS_CMDID:
++	case WMI_SET_BSS_FILTER_CMDID:
++	case WMI_SET_LISTEN_INT_CMDID:
++	case WMI_SET_BMISS_TIME_CMDID:
++	case WMI_SET_DISC_TIMEOUT_CMDID:
++	case WMI_GET_CHANNEL_LIST_CMDID:
++	case WMI_GET_STATISTICS_CMDID:
++	case WMI_SET_POWER_MODE_CMDID:
++	case WMI_DELETE_CIPHER_KEY_CMDID:
++	case WMI_SET_PMKID_CMDID:
++	case WMI_SET_TX_PWR_CMDID:
++	case WMI_GET_TX_PWR_CMDID:
++	case WMI_SET_RTS_CMDID:
++	case WMI_SET_WMM_CMDID:
++	case WMI_SET_WMM_TXOP_CMDID:
++	case WMI_SET_KEEPALIVE_CMDID:
++	case WMI_GET_KEEPALIVE_CMDID:
++		break;
++	default:
++		return -EOPNOTSUPP;
++	}
++
++	return 0;
++}
++
++int ath6kl_ar6002_parse_ready(struct ath6kl *ar, u8 *datap, int len)
++{
++	if (len == 11)
++		ath6kl_ready_event(ar, datap + 4, get_unaligned_le32(datap), 0,
++				   datap[10]);
++	else if (len == 7)
++		ath6kl_ready_event(ar, datap, 0, 0, datap[6]);
++	else
++		return -EINVAL;
++
++	return 0;
++}
++
++int ath6kl_ar6002_parse_bss_info(u8 *datap, int len,
++				 struct wmi_bss_info_hdr2 *bih, s16 *rssi)
++{
++	if (len <= AR6002_BSS_INFO_HDR_LEN)
++		return -EINVAL;
++
++	memset(bih, 0, sizeof(*bih));
++	memcpy(&bih->ch, datap, 2);
++	bih->frame_type = datap[2];
++	bih->snr = datap[3];
++	*rssi = (s16)get_unaligned_le16(datap + 4);
++	memcpy(bih->bssid, datap + 6, ETH_ALEN);
++
++	return 0;
++}
++
++int ath6kl_ar6002_parse_stats(u8 *datap, int len,
++			      struct wmi_target_stats *stats)
++{
++	if (len != AR6002_TGT_STATS_LEN)
++		return -EINVAL;
++
++	memset(stats, 0, sizeof(*stats));
++	memcpy(stats, datap, 12);
++	memcpy(&stats->stats, datap + 12, 176);
++	memcpy(&stats->wow_stats, datap + 188, 8);
++	memcpy(&stats->cserv_stats, datap + 196, 21);
++
++	return 0;
++}
++
++#define AR6002_WMI_HDR_GROWTH	(sizeof(struct wmi_data_hdr) - AR6002_WMI_HDR_LEN)
++
++int ath6kl_ar6002_expand_hdr(struct sk_buff *skb)
++{
++	if (skb->len < AR6002_WMI_HDR_LEN)
++		return -EINVAL;
++	if (skb_cow_head(skb, AR6002_WMI_HDR_GROWTH))
++		return -ENOMEM;
++
++	skb_push(skb, AR6002_WMI_HDR_GROWTH);
++	memmove(skb->data, skb->data + AR6002_WMI_HDR_GROWTH, AR6002_WMI_HDR_LEN);
++	memset(skb->data + AR6002_WMI_HDR_LEN, 0, AR6002_WMI_HDR_GROWTH);
++
++	return 0;
++}
++
++void ath6kl_ar6002_shrink_hdr(struct sk_buff *skb)
++{
++	memmove(skb->data + AR6002_WMI_HDR_GROWTH, skb->data, AR6002_WMI_HDR_LEN);
++	skb_pull(skb, AR6002_WMI_HDR_GROWTH);
++}
+diff --git a/drivers/net/wireless/ath/ath6kl/bmi.h b/drivers/net/wireless/ath/ath6kl/bmi.h
+index 397a52f26..b4d1079ea 100644
+--- a/drivers/net/wireless/ath/ath6kl/bmi.h
++++ b/drivers/net/wireless/ath/ath6kl/bmi.h
+@@ -134,6 +134,7 @@
+  */
+ 
+ #define TARGET_VERSION_SENTINAL 0xffffffff
++#define TARGET_TYPE_AR6002      2
+ #define TARGET_TYPE_AR6003      3
+ #define TARGET_TYPE_AR6004      5
+ #define BMI_ROMPATCH_INSTALL               9
+diff --git a/drivers/net/wireless/ath/ath6kl/cfg80211.c b/drivers/net/wireless/ath/ath6kl/cfg80211.c
+index cc0f2c45f..a0c0898d1 100644
+--- a/drivers/net/wireless/ath/ath6kl/cfg80211.c
++++ b/drivers/net/wireless/ath/ath6kl/cfg80211.c
+@@ -922,11 +922,13 @@ static int ath6kl_set_probed_ssids(struct ath6kl *ar,
+ {
+ 	u8 i, j, index_to_add, ssid_found = false;
+ 	struct ath6kl_cfg80211_match_probe_ssid ssid_list[MAX_PROBED_SSIDS];
++	u8 max_ssids = ath6kl_is_ar6002(ar) ?
++		       AR6002_MAX_PROBED_SSIDS : MAX_PROBED_SSIDS;
+ 
+ 	memset(ssid_list, 0, sizeof(ssid_list));
+ 
+-	if (n_ssids > MAX_PROBED_SSIDS ||
+-	    n_match_ssid > MAX_PROBED_SSIDS)
++	if (n_ssids > max_ssids ||
++	    n_match_ssid > max_ssids)
+ 		return -EINVAL;
+ 
+ 	for (i = 0; i < n_ssids; i++) {
+@@ -964,7 +966,7 @@ static int ath6kl_set_probed_ssids(struct ath6kl *ar,
+ 		if (ssid_found)
+ 			continue;
+ 
+-		if (index_to_add >= MAX_PROBED_SSIDS)
++		if (index_to_add >= max_ssids)
+ 			continue;
+ 
+ 		ssid_list[index_to_add].ssid.ssid_len =
+@@ -984,7 +986,7 @@ static int ath6kl_set_probed_ssids(struct ath6kl *ar,
+ 	}
+ 
+ 	/* Make sure no old entries are left behind */
+-	for (i = index_to_add; i < MAX_PROBED_SSIDS; i++) {
++	for (i = index_to_add; i < max_ssids; i++) {
+ 		ath6kl_wmi_probedssid_cmd(ar->wmi, vif->fw_vif_idx, i,
+ 					  DISABLE_SSID_FLAG, 0, NULL);
+ 	}
+@@ -3998,6 +4000,27 @@ int ath6kl_cfg80211_init(struct ath6kl *ar)
+ 		NL80211_PROBE_RESP_OFFLOAD_SUPPORT_WPS2 |
+ 		NL80211_PROBE_RESP_OFFLOAD_SUPPORT_P2P;
+ 
++	if (ath6kl_is_ar6002(ar)) {
++		static const u32 ar6002_ciphers[] = { WLAN_CIPHER_SUITE_CCMP };
++
++		wiphy->interface_modes = BIT(NL80211_IFTYPE_STATION);
++		wiphy->mgmt_stypes = NULL;
++		wiphy->max_remain_on_channel_duration = 0;
++		wiphy->max_scan_ssids = AR6002_MAX_PROBED_SSIDS;
++		wiphy->max_scan_ie_len = AR6002_MAX_SCAN_IE_LEN;
++		wiphy->max_sched_scan_ssids = 0;
++		wiphy->max_sched_scan_reqs = 0;
++		wiphy->cipher_suites = ar6002_ciphers;
++		wiphy->n_cipher_suites = ARRAY_SIZE(ar6002_ciphers);
++		wiphy->flags &= ~(WIPHY_FLAG_HAVE_AP_SME |
++				  WIPHY_FLAG_HAS_REMAIN_ON_CHANNEL |
++				  WIPHY_FLAG_AP_PROBE_RESP_OFFLOAD);
++		wiphy->probe_resp_offload = 0;
++#ifdef CONFIG_PM
++		wiphy->wowlan = NULL;
++#endif
++	}
++
+ 	ret = wiphy_register(wiphy);
+ 	if (ret < 0) {
+ 		ath6kl_err("couldn't register wiphy device\n");
+diff --git a/drivers/net/wireless/ath/ath6kl/core.c b/drivers/net/wireless/ath/ath6kl/core.c
+index 648110cd3..a072cc5f5 100644
+--- a/drivers/net/wireless/ath/ath6kl/core.c
++++ b/drivers/net/wireless/ath/ath6kl/core.c
+@@ -163,8 +163,12 @@ int ath6kl_core_init(struct ath6kl *ar, enum ath6kl_htc_type htc_type)
+ 
+ 	ath6kl_cookie_init(ar);
+ 
+-	ar->conf_flags = ATH6KL_CONF_IGNORE_ERP_BARKER |
+-			 ATH6KL_CONF_ENABLE_11N | ATH6KL_CONF_ENABLE_TX_BURST;
++	if (ath6kl_is_ar6002(ar))
++		ar->conf_flags = 0;
++	else
++		ar->conf_flags = ATH6KL_CONF_IGNORE_ERP_BARKER |
++				 ATH6KL_CONF_ENABLE_11N |
++				 ATH6KL_CONF_ENABLE_TX_BURST;
+ 
+ 	if (suspend_mode &&
+ 	    suspend_mode >= WLAN_POWER_STATE_CUT_PWR &&
+diff --git a/drivers/net/wireless/ath/ath6kl/core.h b/drivers/net/wireless/ath/ath6kl/core.h
+index 77e052336..1ab88aa48 100644
+--- a/drivers/net/wireless/ath/ath6kl/core.h
++++ b/drivers/net/wireless/ath/ath6kl/core.h
+@@ -172,6 +172,20 @@ enum ath6kl_hw_flags {
+ #define ATH6KL_FW_API4_FILE "fw-4.bin"
+ #define ATH6KL_FW_API5_FILE "fw-5.bin"
+ 
++/* AR6002 2.0 definitions */
++#define AR6002_HW_2_0_VERSION		0x20000188
++#define AR6002_FW_DIR			"ath6k/AR6002"
++#define AR6002_FIRMWARE_FILE		"athwlan.bin.z77"
++#define AR6002_PATCH_FILE		"data.patch.hw2_0.bin"
++#define AR6002_EEPROM_FILE		"eeprom.bin"
++#define AR6002_EEPROM_DATA_FILE		"eeprom.data"
++#define AR6002_WMI_HDR_LEN		2
++#define AR6002_BSS_INFO_HDR_LEN		16
++#define AR6002_TGT_STATS_LEN		217
++#define AR6002_MAX_PROBED_SSIDS		6
++#define AR6002_MAX_SCAN_IE_LEN		78
++#define AR6002_REGISTER_DUMP_COUNT	32
++
+ /* AR6003 1.0 definitions */
+ #define AR6003_HW_1_0_VERSION                 0x300002ba
+ 
+@@ -725,6 +739,7 @@ struct ath6kl {
+ 	u8 lrssi_roam_threshold;
+ 	struct ath6kl_version version;
+ 	u32 target_type;
++	u32 expected_target_type;
+ 	u8 tx_pwr;
+ 	struct ath6kl_node_mapping node_map[MAX_NODE_NUM];
+ 	u8 ibss_ps_enable;
+@@ -883,7 +898,10 @@ static inline u32 ath6kl_get_hi_item_addr(struct ath6kl *ar,
+ {
+ 	u32 addr = 0;
+ 
+-	if (ar->target_type == TARGET_TYPE_AR6003)
++	/* The AR6002 area ends after hi_ext_clk_detected, at 0x7c. */
++	if (ar->target_type == TARGET_TYPE_AR6002)
++		addr = ATH6KL_AR6002_HI_START_ADDR + item_offset;
++	else if (ar->target_type == TARGET_TYPE_AR6003)
+ 		addr = ATH6KL_AR6003_HI_START_ADDR + item_offset;
+ 	else if (ar->target_type == TARGET_TYPE_AR6004)
+ 		addr = ATH6KL_AR6004_HI_START_ADDR + item_offset;
+@@ -891,6 +909,21 @@ static inline u32 ath6kl_get_hi_item_addr(struct ath6kl *ar,
+ 	return addr;
+ }
+ 
++static inline bool ath6kl_is_ar6002(struct ath6kl *ar)
++{
++	return ar->target_type == TARGET_TYPE_AR6002;
++}
++
++int ath6kl_ar6002_wmi_encode(struct sk_buff *skb, enum wmi_cmd_id id);
++int ath6kl_ar6002_parse_ready(struct ath6kl *ar, u8 *datap, int len);
++int ath6kl_ar6002_parse_bss_info(u8 *datap, int len,
++				 struct wmi_bss_info_hdr2 *bih, s16 *rssi);
++int ath6kl_ar6002_parse_stats(u8 *datap, int len,
++			      struct wmi_target_stats *stats);
++int ath6kl_ar6002_expand_hdr(struct sk_buff *skb);
++void ath6kl_ar6002_shrink_hdr(struct sk_buff *skb);
++int ath6kl_ar6002_fetch_firmware(struct ath6kl *ar);
++int ath6kl_ar6002_upload(struct ath6kl *ar);
+ int ath6kl_configure_target(struct ath6kl *ar);
+ void ath6kl_detect_error(unsigned long ptr);
+ void disconnect_timer_handler(struct timer_list *t);
+diff --git a/drivers/net/wireless/ath/ath6kl/hif.c b/drivers/net/wireless/ath/ath6kl/hif.c
+index c693783bb..4428ab26d 100644
+--- a/drivers/net/wireless/ath/ath6kl/hif.c
++++ b/drivers/net/wireless/ath/ath6kl/hif.c
+@@ -71,6 +71,8 @@ static void ath6kl_hif_dump_fw_crash(struct ath6kl *ar)
+ {
+ 	__le32 regdump_val[REGISTER_DUMP_LEN_MAX];
+ 	u32 i, address, regdump_addr = 0;
++	u32 count = ath6kl_is_ar6002(ar) ?
++		    AR6002_REGISTER_DUMP_COUNT : REGISTER_DUMP_COUNT;
+ 	int ret;
+ 
+ 	/* the reg dump pointer is copied to the host interest area */
+@@ -92,7 +94,7 @@ static void ath6kl_hif_dump_fw_crash(struct ath6kl *ar)
+ 
+ 	/* fetch register dump data */
+ 	ret = ath6kl_diag_read(ar, regdump_addr, (u8 *)&regdump_val[0],
+-				  REGISTER_DUMP_COUNT * (sizeof(u32)));
++				  count * sizeof(u32));
+ 	if (ret) {
+ 		ath6kl_warn("failed to get register dump: %d\n", ret);
+ 		return;
+@@ -104,7 +106,7 @@ static void ath6kl_hif_dump_fw_crash(struct ath6kl *ar)
+ 
+ 	BUILD_BUG_ON(REGISTER_DUMP_COUNT % 4);
+ 
+-	for (i = 0; i < REGISTER_DUMP_COUNT; i += 4) {
++	for (i = 0; i < count; i += 4) {
+ 		ath6kl_info("%d: 0x%8.8x 0x%8.8x 0x%8.8x 0x%8.8x\n",
+ 			    i,
+ 			    le32_to_cpu(regdump_val[i]),
+diff --git a/drivers/net/wireless/ath/ath6kl/htc_mbox.c b/drivers/net/wireless/ath/ath6kl/htc_mbox.c
+index 9ece8f998..305c7e802 100644
+--- a/drivers/net/wireless/ath/ath6kl/htc_mbox.c
++++ b/drivers/net/wireless/ath/ath6kl/htc_mbox.c
+@@ -516,6 +516,13 @@ static int ath6kl_htc_tx_issue(struct htc_target *target,
+ 	send_len = packet->act_len + HTC_HDR_LENGTH;
+ 
+ 	padded_len = CALC_TXRX_PADDED_LEN(target, send_len);
++	/* HTC 2.0 leaves the control bytes undefined on send. */
++	if (ath6kl_is_ar6002(target->dev->ar)) {
++		struct htc_frame_hdr *hdr = (void *)packet->buf;
++
++		hdr->ctrl[0] = 0;
++		hdr->ctrl[1] = 0;
++	}
+ 
+ 	ath6kl_dbg(ATH6KL_DBG_HTC,
+ 		   "htc tx issue len %d seqno %d padded_len %d mbox 0x%X %s\n",
+diff --git a/drivers/net/wireless/ath/ath6kl/init.c b/drivers/net/wireless/ath/ath6kl/init.c
+index 782209dcb..f24eb3cd2 100644
+--- a/drivers/net/wireless/ath/ath6kl/init.c
++++ b/drivers/net/wireless/ath/ath6kl/init.c
+@@ -33,6 +33,14 @@
+ #include "htc-ops.h"
+ 
+ static const struct ath6kl_hw hw_list[] = {
++	{
++		.id				= AR6002_HW_2_0_VERSION,
++		.name				= "ar6002 hw 2.0",
++		.dataset_patch_addr		= 0x52d6c8,
++		.app_load_addr			= 0x502070,
++		.app_start_override_addr	= 0x9140f0,
++		.refclk_hz			= 26000000,
++	},
+ 	{
+ 		.id				= AR6003_HW_2_0_VERSION,
+ 		.name				= "ar6003 hw 2.0",
+@@ -458,11 +466,14 @@ static int ath6kl_target_config_wlan_params(struct ath6kl *ar, int idx)
+ 	 * default values. Required if checksum offload is needed. Set
+ 	 * RxMetaVersion to 2.
+ 	 */
+-	ret = ath6kl_wmi_set_rx_frame_format_cmd(ar->wmi, idx,
+-						 ar->rx_meta_ver, 0, 0);
+-	if (ret) {
+-		ath6kl_err("unable to set the rx frame format: %d\n", ret);
+-		return ret;
++	if (!ath6kl_is_ar6002(ar)) {
++		ret = ath6kl_wmi_set_rx_frame_format_cmd(ar->wmi, idx,
++							 ar->rx_meta_ver, 0, 0);
++		if (ret) {
++			ath6kl_err("unable to set the rx frame format: %d\n",
++				   ret);
++			return ret;
++		}
+ 	}
+ 
+ 	if (ar->conf_flags & ATH6KL_CONF_IGNORE_PS_FAIL_EVT_IN_SCAN) {
+@@ -599,6 +610,18 @@ int ath6kl_configure_target(struct ath6kl *ar)
+ 		return -EIO;
+ 	}
+ 
++	/* The legacy option flag keeps the firmware mode in bits 3 and 4. */
++	if (ath6kl_is_ar6002(ar)) {
++		param = (param & ~GENMASK(4, 3)) | BIT(3);
++		status = ath6kl_bmi_write_hi32(ar, hi_option_flag, param);
++		if (status)
++			return status;
++		status = ath6kl_set_htc_params(ar, MBOX_YIELD_LIMIT, 0);
++		if (status)
++			return status;
++		return ath6kl_bmi_write_hi32(ar, hi_refclk_hz, ar->hw.refclk_hz);
++	}
++
+ 	param |= (ar->vif_max << HI_OPTION_NUM_DEV_SHIFT);
+ 	param |= fw_mode << HI_OPTION_FW_MODE_SHIFT;
+ 	param |= fw_submode << HI_OPTION_FW_SUBMODE_SHIFT;
+@@ -1153,6 +1176,9 @@ int ath6kl_init_fetch_firmwares(struct ath6kl *ar)
+ {
+ 	int ret;
+ 
++	if (ath6kl_is_ar6002(ar))
++		return ath6kl_ar6002_fetch_firmware(ar);
++
+ 	ret = ath6kl_fetch_board_file(ar);
+ 	if (ret)
+ 		return ret;
+@@ -1444,6 +1470,9 @@ static int ath6kl_init_upload(struct ath6kl *ar)
+ 	u32 param, options, sleep, address;
+ 	int status = 0;
+ 
++	if (ath6kl_is_ar6002(ar))
++		return ath6kl_ar6002_upload(ar);
++
+ 	if (ar->target_type != TARGET_TYPE_AR6003 &&
+ 	    ar->target_type != TARGET_TYPE_AR6004)
+ 		return -EINVAL;
+@@ -1593,6 +1622,9 @@ int ath6kl_init_hw_params(struct ath6kl *ar)
+ 
+ 	ar->hw = *hw;
+ 
++	if (ath6kl_is_ar6002(ar))
++		ar->p2p = false;
++
+ 	ath6kl_dbg(ATH6KL_DBG_BOOT,
+ 		   "target_ver 0x%x target_type 0x%x dataset_patch 0x%x app_load_addr 0x%x\n",
+ 		   ar->version.target_ver, ar->target_type,
+@@ -1793,7 +1825,8 @@ static int __ath6kl_init_hw_start(struct ath6kl *ar)
+ 		ath6kl_info("firmware supports: %s\n", buf);
+ 	}
+ 
+-	if (ar->version.abi_ver != ATH6KL_ABI_VERSION) {
++	if (!ath6kl_is_ar6002(ar) &&
++	    ar->version.abi_ver != ATH6KL_ABI_VERSION) {
+ 		ath6kl_err("abi version mismatch: host(0x%x), target(0x%x)\n",
+ 			   ATH6KL_ABI_VERSION, ar->version.abi_ver);
+ 		ret = -EIO;
+diff --git a/drivers/net/wireless/ath/ath6kl/main.c b/drivers/net/wireless/ath/ath6kl/main.c
+index 8afc6589f..7a6924119 100644
+--- a/drivers/net/wireless/ath/ath6kl/main.c
++++ b/drivers/net/wireless/ath/ath6kl/main.c
+@@ -1162,6 +1162,9 @@ static void ath6kl_set_multicast_list(struct net_device *ndev)
+ 	struct list_head mc_filter_new;
+ 	int ret;
+ 
++	if (ath6kl_is_ar6002(vif->ar))
++		return;
++
+ 	if (!test_bit(WMI_READY, &vif->ar->flag) ||
+ 	    !test_bit(WLAN_ENABLED, &vif->flags))
+ 		return;
+@@ -1303,7 +1306,8 @@ void init_netdev(struct net_device *dev)
+ 					WMI_MAX_TX_META_SZ +
+ 					ATH6KL_HTC_ALIGN_BYTES, 4);
+ 
+-	if (!test_bit(ATH6KL_FW_CAPABILITY_NO_IP_CHECKSUM,
++	if (!ath6kl_is_ar6002(ar) &&
++	    !test_bit(ATH6KL_FW_CAPABILITY_NO_IP_CHECKSUM,
+ 		      ar->fw_capabilities))
+ 		dev->hw_features |= NETIF_F_IP_CSUM | NETIF_F_RXCSUM;
+ 
+diff --git a/drivers/net/wireless/ath/ath6kl/sdio.c b/drivers/net/wireless/ath/ath6kl/sdio.c
+index 56929e965..f88c9a63b 100644
+--- a/drivers/net/wireless/ath/ath6kl/sdio.c
++++ b/drivers/net/wireless/ath/ath6kl/sdio.c
+@@ -104,6 +104,12 @@ static void ath6kl_sdio_set_mbox_info(struct ath6kl *ar)
+ 	mbox_info->block_size = HIF_MBOX_BLOCK_SIZE;
+ 	mbox_info->gmbox_addr = HIF_GMBOX_BASE_ADDR;
+ 	mbox_info->gmbox_sz = HIF_GMBOX_WIDTH;
++	if (ar->expected_target_type == TARGET_TYPE_AR6002) {
++		mbox_info->htc_ext_addr = 0;
++		mbox_info->htc_ext_sz = 0;
++		mbox_info->gmbox_addr = 0;
++		mbox_info->gmbox_sz = 0;
++	}
+ }
+ 
+ static inline void ath6kl_sdio_set_cmd53_arg(u32 *arg, u8 rw, u8 func,
+@@ -866,6 +872,9 @@ static int ath6kl_sdio_suspend(struct ath6kl *ar, struct cfg80211_wowlan *wow)
+ 	bool try_deepsleep = false;
+ 	int ret;
+ 
++	if (ath6kl_is_ar6002(ar))
++		return -EOPNOTSUPP;
++
+ 	if (ar->suspend_mode == WLAN_POWER_STATE_WOW ||
+ 	    (!ar->suspend_mode && wow)) {
+ 		ret = ath6kl_set_sdio_pm_caps(ar);
+@@ -1360,6 +1369,8 @@ static int ath6kl_sdio_probe(struct sdio_func *func,
+ 	ar->hif_priv = ar_sdio;
+ 	ar->hif_ops = &ath6kl_sdio_ops;
+ 	ar->bmi.max_data_size = 256;
++	if (id->device == SDIO_DEVICE_ID_ATHEROS_AR6002)
++		ar->expected_target_type = TARGET_TYPE_AR6002;
+ 
+ 	ath6kl_sdio_set_mbox_info(ar);
+ 
+@@ -1408,6 +1419,7 @@ static void ath6kl_sdio_remove(struct sdio_func *func)
+ }
+ 
+ static const struct sdio_device_id ath6kl_sdio_devices[] = {
++	{SDIO_DEVICE(SDIO_VENDOR_ID_ATHEROS, SDIO_DEVICE_ID_ATHEROS_AR6002)},
+ 	{SDIO_DEVICE(SDIO_VENDOR_ID_ATHEROS, SDIO_DEVICE_ID_ATHEROS_AR6003_00)},
+ 	{SDIO_DEVICE(SDIO_VENDOR_ID_ATHEROS, SDIO_DEVICE_ID_ATHEROS_AR6003_01)},
+ 	{SDIO_DEVICE(SDIO_VENDOR_ID_ATHEROS, SDIO_DEVICE_ID_ATHEROS_AR6004_00)},
+@@ -1433,6 +1445,10 @@ MODULE_AUTHOR("Atheros Communications, Inc.");
+ MODULE_DESCRIPTION("Driver support for Atheros AR600x SDIO devices");
+ MODULE_LICENSE("Dual BSD/GPL");
+ 
++MODULE_FIRMWARE(AR6002_FW_DIR "/" AR6002_FIRMWARE_FILE);
++MODULE_FIRMWARE(AR6002_FW_DIR "/" AR6002_PATCH_FILE);
++MODULE_FIRMWARE(AR6002_FW_DIR "/" AR6002_EEPROM_FILE);
++MODULE_FIRMWARE(AR6002_FW_DIR "/" AR6002_EEPROM_DATA_FILE);
+ MODULE_FIRMWARE(AR6003_HW_2_0_FW_DIR "/" AR6003_HW_2_0_OTP_FILE);
+ MODULE_FIRMWARE(AR6003_HW_2_0_FW_DIR "/" AR6003_HW_2_0_FIRMWARE_FILE);
+ MODULE_FIRMWARE(AR6003_HW_2_0_FW_DIR "/" AR6003_HW_2_0_PATCH_FILE);
+diff --git a/drivers/net/wireless/ath/ath6kl/target.h b/drivers/net/wireless/ath/ath6kl/target.h
+index d5eeeae77..88d632a2c 100644
+--- a/drivers/net/wireless/ath/ath6kl/target.h
++++ b/drivers/net/wireless/ath/ath6kl/target.h
+@@ -18,6 +18,8 @@
+ #ifndef TARGET_H
+ #define TARGET_H
+ 
++#define ATH6KL_AR6002_HI_START_ADDR	0x00500400
++
+ #define AR6003_BOARD_DATA_SZ		1024
+ #define AR6003_BOARD_EXT_DATA_SZ	768
+ #define AR6003_BOARD_EXT_DATA_SZ_V2	1024
+@@ -334,7 +336,8 @@ struct host_interest {
+ #define AR6004_VTOP(vaddr) (vaddr)
+ 
+ #define TARG_VTOP(target_type, vaddr) \
+-	(((target_type) == TARGET_TYPE_AR6003) ? AR6003_VTOP(vaddr) : \
++	(((target_type) == TARGET_TYPE_AR6002 || \
++	  (target_type) == TARGET_TYPE_AR6003) ? AR6003_VTOP(vaddr) : \
+ 	(((target_type) == TARGET_TYPE_AR6004) ? AR6004_VTOP(vaddr) : 0))
+ 
+ #define ATH6KL_FWLOG_PAYLOAD_SIZE		1500
+diff --git a/drivers/net/wireless/ath/ath6kl/txrx.c b/drivers/net/wireless/ath/ath6kl/txrx.c
+index d81825413..2d0f70cd5 100644
+--- a/drivers/net/wireless/ath/ath6kl/txrx.c
++++ b/drivers/net/wireless/ath/ath6kl/txrx.c
+@@ -290,6 +290,9 @@ int ath6kl_control_tx(void *devt, struct sk_buff *skb,
+ 	int status = 0;
+ 	struct ath6kl_cookie *cookie = NULL;
+ 
++	if (ath6kl_is_ar6002(ar) && eid != ar->ctrl_ep)
++		ath6kl_ar6002_shrink_hdr(skb);
++
+ 	trace_ath6kl_wmi_cmd(skb->data, skb->len);
+ 
+ 	if (WARN_ON_ONCE(ar->state == ATH6KL_STATE_WOW)) {
+@@ -450,6 +453,9 @@ netdev_tx_t ath6kl_data_tx(struct sk_buff *skb, struct net_device *dev)
+ 		goto fail_tx;
+ 	}
+ 
++	if (ath6kl_is_ar6002(ar))
++		ath6kl_ar6002_shrink_hdr(skb);
++
+ 	spin_lock_bh(&ar->lock);
+ 
+ 	if (chk_adhoc_ps_mapping)
+@@ -743,7 +749,9 @@ void ath6kl_tx_complete(struct htc_target *target,
+ 				wake_event = true;
+ 		}
+ 
+-		if (eid == ar->ctrl_ep) {
++		if (ath6kl_is_ar6002(ar)) {
++			if_idx = 0;
++		} else if (eid == ar->ctrl_ep) {
+ 			if_idx = wmi_cmd_hdr_get_if_idx(
+ 				(struct wmi_cmd_hdr *) packet->buf);
+ 		} else {
+@@ -1324,7 +1332,8 @@ void ath6kl_rx(struct htc_target *target, struct htc_packet *packet)
+ 		   __func__, ar, ept, skb, packet->buf,
+ 		   packet->act_len, status);
+ 
+-	if (status || packet->act_len < HTC_HDR_LENGTH) {
++	if (status || packet->act_len < (ath6kl_is_ar6002(ar) ?
++					 AR6002_WMI_HDR_LEN : HTC_HDR_LENGTH)) {
+ 		dev_kfree_skb(skb);
+ 		return;
+ 	}
+@@ -1335,6 +1344,12 @@ void ath6kl_rx(struct htc_target *target, struct htc_packet *packet)
+ 	ath6kl_dbg_dump(ATH6KL_DBG_RAW_BYTES, __func__, "rx ",
+ 			skb->data, skb->len);
+ 
++	if (ath6kl_is_ar6002(ar) && ept != ar->ctrl_ep &&
++	    ath6kl_ar6002_expand_hdr(skb)) {
++		dev_kfree_skb(skb);
++		return;
++	}
++
+ 	if (ept == ar->ctrl_ep) {
+ 		if (test_bit(WMI_ENABLED, &ar->flag)) {
+ 			ath6kl_check_wow_status(ar);
+@@ -1378,6 +1393,9 @@ void ath6kl_rx(struct htc_target *target, struct htc_packet *packet)
+ 
+ 	min_hdr_len = sizeof(struct ethhdr) + sizeof(struct wmi_data_hdr) +
+ 		      sizeof(struct ath6kl_llc_snap_hdr);
++	/* act_len is the received length, before the header was expanded. */
++	if (ath6kl_is_ar6002(ar))
++		min_hdr_len -= sizeof(struct wmi_data_hdr) - AR6002_WMI_HDR_LEN;
+ 
+ 	dhdr = (struct wmi_data_hdr *) skb->data;
+ 
+diff --git a/drivers/net/wireless/ath/ath6kl/wmi.c b/drivers/net/wireless/ath/ath6kl/wmi.c
+index 2b0c5038a..eb237ad34 100644
+--- a/drivers/net/wireless/ath/ath6kl/wmi.c
++++ b/drivers/net/wireless/ath/ath6kl/wmi.c
+@@ -754,6 +754,9 @@ static int ath6kl_wmi_ready_event_rx(struct wmi *wmi, u8 *datap, int len)
+ {
+ 	struct wmi_ready_event_2 *ev = (struct wmi_ready_event_2 *) datap;
+ 
++	if (ath6kl_is_ar6002(wmi->parent_dev))
++		return ath6kl_ar6002_parse_ready(wmi->parent_dev, datap, len);
++
+ 	if (len < sizeof(struct wmi_ready_event_2))
+ 		return -EINVAL;
+ 
+@@ -1106,7 +1109,8 @@ void ath6kl_wmi_sscan_timer(struct timer_list *t)
+ static int ath6kl_wmi_bssinfo_event_rx(struct wmi *wmi, u8 *datap, int len,
+ 				       struct ath6kl_vif *vif)
+ {
+-	struct wmi_bss_info_hdr2 *bih;
++	struct wmi_bss_info_hdr2 *bih, legacy;
++	s16 rssi;
+ 	u8 *buf;
+ 	struct ieee80211_channel *channel;
+ 	struct ath6kl *ar = wmi->parent_dev;
+@@ -1115,9 +1119,18 @@ static int ath6kl_wmi_bssinfo_event_rx(struct wmi *wmi, u8 *datap, int len,
+ 	if (len <= sizeof(struct wmi_bss_info_hdr2))
+ 		return -EINVAL;
+ 
+-	bih = (struct wmi_bss_info_hdr2 *) datap;
+-	buf = datap + sizeof(struct wmi_bss_info_hdr2);
+-	len -= sizeof(struct wmi_bss_info_hdr2);
++	if (ath6kl_is_ar6002(ar)) {
++		if (ath6kl_ar6002_parse_bss_info(datap, len, &legacy, &rssi))
++			return -EINVAL;
++		bih = &legacy;
++		buf = datap + AR6002_BSS_INFO_HDR_LEN;
++		len -= AR6002_BSS_INFO_HDR_LEN;
++	} else {
++		bih = (struct wmi_bss_info_hdr2 *)datap;
++		buf = datap + sizeof(*bih);
++		len -= sizeof(*bih);
++		rssi = bih->snr - 95;
++	}
+ 
+ 	ath6kl_dbg(ATH6KL_DBG_WMI,
+ 		   "bss info evt - ch %u, snr %d, rssi %d, bssid \"%pM\" "
+@@ -1163,7 +1176,7 @@ static int ath6kl_wmi_bssinfo_event_rx(struct wmi *wmi, u8 *datap, int len,
+ 				  get_unaligned_le16(((__le16 *)buf) + 5),
+ 				  get_unaligned_le16(((__le16 *)buf) + 4),
+ 				  buf + 8 + 2 + 2, len - 8 - 2 - 2,
+-				  (bih->snr - 95) * 100, GFP_ATOMIC);
++				  rssi * 100, GFP_ATOMIC);
+ 	if (bss == NULL)
+ 		return -ENOMEM;
+ 	cfg80211_put_bss(ar->wiphy, bss);
+@@ -1367,7 +1380,15 @@ static int ath6kl_wmi_error_event_rx(struct wmi *wmi, u8 *datap, int len)
+ static int ath6kl_wmi_stats_event_rx(struct wmi *wmi, u8 *datap, int len,
+ 				     struct ath6kl_vif *vif)
+ {
+-	ath6kl_tgt_stats_event(vif, datap, len);
++	if (ath6kl_is_ar6002(wmi->parent_dev)) {
++		struct wmi_target_stats stats;
++
++		if (ath6kl_ar6002_parse_stats(datap, len, &stats))
++			return -EINVAL;
++		ath6kl_tgt_stats_event(vif, (u8 *)&stats, sizeof(stats));
++	} else {
++		ath6kl_tgt_stats_event(vif, datap, len);
++	}
+ 
+ 	return 0;
+ }
+@@ -1820,6 +1841,16 @@ int ath6kl_wmi_cmd_send(struct wmi *wmi, u8 if_idx, struct sk_buff *skb,
+ 		return -EINVAL;
+ 	}
+ 
++	if (ath6kl_is_ar6002(wmi->parent_dev)) {
++		ret = ath6kl_ar6002_wmi_encode(skb, cmd_id);
++		if (ret) {
++			ath6kl_warn("AR6002 rejected WMI command 0x%x: %d\n",
++				    cmd_id, ret);
++			dev_kfree_skb(skb);
++			return ret;
++		}
++	}
++
+ 	if ((sync_flag == SYNC_BEFORE_WMIFLAG) ||
+ 	    (sync_flag == SYNC_BOTH_WMIFLAG)) {
+ 		/*
+@@ -1829,12 +1860,15 @@ int ath6kl_wmi_cmd_send(struct wmi *wmi, u8 if_idx, struct sk_buff *skb,
+ 		ath6kl_wmi_sync_point(wmi, if_idx);
+ 	}
+ 
+-	skb_push(skb, sizeof(struct wmi_cmd_hdr));
+-
+-	cmd_hdr = (struct wmi_cmd_hdr *) skb->data;
+-	cmd_hdr->cmd_id = cpu_to_le16(cmd_id);
+-	info1 = if_idx & WMI_CMD_HDR_IF_ID_MASK;
+-	cmd_hdr->info1 = cpu_to_le16(info1);
++	if (ath6kl_is_ar6002(wmi->parent_dev)) {
++		put_unaligned_le16(cmd_id, skb_push(skb, 2));
++	} else {
++		skb_push(skb, sizeof(struct wmi_cmd_hdr));
++		cmd_hdr = (struct wmi_cmd_hdr *)skb->data;
++		cmd_hdr->cmd_id = cpu_to_le16(cmd_id);
++		info1 = if_idx & WMI_CMD_HDR_IF_ID_MASK;
++		cmd_hdr->info1 = cpu_to_le16(info1);
++	}
+ 
+ 	/* Only for OPT_TX_CMD, use BE endpoint. */
+ 	if (cmd_id == WMI_OPT_TX_FRAME_CMDID) {
+@@ -1847,7 +1881,9 @@ int ath6kl_wmi_cmd_send(struct wmi *wmi, u8 if_idx, struct sk_buff *skb,
+ 		ep_id = ath6kl_ac2_endpoint_id(wmi->parent_dev, WMM_AC_BE);
+ 	}
+ 
+-	ath6kl_control_tx(wmi->parent_dev, skb, ep_id);
++	ret = ath6kl_control_tx(wmi->parent_dev, skb, ep_id);
++	if (ret)
++		return ret;
+ 
+ 	if ((sync_flag == SYNC_AFTER_WMIFLAG) ||
+ 	    (sync_flag == SYNC_BOTH_WMIFLAG)) {
+@@ -2441,6 +2477,7 @@ static int ath6kl_wmi_data_sync_send(struct wmi *wmi, struct sk_buff *skb,
+ 	skb_push(skb, sizeof(struct wmi_data_hdr));
+ 
+ 	data_hdr = (struct wmi_data_hdr *) skb->data;
++	memset(data_hdr, 0, sizeof(*data_hdr));
+ 	data_hdr->info = SYNC_MSGTYPE << WMI_DATA_HDR_MSG_TYPE_SHIFT;
+ 	data_hdr->info3 = cpu_to_le16(if_idx & WMI_DATA_HDR_IF_IDX_MASK);
+ 
+@@ -3993,6 +4030,12 @@ static int ath6kl_wmi_proc_events(struct wmi *wmi, struct sk_buff *skb)
+ 	datap = skb->data;
+ 	len = skb->len;
+ 
++	/* The two generations share the event numbers up to this one. */
++	if (ath6kl_is_ar6002(wmi->parent_dev) && id > WMI_CHANNEL_CHANGE_EVENTID) {
++		dev_kfree_skb(skb);
++		return -EOPNOTSUPP;
++	}
++
+ 	ath6kl_dbg(ATH6KL_DBG_WMI, "wmi rx id %d len %d\n", id, len);
+ 	ath6kl_dbg_dump(ATH6KL_DBG_WMI_DUMP, NULL, "wmi rx ",
+ 			datap, len);
+@@ -4020,7 +4063,9 @@ static int ath6kl_wmi_proc_events(struct wmi *wmi, struct sk_buff *skb)
+ 		break;
+ 	case WMI_REGDOMAIN_EVENTID:
+ 		ath6kl_dbg(ATH6KL_DBG_WMI, "WMI_REGDOMAIN_EVENTID\n");
+-		ath6kl_wmi_regdomain_event(wmi, datap, len);
++		/* The legacy regulatory code mapping is not audited. */
++		if (!ath6kl_is_ar6002(wmi->parent_dev))
++			ath6kl_wmi_regdomain_event(wmi, datap, len);
+ 		break;
+ 	case WMI_PSTREAM_TIMEOUT_EVENTID:
+ 		ath6kl_dbg(ATH6KL_DBG_WMI, "WMI_PSTREAM_TIMEOUT_EVENTID\n");
+@@ -4130,6 +4175,11 @@ int ath6kl_wmi_control_rx(struct wmi *wmi, struct sk_buff *skb)
+ 	if (WARN_ON(skb == NULL))
+ 		return -EINVAL;
+ 
++	if (ath6kl_is_ar6002(wmi->parent_dev) &&
++	    ath6kl_ar6002_expand_hdr(skb)) {
++		dev_kfree_skb(skb);
++		return -EINVAL;
++	}
+ 	if (skb->len < sizeof(struct wmi_cmd_hdr)) {
+ 		ath6kl_err("bad packet 1\n");
+ 		dev_kfree_skb(skb);
+diff --git a/include/linux/mmc/sdio_ids.h b/include/linux/mmc/sdio_ids.h
+index 0685dd717..9acdc582f 100644
+--- a/include/linux/mmc/sdio_ids.h
++++ b/include/linux/mmc/sdio_ids.h
+@@ -43,6 +43,7 @@
+ #define SDIO_DEVICE_ID_TI_WL1271		0x4076
+ 
+ #define SDIO_VENDOR_ID_ATHEROS			0x0271
++#define SDIO_DEVICE_ID_ATHEROS_AR6002		0x0201
+ #define SDIO_DEVICE_ID_ATHEROS_AR6003_00	0x0300
+ #define SDIO_DEVICE_ID_ATHEROS_AR6003_01	0x0301
+ #define SDIO_DEVICE_ID_ATHEROS_AR6004_00	0x0400

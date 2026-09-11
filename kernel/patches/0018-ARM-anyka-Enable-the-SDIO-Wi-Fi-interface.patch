@@ -1,0 +1,163 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CatMe0w <CatMe0w@live.cn>
+Date: Thu, 10 Sep 2026 16:55:07 -0600
+Subject: [PATCH] ARM: anyka: Enable the SDIO Wi-Fi interface
+
+---
+ arch/arm/boot/dts/anyka/ak7802-netbook.dts | 28 ++++++++++++++++++++++
+ arch/arm/boot/dts/anyka/ak7802.dtsi        | 17 +++++++++++++
+ arch/arm/configs/aipc_defconfig            |  8 ++++++-
+ drivers/pinctrl/pinctrl-anyka.c            | 25 ++++++++++++++++++-
+ 4 files changed, 76 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm/boot/dts/anyka/ak7802-netbook.dts b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
+index 0d1307597..75ece96ee 100644
+--- a/arch/arm/boot/dts/anyka/ak7802-netbook.dts
++++ b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
+@@ -28,6 +28,23 @@ memory@30000000 {
+ 		reg = <0x30000000 0x04000000>;
+ 	};
+ 
++	wifi_power: regulator-wifi {
++		compatible = "regulator-fixed";
++		regulator-name = "wifi-3v3";
++		regulator-min-microvolt = <3300000>;
++		regulator-max-microvolt = <3300000>;
++		gpio = <&gpio 10 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		startup-delay-us = <10000>;
++	};
++
++	wifi_pwrseq: wifi-pwrseq {
++		compatible = "mmc-pwrseq-simple";
++		reset-gpios = <&gpio 5 GPIO_ACTIVE_LOW>,
++			      <&gpio 6 GPIO_ACTIVE_LOW>;
++		post-power-on-delay-ms = <10>;
++	};
++
+ 	poweroff {
+ 		compatible = "gpio-poweroff";
+ 		gpios = <&gpio 105 GPIO_ACTIVE_LOW>;
+@@ -129,6 +146,17 @@ &mmc0 {
+ 	status = "okay";
+ };
+ 
++&mmc1 {
++	pinctrl-names = "default";
++	pinctrl-0 = <&sdio_pins>;
++	vmmc-supply = <&wifi_power>;
++	mmc-pwrseq = <&wifi_pwrseq>;
++	non-removable;
++	post-power-on-delay-ms = <10>;
++	anyka,input-clock-hz = <124000000>;
++	status = "okay";
++};
++
+ &ps2 {
+ 	pinctrl-names = "default", "gpio";
+ 	pinctrl-0 = <&uart1_pins>;
+diff --git a/arch/arm/boot/dts/anyka/ak7802.dtsi b/arch/arm/boot/dts/anyka/ak7802.dtsi
+index b68b63ede..cdf681ac0 100644
+--- a/arch/arm/boot/dts/anyka/ak7802.dtsi
++++ b/arch/arm/boot/dts/anyka/ak7802.dtsi
+@@ -59,6 +59,8 @@ sdio_pins: sdio-pins {
+ 			function = "sdio";
+ 			groups = "sdio";
+ 			bias-pull-up;
++			input-enable;
++			drive-strength = <8>;
+ 		};
+ 	};
+ 
+@@ -152,6 +154,21 @@ mmc0: mmc@20020000 {
+ 		status = "disabled";
+ 	};
+ 
++	mmc1: mmc@20021000 {
++		compatible = "anyka,ak7802-sdio";
++		reg = <0x20021000 0x44>;
++		reg-names = "mci";
++		interrupt-parent = <&main_intc>;
++		interrupts = <21>;
++		interrupt-names = "mci";
++		syscon = <&sysctrl>;
++		bus-width = <4>;
++		max-frequency = <25000000>;
++		no-mmc;
++		no-sd;
++		status = "disabled";
++	};
++
+ 	usb0: usb@70000000 {
+ 		compatible = "anyka,ak98-fshc";
+ 		reg = <0x70000000 0x1000>;
+diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
+index fd56b3fba..4fa4e9fc6 100644
+--- a/arch/arm/configs/aipc_defconfig
++++ b/arch/arm/configs/aipc_defconfig
+@@ -36,7 +36,10 @@ CONFIG_BLK_DEV_SD=y
+ CONFIG_NETDEVICES=y
+ CONFIG_DM9000=y
+ CONFIG_DM9000_GPIO_BUS=y
+-# CONFIG_WLAN is not set
++CONFIG_CFG80211=y
++CONFIG_WLAN=y
++CONFIG_ATH6KL=y
++CONFIG_ATH6KL_SDIO=y
+ CONFIG_INPUT_EVDEV=y
+ # CONFIG_KEYBOARD_ATKBD is not set
+ CONFIG_KEYBOARD_GPIO_POLLED=y
+@@ -53,7 +56,10 @@ CONFIG_FRAMEBUFFER_CONSOLE=y
+ CONFIG_USB=y
+ CONFIG_USB_CH37X_HCD=y
+ CONFIG_USB_STORAGE=y
++CONFIG_REGULATOR=y
++CONFIG_REGULATOR_FIXED_VOLTAGE=y
+ CONFIG_MMC=y
++CONFIG_PWRSEQ_SIMPLE=y
+ # CONFIG_VIRTIO_MENU is not set
+ # CONFIG_VHOST_MENU is not set
+ # CONFIG_IOMMU_SUPPORT is not set
+diff --git a/drivers/pinctrl/pinctrl-anyka.c b/drivers/pinctrl/pinctrl-anyka.c
+index 1f013785c..e2b180abe 100644
+--- a/drivers/pinctrl/pinctrl-anyka.c
++++ b/drivers/pinctrl/pinctrl-anyka.c
+@@ -256,7 +256,7 @@ static int anyka_pinconf_group_set(struct pinctrl_dev *pctldev,
+ 	struct group_desc *desc;
+ 	enum pin_config_param param;
+ 	const char *name;
+-	unsigned int i;
++	unsigned int i, arg;
+ 	int ret = 0;
+ 
+ 	desc = pinctrl_generic_get_group(pctldev, group_selector);
+@@ -298,6 +298,29 @@ static int anyka_pinconf_group_set(struct pinctrl_dev *pctldev,
+ 			} else
+ 				ret = -EOPNOTSUPP;
+ 			break;
++		case PIN_CONFIG_INPUT_ENABLE:
++			if (strcmp(name, "sdio")) {
++				ret = -EOPNOTSUPP;
++				break;
++			}
++			arg = pinconf_to_config_argument(configs[i]);
++			ret = regmap_update_bits(ap->syscon, ANYKA_IOCTRL1,
++						 BIT(26) | GENMASK(13, 10),
++						 arg ? BIT(26) | GENMASK(13, 10) : 0);
++			break;
++		case PIN_CONFIG_DRIVE_STRENGTH:
++			if (strcmp(name, "sdio")) {
++				ret = -EOPNOTSUPP;
++				break;
++			}
++			arg = pinconf_to_config_argument(configs[i]);
++			if (arg != 4 && arg != 8) {
++				ret = -EINVAL;
++				break;
++			}
++			ret = regmap_update_bits(ap->syscon, ANYKA_IOCTRL1,
++						 BIT(1), arg == 8 ? BIT(1) : 0);
++			break;
+ 		default:
+ 			ret = -EOPNOTSUPP;
+ 			break;
