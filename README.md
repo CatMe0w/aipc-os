@@ -84,9 +84,9 @@ To build ARM stubs or the DOOM binary, you need `arm-none-eabi-gcc`.
 
 ## Hardware
 
-- **SoC**: Anyka AK7802 (ARM926EJ-S, 248 MHz typical)
-- **RAM**: 64 MB DDR SDRAM
-- **Storage**: 512 MB MLC NAND (Hynix typical), 4x528-byte interleaved ECC layout
+- **SoC**: Anyka AK7802 (ARM926EJ-S), 248 MHz
+- **RAM**: 64 MB DDR SDRAM, 124 MHz
+- **Storage**: 512 MB SLC or MLC NAND (Hynix typical), 4x528-byte interleaved ECC layout
 - **Display**: 800x480 TFT LCD, RGB565
 - **Ethernet**: Davicom DM9000A, 8-bit parallel bus bit-banged over GPIO
 - **USB HID**: WCH CH374 USB host bridge on SPI, internal keyboard + 2 external USB-A ports
