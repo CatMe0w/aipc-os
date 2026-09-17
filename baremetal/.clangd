@@ -64,3 +64,13 @@ If:
 CompileFlags:
   Add:
     - -xc-header
+
+---
+# cpufreq/payload/ uses headers from cpufreq/stub/
+If:
+  PathMatch: probes/cpufreq/payload/.*
+CompileFlags:
+  Add:
+    - -I.
+    - -I../stub
+    - -I../../../gdbstub

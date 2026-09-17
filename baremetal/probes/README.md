@@ -11,3 +11,4 @@ Provided as-is. May not be in English.
 - [NAND read/write](nand/README.md)
 - [SYSCTRL timer semantics](timer-semantics/README.md)
 - [PS/2 touchpad](touchpad/README.md)
+- [CPU clock source](cpufreq/README.md)
