@@ -29,9 +29,23 @@ The v1.58.2 OAL reboot handler runs this indexed RTC sideband sequence through `
 4. Write RTC index 5 as `0x2001`.
 5. Wait forever for the reset.
 
-The v1.58.2 EBOOT configures the machine as a machine with no hardware RTC. It sets the BOOTARGS RTC-present flag to zero and uses `SYSCTRL+0x28` timer 5 for software timekeeping. It does not initialize the indexed RTC sideband before it enters NK.
+The v1.58.2 EBOOT treats the machine as one with no hardware RTC. It sets the BOOTARGS RTC-present flag to zero and uses `SYSCTRL+0x28` timer 5 for software timekeeping. It does not initialize the indexed RTC sideband before it enters NK.
 
-The first index 4 read of the handler never completes from a cold state. The ready indication clears and does not come back within 10,000,000 polls. Indices 0 through 5 behave the same, and so does a read with the USB controller briefly quiesced. The OAL reboot handler therefore cannot reach either watchdog write in the observed v1.58.2 hardware state.
+The first index 4 read of the handler never completes from a cold state. The ready indication clears and does not come back within 10,000,000 polls. Indices 0 through 5 behave the same, and so does a read with the USB controller briefly quiesced. The OAL reboot handler therefore cannot reach either watchdog write. [RTC Clock Source](#rtc-clock-source) gives the reason, and that reason is a property of the board.
+
+## RTC Clock Source
+
+The board does not fit the RTC crystal, thus the RTC module has no clock. This is why the indexed RTC sideband never becomes ready.
+
+The RTC module accepts one clock only, an external 32.768 kHz crystal across `XTAL32KI` (pin 138) and `XTAL32KO` (pin 139). The part has no internal oscillator for this module. The schematic marks every part of that circuit `NC`, which means not fitted: the crystal `Y3` and its two 10 pF load capacitors `C19` and `C24`. The `RTC_X1` and `RTC_X2` nets therefore reach no component.
+
+The RTC power domain is fitted. `U23`, a KB7533 LDO, takes `BAT-7.4V` through `R139` 100R and gives `RTC_3.3V`. `R7` 30K and `R77` 10K divide that down to `RTC_2.5V`. The schematic marks the rail `No Load, Iin<5uA`, thus it stays up off the battery. The RTC module has power and no clock.
+
+The sideband handshake crosses into the RTC clock domain. A domain with no clock never returns the ready indication.
+
+The watchdog output is absent as well. `RTC_WD` (pin 141) is the only output of the RTC watchdog. The schematic gives it no net, and the name appears nowhere else in the drawing. `WAKEUP` (pin 142) is the same. A fitted crystal alone would therefore give a watchdog that drives no board signal.
+
+To restore the RTC and its watchdog, fit `Y3`, `C19` and `C24`, and route `RTC_WD`. The silicon supports both. No software change replaces the missing parts.
 
 ## PowerOff.exe Policy
 
@@ -105,8 +119,6 @@ Three other things identify the power routine above: the unique read of `0x8061F
 
 ## Driver Boundary
 
-No whole-chip reboot primitive is confirmed. The WinCE `IOCTL_HAL_REBOOT` sequence depends on an RTC sideband that never becomes ready on the v1.58.2 device board, and `PowerOff.exe REBOOT` requests only the ordinary OFF state. Do not copy either path as a verified reset.
+This board gives software no hardware reset. The one reset source in the part is the RTC watchdog, and the board removes both its clock and its output. The WinCE `IOCTL_HAL_REBOOT` sequence depends on the same dead sideband, and `PowerOff.exe REBOOT` requests only the ordinary OFF state. Do not copy either path as a verified reset.
 
-## Unresolved
-
-- Whether anything on this part can perform a true hardware reset. A re-entry into the bootrom restarts the software and is reliable, see [warm-restart.md](../aipc-os-original/warm-restart.md), but no register, pin or external part is known that resets the chip itself.
+A bootrom re-entry restarts the software without a power cycle, see [warm-restart.md](../aipc-os-original/warm-restart.md). Every path in this document runs on the CPU. None of them works after a lockup that stops the CPU. After such a lockup, the operator must remove every power source: the DC supply, the battery and USB. [USB Back-Power](#usb-back-power) gives the reason USB counts as a source.

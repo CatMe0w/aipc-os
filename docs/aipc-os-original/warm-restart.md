@@ -2,7 +2,7 @@
 
 The device has no software restart. This document describes the one we built.
 
-The AK7802 has no full-chip reset register. The high half of `SYSCTRL+0x0C` holds a software reset bit for each module, but no bit resets the part. The `#RST` pin is an input, and no net on this board drives it from the SoC side. The reset path of the original firmware goes through the RTC watchdog, and that path is dead here. `OALIoCtlHalReboot` waits forever on its first indexed RTC read, because this board has no working RTC clock domain, and the wait has no timeout.
+The AK7802 has no full-chip reset register. The high half of `SYSCTRL+0x0C` holds a software reset bit for each module, but no bit resets the part. The `#RST` pin is an input, and no net on this board drives it from the SoC side. The reset path of the original firmware goes through the RTC watchdog, and that path is dead here. `OALIoCtlHalReboot` waits forever on its first indexed RTC read, because this board leaves the RTC crystal unfitted, and the wait has no timeout. See [power-management.md](../nk/power-management.md#rtc-clock-source).
 
 What remains is re-entry. A program that already runs on the part jumps back into the bootrom. The bootrom then probes storage again and loads the boot chain from the start. The device does not lose power, thus this is a restart of the software, not of the hardware. Anyka uses the same idea in the `reboot` command of their own USB boot stub.
 
