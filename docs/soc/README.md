@@ -1,9 +1,10 @@
 # SoC peripherals
 
-Hardware reference for AK7802 peripheral blocks, recovered by measurement on the device instead of from any firmware.
+Hardware reference for AK7802 peripheral blocks. It describes what the hardware does, not how any firmware drives it.
 
-AK7802 has no published datasheet. The AK98 kernel source describes some of these blocks, but AK98 is a different chip and its description does not always match. Prefer this directory when the two disagree.
+AK7802 has no published datasheet. The [AK98 kernel source](https://github.com/onyx-intl/ak98_kernel) describes some of these blocks, but AK98 is a different chip and its description does not always match the AK7802. The [Intrisit8000](https://github.com/DanielGit/Intrisit8000) BSP carries register headers for the AK7801 and AK7802 themselves, under `Include/platform/`, but those headers still contain errors. Prefer this directory when it disagrees with either of them.
 
 ## Index
 
-- [timer](timer.md): the five system controller timers. Register model, the automatic reload, the LOAD strobe, interrupt mapping, clock rate, and read cost.
+- [timer](timer.md): the five system controller timers. Register model, the automatic reload, the LOAD strobe and the false interrupt it raises, interrupt mapping, clock rate, read cost, and which timers other firmware already uses.
+- [memory controller](memory-controller.md): the DDR controller at `0x2002D000`. Register model, the command words, the self refresh sequence for a clock change, the DQS delay, the mode register, and the absence of a /3 clock divider.
