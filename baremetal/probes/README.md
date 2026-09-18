@@ -12,3 +12,4 @@ Provided as-is. May not be in English.
 - [SYSCTRL timer semantics](timer-semantics/README.md)
 - [PS/2 touchpad](touchpad/README.md)
 - [CPU clock source](cpufreq/README.md)
+- [GPIO interrupt](gpio-edge/README.md)
