@@ -23,6 +23,8 @@
 #define ITEM_GAP     16
 #define ITEM_TOP     148
 
+#define AUTOBOOT_MS  15000u
+
 #define COLOR_BG        0x080B10
 #define COLOR_BG_GRAD   0x121A26
 #define COLOR_CARD      0x161E29
@@ -48,6 +50,16 @@ static lv_obj_t *cards[ITEM_COUNT];
 static lv_obj_t *status_label;
 static lv_obj_t *kbd_label;
 static int selected;
+
+enum autoboot_state {
+    AUTOBOOT_OFF,
+    AUTOBOOT_WAIT_KBD,
+    AUTOBOOT_RUN,
+};
+
+static enum autoboot_state autoboot;
+static uint32_t autoboot_end_ms;
+static int autoboot_shown_s;
 
 static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
 {
@@ -185,6 +197,46 @@ static void activate(void)
         (void)sd_init();
 }
 
+static void autoboot_cancel(void)
+{
+    if (autoboot == AUTOBOOT_OFF)
+        return;
+    autoboot = AUTOBOOT_OFF;
+    set_status("", COLOR_TEXT);
+}
+
+static void autoboot_tick(void)
+{
+    uint32_t now = timer_ms();
+    int left_s;
+
+    if (autoboot == AUTOBOOT_WAIT_KBD) {
+        if (!kbd_ready())
+            return;
+        autoboot = AUTOBOOT_RUN;
+        autoboot_end_ms = now + AUTOBOOT_MS;
+        autoboot_shown_s = -1;
+        lv_obj_set_style_text_color(status_label,
+                                    lv_color_hex(COLOR_TEXT_DIM), 0);
+    }
+
+    if (autoboot != AUTOBOOT_RUN)
+        return;
+
+    if ((int32_t)(autoboot_end_ms - now) <= 0) {
+        autoboot = AUTOBOOT_OFF;
+        activate();
+        return;
+    }
+
+    left_s = (int)((autoboot_end_ms - now + 999u) / 1000u);
+    if (left_s != autoboot_shown_s) {
+        autoboot_shown_s = left_s;
+        lv_label_set_text_fmt(status_label, "Booting %s in %d s",
+                              items[selected].title, left_s);
+    }
+}
+
 static void update_kbd_label(void)
 {
     static int last = -1;
@@ -213,6 +265,8 @@ void ui_run(int sd_rc)
 
     if (sd_rc)
         lv_label_set_text_fmt(status_label, "No SD card, rc=%d", sd_rc);
+    else
+        autoboot = AUTOBOOT_WAIT_KBD;
 
     for (;;) {
         uint8_t key;
@@ -222,6 +276,7 @@ void ui_run(int sd_rc)
         while (kbd_pop(&key, &pressed)) {
             if (!pressed)
                 continue;
+            autoboot_cancel();
             switch (key) {
             case KBD_UP:
             case KBD_LEFT:
@@ -246,6 +301,7 @@ void ui_run(int sd_rc)
         }
 
         update_kbd_label();
+        autoboot_tick();
         lv_timer_handler();
     }
 }
