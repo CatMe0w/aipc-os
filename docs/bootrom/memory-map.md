@@ -181,7 +181,7 @@ The command bytes themselves are the standard ones: 0x00 and 0x30 to read a page
 
 ## L2 Buffer SRAM (base 0x48000000)
 
-The L2 buffer is a 5.375 KB (5504 bytes) SRAM. Every peripheral DMA path uses it as an intermediate buffer: UART, USB, NAND and SPI. The connected address range is 0x48000000-0x4800157F. Addresses 0x48001580-0x48001FFF are not connected, thus reads there return noise and writes have no effect. Accesses from 0x48002000 upward alias back with a period of 0x2000. Write-readback probing confirms this.
+The L2 buffer is a 5.375 KB (5504 bytes) SRAM in nineteen buffers. Every peripheral DMA path uses it as an intermediate buffer: UART, USB, NAND and SPI. The buffers end at 0x4800157F. The address decode covers 8 KB, because accesses from 0x48002000 upward alias back with a period of 0x2000. Addresses 0x48001580-0x48001FFF are therefore decoded but above the last buffer, thus reads there return noise and writes have no effect. Write-readback probing confirms this.
 
 ### Buffer Structure
 
@@ -194,7 +194,7 @@ The SRAM holds buffers of unequal size, back to back. Each buffer takes its own 
 | 16    | 1     | 256 B | 0x48001400 - 0x480014FF |
 | 17-18 | 2     | 64 B  | 0x48001500 - 0x4800157F |
 
-This is exactly the 5504 connected bytes, and it explains the register split. `L2CTR_BUF0_7_CFG` at 0x2002C088 covers the eight 512-byte buffers. `L2CTR_BUF8_15_CFG` at 0x2002C08C covers the eight 128-byte buffers. The UART port at 0x48001000 is buffer 8.
+The nineteen buffers sum to exactly 5504 bytes, and the grouping explains the register split. `L2CTR_BUF0_7_CFG` at 0x2002C088 covers the eight 512-byte buffers. `L2CTR_BUF8_15_CFG` at 0x2002C08C covers the eight 128-byte buffers. The UART port at 0x48001000 is buffer 8.
 
 In the 512-byte group, the enable bit for buffer `n` is bit `16 + n` of 0x2002C088 and its flush bit is bit `24 + n`. The fill level of buffer `n` is a four-bit field at bits `[4n+3:4n]` of `L2CTR_STAT_REG1` (0x2002C0A0). The NAND path of nboot exercises all three for buffer 5 and drains the data from 0x48000A00, which confirms the `base + index * 512` mapping.
 
@@ -211,11 +211,11 @@ Not every region in the 8 KB is general-purpose SRAM. Write-readback tests in US
 | 0xE70-0xFFC | 396 B | Stack | Bootrom stack. SP starts at 0x48000FFC at entry and grows down through the `usbboot_main_loop` -> `usb_irq_dispatch` -> `handle_usbboot_packet` call chain. |
 | 0x1000-0x10FF | 256 B | HW | UART buffer and control region. It holds `L2_UART_TX_PORT` (0x48001000), `L2_UART_TX_FRAC_PORT` (0x4800103C), and the UART RX page window from `L2_UART_RX_PAGE_BASE` (0x4800107C). |
 | 0x1100-0x157F | 1152 B | SRAM | Usable |
-| 0x1580-0x1FFF | 2688 B | NC | Not connected. Reads return noise, writes have no effect. |
+| 0x1580-0x1FFF | 2688 B | UA | Unimplemented. It lies above the last buffer. Reads return noise, writes have no effect. |
 
-**Status legend**: HW = hardware-managed, that is, not reliably writable by the CPU in USB boot mode. Stack = the bootrom stack, writable SRAM but in use, and free after EXECUTE. SRAM = general-purpose memory, free to use. NC = not connected, reads noise, writes ineffective.
+**Status legend**: HW = hardware-managed, that is, not reliably writable by the CPU in USB boot mode. Stack = the bootrom stack, writable SRAM but in use, and free after EXECUTE. SRAM = general-purpose memory, free to use. UA = unimplemented address, reads noise, writes ineffective.
 
-After EXECUTE gives control to a stub, the stack region (0xE70-0xFFC) and the USB staging regions (0x000-0x03F, 0x200-0x23F) become free. The UART region (0x1000-0x10FF) can stay hardware-managed, which depends on the peripheral state. The range 0x1580-0x1FFF is not connected and stays unusable in every peripheral state.
+After EXECUTE gives control to a stub, the stack region (0xE70-0xFFC) and the USB staging regions (0x000-0x03F, 0x200-0x23F) become free. The UART region (0x1000-0x10FF) can stay hardware-managed, which depends on the peripheral state. The range 0x1580-0x1FFF stores nothing and stays unusable in every peripheral state. [The Unimplemented Address RNG](../aipc-os-original/unimplemented-address-rng.md) is built from it.
 
 ### Write Granularity
 
