@@ -1,0 +1,335 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CatMe0w <CatMe0w@live.cn>
+Date: Sat, 19 Sep 2026 01:22:37 -0600
+Subject: [PATCH] hwrng: anyka: Add AK7802 unimplemented address RNG
+
+---
+ arch/arm/boot/dts/anyka/ak7802-netbook.dts |   4 +
+ arch/arm/boot/dts/anyka/ak7802.dtsi        |   6 +
+ arch/arm/configs/aipc_defconfig            |   3 +-
+ drivers/char/hw_random/Kconfig             |  14 ++
+ drivers/char/hw_random/Makefile            |   1 +
+ drivers/char/hw_random/anyka-l2rng.c       | 233 +++++++++++++++++++++
+ 6 files changed, 260 insertions(+), 1 deletion(-)
+ create mode 100644 drivers/char/hw_random/anyka-l2rng.c
+
+diff --git a/arch/arm/boot/dts/anyka/ak7802-netbook.dts b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
+index 75ece96ee..e5c613dfd 100644
+--- a/arch/arm/boot/dts/anyka/ak7802-netbook.dts
++++ b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
+@@ -165,3 +165,7 @@ &ps2 {
+ 	data-gpios = <&gpio 15 GPIO_ACTIVE_HIGH>;
+ 	status = "okay";
+ };
++
++&l2rng {
++	status = "okay";
++};
+diff --git a/arch/arm/boot/dts/anyka/ak7802.dtsi b/arch/arm/boot/dts/anyka/ak7802.dtsi
+index cdf681ac0..feddce534 100644
+--- a/arch/arm/boot/dts/anyka/ak7802.dtsi
++++ b/arch/arm/boot/dts/anyka/ak7802.dtsi
+@@ -92,6 +92,12 @@ ps2: ps2@20026000 {
+ 		status = "disabled";
+ 	};
+ 
++	l2rng: rng@48001580 {
++		compatible = "anyka,ak7802-l2rng";
++		reg = <0x48001580 0xa80>;
++		status = "disabled";
++	};
++
+ 	main_intc: interrupt-controller@8000000 {
+ 		compatible = "anyka,ak880x-intc";
+ 		reg = <0x8000000 0x1000>;
+diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
+index 7befab846..01cd7c4fe 100644
+--- a/arch/arm/configs/aipc_defconfig
++++ b/arch/arm/configs/aipc_defconfig
+@@ -48,7 +48,7 @@ CONFIG_KEYBOARD_GPIO_POLLED=y
+ CONFIG_MOUSE_PS2=y
+ CONFIG_SERIO=y
+ CONFIG_SERIO_ANYKA_PS2=y
+-# CONFIG_HW_RANDOM is not set
++CONFIG_HW_RANDOM=y
+ # CONFIG_PTP_1588_CLOCK is not set
+ CONFIG_POWER_RESET=y
+ CONFIG_POWER_RESET_GPIO=y
+@@ -85,3 +85,4 @@ CONFIG_DEBUG_FS=y
+ # CONFIG_SLUB_DEBUG is not set
+ CONFIG_SCHEDSTATS=y
+ # CONFIG_FTRACE is not set
++CONFIG_HW_RANDOM_ANYKA_L2=y
+diff --git a/drivers/char/hw_random/Kconfig b/drivers/char/hw_random/Kconfig
+index a5bcef4a5..a08e80229 100644
+--- a/drivers/char/hw_random/Kconfig
++++ b/drivers/char/hw_random/Kconfig
+@@ -636,6 +636,20 @@ config HW_RANDOM_XILINX
+ 	  To compile this driver as a module, choose M here: the module
+ 	  will be called xilinx-trng.
+ 
++config HW_RANDOM_ANYKA_L2
++	tristate "Anyka AK7802 unimplemented address RNG"
++	depends on ARCH_ANYKA || COMPILE_TEST
++	default HW_RANDOM
++	help
++	  This driver provides kernel-side support for the random number
++	  generator built from the L2 buffer addresses that the SRAM array
++	  does not reach on the Anyka AK7802.
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called anyka-l2rng.
++
++	  If unsure, say Y.
++
+ endif # HW_RANDOM
+ 
+ config UML_RANDOM
+diff --git a/drivers/char/hw_random/Makefile b/drivers/char/hw_random/Makefile
+index 95b5adb49..5411576b2 100644
+--- a/drivers/char/hw_random/Makefile
++++ b/drivers/char/hw_random/Makefile
+@@ -54,3 +54,4 @@ obj-$(CONFIG_HW_RANDOM_POLARFIRE_SOC) += mpfs-rng.o
+ obj-$(CONFIG_HW_RANDOM_ROCKCHIP) += rockchip-rng.o
+ obj-$(CONFIG_HW_RANDOM_JH7110) += jh7110-trng.o
+ obj-$(CONFIG_HW_RANDOM_XILINX) += xilinx-trng.o
++obj-$(CONFIG_HW_RANDOM_ANYKA_L2) += anyka-l2rng.o
+diff --git a/drivers/char/hw_random/anyka-l2rng.c b/drivers/char/hw_random/anyka-l2rng.c
+new file mode 100644
+index 000000000..647f36e13
+--- /dev/null
++++ b/drivers/char/hw_random/anyka-l2rng.c
+@@ -0,0 +1,233 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Anyka AK7802 unimplemented address RNG.
++ *
++ * Copyright (C) 2026 CatMe0w
++ */
++
++#include <linux/bitops.h>
++#include <linux/hw_random.h>
++#include <linux/io.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++
++#define APT_WINDOW		512
++
++#define STARTUP_SAMPLES		1024
++
++#define SCAN_SAMPLES		256
++#define ESTIMATE_SAMPLES	8192
++#define LIVE_FLIP_PERMILLE	10
++
++#define RCT_CUTOFF		401
++#define APT_CUTOFF		510
++
++#define FAIL_WINDOW		4096
++
++struct anyka_l2rng {
++	struct hwrng rng;
++	struct device *dev;
++	void __iomem *src;
++
++	u32 rct_last;
++	unsigned int rct_count;
++
++	u32 apt_ref;
++	unsigned int apt_count;
++	unsigned int apt_pos;
++
++	bool failed;
++	bool seen_fail;
++	unsigned int since_fail;
++};
++
++static void l2rng_health_reset(struct anyka_l2rng *priv)
++{
++	priv->rct_count = 0;
++	priv->apt_pos = APT_WINDOW;
++}
++
++static bool l2rng_health_feed(struct anyka_l2rng *priv, u32 sample)
++{
++	if (priv->rct_count && sample == priv->rct_last) {
++		if (++priv->rct_count >= RCT_CUTOFF)
++			return false;
++	} else {
++		priv->rct_last = sample;
++		priv->rct_count = 1;
++	}
++
++	if (priv->apt_pos >= APT_WINDOW) {
++		priv->apt_ref = sample;
++		priv->apt_count = 1;
++		priv->apt_pos = 1;
++		return true;
++	}
++
++	priv->apt_pos++;
++	if (sample == priv->apt_ref && ++priv->apt_count >= APT_CUTOFF)
++		return false;
++
++	return true;
++}
++
++static unsigned int l2rng_flip_permille(void __iomem *src, unsigned int n)
++{
++	unsigned int flips[32] = { };
++	unsigned int best = 0;
++	u32 prev = readl_relaxed(src);
++	unsigned int i, bit;
++
++	for (i = 1; i < n; i++) {
++		u32 cur = readl_relaxed(src);
++		u32 diff = cur ^ prev;
++
++		while (diff) {
++			bit = __ffs(diff);
++			flips[bit]++;
++			diff &= diff - 1;
++		}
++		prev = cur;
++	}
++
++	for (bit = 0; bit < 32; bit++)
++		best = max(best, flips[bit]);
++
++	return best * 1000 / (n - 1);
++}
++
++static int l2rng_read(struct hwrng *rng, void *buf, size_t max, bool wait)
++{
++	struct anyka_l2rng *priv = container_of(rng, struct anyka_l2rng, rng);
++	u32 *out = buf;
++	size_t words = max / sizeof(*out);
++	size_t i;
++
++	if (priv->failed)
++		return -EIO;
++
++	for (i = 0; i < words; i++) {
++		u32 sample = readl_relaxed(priv->src);
++
++		if (priv->since_fail < FAIL_WINDOW)
++			priv->since_fail++;
++
++		if (l2rng_health_feed(priv, sample)) {
++			out[i] = sample;
++			continue;
++		}
++
++		if (priv->seen_fail && priv->since_fail < FAIL_WINDOW) {
++			priv->failed = true;
++			dev_err(priv->dev,
++				"health test failed again after %u samples, output stopped\n",
++				priv->since_fail);
++			return -EIO;
++		}
++
++		priv->seen_fail = true;
++		priv->since_fail = 0;
++		l2rng_health_reset(priv);
++		dev_warn_ratelimited(priv->dev,
++				     "health test failed, output discarded\n");
++		return -EIO;
++	}
++
++	return words * sizeof(*out);
++}
++
++static void __iomem *l2rng_scan(void __iomem *base, resource_size_t size)
++{
++	resource_size_t off;
++
++	for (off = 0; off + sizeof(u32) <= size; off += sizeof(u32)) {
++		void __iomem *src = base + off;
++
++		if (l2rng_flip_permille(src, SCAN_SAMPLES) >= LIVE_FLIP_PERMILLE)
++			return src;
++	}
++
++	return NULL;
++}
++
++static int l2rng_startup_test(struct anyka_l2rng *priv)
++{
++	unsigned int i;
++
++	l2rng_health_reset(priv);
++
++	for (i = 0; i < STARTUP_SAMPLES; i++) {
++		if (!l2rng_health_feed(priv, readl_relaxed(priv->src)))
++			return -EIO;
++	}
++
++	l2rng_health_reset(priv);
++	return 0;
++}
++
++static int l2rng_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct anyka_l2rng *priv;
++	struct resource *res;
++	void __iomem *base;
++	unsigned int flip;
++	int ret;
++
++	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
++	if (!priv)
++		return -ENOMEM;
++
++	base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
++	if (IS_ERR(base))
++		return PTR_ERR(base);
++
++	priv->dev = dev;
++
++	priv->src = l2rng_scan(base, resource_size(res));
++	if (!priv->src) {
++		dev_info(dev, "no address in the window changes, not registering\n");
++		return -ENODEV;
++	}
++
++	flip = l2rng_flip_permille(priv->src, ESTIMATE_SAMPLES);
++
++	ret = l2rng_startup_test(priv);
++	if (ret) {
++		dev_info(dev, "startup health test failed, not registering\n");
++		return ret;
++	}
++
++	priv->rng.name = "anyka-l2rng";
++	priv->rng.read = l2rng_read;
++	priv->rng.quality = 1;
++
++	ret = devm_hwrng_register(dev, &priv->rng);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to register\n");
++
++	dev_info(dev, "at %pa, best bit changes %u.%u%% of reads\n",
++		 &res->start, flip / 10, flip % 10);
++
++	return 0;
++}
++
++static const struct of_device_id l2rng_of_match[] = {
++	{ .compatible = "anyka,ak7802-l2rng" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, l2rng_of_match);
++
++static struct platform_driver l2rng_driver = {
++	.probe = l2rng_probe,
++	.driver = {
++		.name = "anyka-l2rng",
++		.of_match_table = l2rng_of_match,
++	},
++};
++module_platform_driver(l2rng_driver);
++
++MODULE_DESCRIPTION("Anyka AK7802 unimplemented address RNG");
++MODULE_LICENSE("GPL");
