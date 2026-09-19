@@ -13,3 +13,4 @@ Provided as-is. May not be in English.
 - [PS/2 touchpad](touchpad/README.md)
 - [CPU clock source](cpufreq/README.md)
 - [GPIO interrupt](gpio-edge/README.md)
+- [Unimplemented window RNG](rng/README.md)
