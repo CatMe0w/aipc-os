@@ -92,7 +92,7 @@ index ee412e6b8..728207043 100644
  obj-$(CONFIG_MMC_TOSHIBA_PCI)	+= toshsd.o
 diff --git a/drivers/mmc/host/anyka-mmc.c b/drivers/mmc/host/anyka-mmc.c
 new file mode 100644
-index 000000000..2127c2df7
+index 000000000..4b2ca03ef
 --- /dev/null
 +++ b/drivers/mmc/host/anyka-mmc.c
 @@ -0,0 +1,1235 @@
@@ -1263,7 +1263,7 @@ index 000000000..2127c2df7
 +			       "anyka-mci", host);
 +	if (ret)
 +		return dev_err_probe(dev, ret, "failed to request MCI IRQ\n");
-+	ret = devm_request_irq(dev, host->l2_irq, anyka_mmc_l2_irq, 0,
++	ret = devm_request_irq(dev, host->l2_irq, anyka_mmc_l2_irq, IRQF_SHARED,
 +			       "anyka-l2-dma", host);
 +	if (ret)
 +		return dev_err_probe(dev, ret, "failed to request L2 IRQ\n");

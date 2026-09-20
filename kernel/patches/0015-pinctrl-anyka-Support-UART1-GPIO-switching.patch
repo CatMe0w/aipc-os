@@ -127,7 +127,7 @@ index 76a6fce3a..03957780c 100644
  	{ }
  };
 diff --git a/drivers/pinctrl/pinctrl-anyka.c b/drivers/pinctrl/pinctrl-anyka.c
-index 039ee4fe8..1f013785c 100644
+index 3a52304b3..a2a5a5eb4 100644
 --- a/drivers/pinctrl/pinctrl-anyka.c
 +++ b/drivers/pinctrl/pinctrl-anyka.c
 @@ -131,6 +131,7 @@ static const unsigned int nand_pins[] = { 30, 31, 32, 33, 34, 35, 36, 37 };

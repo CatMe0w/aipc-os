@@ -119,7 +119,7 @@ index fd56b3fba..4fa4e9fc6 100644
  # CONFIG_VHOST_MENU is not set
  # CONFIG_IOMMU_SUPPORT is not set
 diff --git a/drivers/pinctrl/pinctrl-anyka.c b/drivers/pinctrl/pinctrl-anyka.c
-index 1f013785c..e2b180abe 100644
+index a2a5a5eb4..fd82840d7 100644
 --- a/drivers/pinctrl/pinctrl-anyka.c
 +++ b/drivers/pinctrl/pinctrl-anyka.c
 @@ -256,7 +256,7 @@ static int anyka_pinconf_group_set(struct pinctrl_dev *pctldev,

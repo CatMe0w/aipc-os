@@ -132,7 +132,7 @@ index a35d71135..0bb9c7620 100644
  obj-$(CONFIG_PINCTRL_AT91)	+= pinctrl-at91.o
 diff --git a/drivers/pinctrl/pinctrl-anyka.c b/drivers/pinctrl/pinctrl-anyka.c
 new file mode 100644
-index 000000000..039ee4fe8
+index 000000000..3a52304b3
 --- /dev/null
 +++ b/drivers/pinctrl/pinctrl-anyka.c
 @@ -0,0 +1,375 @@
@@ -263,7 +263,7 @@ index 000000000..039ee4fe8
 +};
 +
 +static const unsigned int lcd_pins[] = {
-+	61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71,
++	61, 62, 63, 64, 65, 66, 67, 68, 71,
 +};
 +static const unsigned int nand_pins[] = { 30, 31, 32, 33, 34, 35, 36, 37 };
 +static const unsigned int sdmmc1_pins[] = { 30, 31, 32, 33, 34, 35, 36, 37 };
@@ -272,7 +272,7 @@ index 000000000..039ee4fe8
 +static const unsigned int spi1_pins[] = { 76, 77, 78, 79 };
 +
 +static const struct anyka_pmx_reg lcd_regs[] = {
-+	{ ANYKA_SHAREPIN_CON1, GENMASK(28, 25), GENMASK(28, 25) },
++	{ ANYKA_SHAREPIN_CON1, GENMASK(28, 25), BIT(28) | GENMASK(26, 25) },
 +};
 +
 +static const struct anyka_pmx_reg nand_regs[] = {

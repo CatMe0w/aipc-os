@@ -8,7 +8,7 @@ Subject: [PATCH] mmc: anyka: Prepare the AK7802 SDIO controller
  1 file changed, 225 insertions(+), 55 deletions(-)
 
 diff --git a/drivers/mmc/host/anyka-mmc.c b/drivers/mmc/host/anyka-mmc.c
-index 2127c2df7..8f32288b3 100644
+index 4b2ca03ef..c9b66f0f0 100644
 --- a/drivers/mmc/host/anyka-mmc.c
 +++ b/drivers/mmc/host/anyka-mmc.c
 @@ -20,6 +20,7 @@
@@ -599,13 +599,13 @@ index 2127c2df7..8f32288b3 100644
  			       "anyka-mci", host);
  	if (ret)
  		return dev_err_probe(dev, ret, "failed to request MCI IRQ\n");
--	ret = devm_request_irq(dev, host->l2_irq, anyka_mmc_l2_irq, 0,
+-	ret = devm_request_irq(dev, host->l2_irq, anyka_mmc_l2_irq, IRQF_SHARED,
 -			       "anyka-l2-dma", host);
 -	if (ret)
 -		return dev_err_probe(dev, ret, "failed to request L2 IRQ\n");
 +	if (host->l2_base) {
-+		ret = devm_request_irq(dev, host->l2_irq, anyka_mmc_l2_irq, 0,
-+				       "anyka-l2-dma", host);
++		ret = devm_request_irq(dev, host->l2_irq, anyka_mmc_l2_irq,
++				       IRQF_SHARED, "anyka-l2-dma", host);
 +		if (ret)
 +			return dev_err_probe(dev, ret, "failed to request L2 IRQ\n");
 +	}
