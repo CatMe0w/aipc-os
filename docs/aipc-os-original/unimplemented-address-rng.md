@@ -1,4 +1,4 @@
-# Unimplemented Address RNG
+# Unimplemented-Address RNG
 
 A read of the unimplemented addresses of the L2 buffer SRAM returns a value that changes between reads. This document reports what that value does, how much of it is unpredictable, what changes it, and the driver built on it. The physical cause of the change is not known.
 

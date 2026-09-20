@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: CatMe0w <CatMe0w@live.cn>
 Date: Sat, 19 Sep 2026 01:22:37 -0600
-Subject: [PATCH] hwrng: anyka: Add AK7802 unimplemented address RNG
+Subject: [PATCH] hwrng: anyka: Add AK7802 unimplemented-address RNG
 
 ---
  arch/arm/boot/dts/anyka/ak7802-netbook.dts |   4 +
@@ -61,7 +61,7 @@ index 7befab846..01cd7c4fe 100644
  # CONFIG_FTRACE is not set
 +CONFIG_HW_RANDOM_ANYKA_L2=y
 diff --git a/drivers/char/hw_random/Kconfig b/drivers/char/hw_random/Kconfig
-index a5bcef4a5..a08e80229 100644
+index a5bcef4a5..db9b5a57b 100644
 --- a/drivers/char/hw_random/Kconfig
 +++ b/drivers/char/hw_random/Kconfig
 @@ -636,6 +636,20 @@ config HW_RANDOM_XILINX
@@ -69,7 +69,7 @@ index a5bcef4a5..a08e80229 100644
  	  will be called xilinx-trng.
  
 +config HW_RANDOM_ANYKA_L2
-+	tristate "Anyka AK7802 unimplemented address RNG"
++	tristate "Anyka AK7802 unimplemented-address RNG"
 +	depends on ARCH_ANYKA || COMPILE_TEST
 +	default HW_RANDOM
 +	help
@@ -96,13 +96,13 @@ index 95b5adb49..5411576b2 100644
 +obj-$(CONFIG_HW_RANDOM_ANYKA_L2) += anyka-l2rng.o
 diff --git a/drivers/char/hw_random/anyka-l2rng.c b/drivers/char/hw_random/anyka-l2rng.c
 new file mode 100644
-index 000000000..647f36e13
+index 000000000..bed9f27de
 --- /dev/null
 +++ b/drivers/char/hw_random/anyka-l2rng.c
 @@ -0,0 +1,233 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
-+ * Anyka AK7802 unimplemented address RNG.
++ * Anyka AK7802 unimplemented-address RNG.
 + *
 + * Copyright (C) 2026 CatMe0w
 + */
@@ -331,5 +331,5 @@ index 000000000..647f36e13
 +};
 +module_platform_driver(l2rng_driver);
 +
-+MODULE_DESCRIPTION("Anyka AK7802 unimplemented address RNG");
++MODULE_DESCRIPTION("Anyka AK7802 unimplemented-address RNG");
 +MODULE_LICENSE("GPL");

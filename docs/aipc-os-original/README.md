@@ -8,7 +8,7 @@ The split also settles a question that comes up in every driver: does the hardwa
 
 ## Index
 
-- [Unimplemented Address RNG](unimplemented-address-rng.md): a hardware entropy source built from L2 addresses that the SRAM array does not reach. What a read of them returns, how much of it is unpredictable, what changes it, and the kernel driver built on it.
+- [Unimplemented-Address RNG](unimplemented-address-rng.md): a hardware entropy source built from L2 addresses that the SRAM array does not reach. What a read of them returns, how much of it is unpredictable, what changes it, and the kernel driver built on it.
 - [Faster SD/MMC Driver](faster-sd-driver.md): request size, clock and DMA choices in the Linux MMC host driver, and the throughput they reach.
 - [Ethernet Driver](ethernet-driver.md): the GPIO-bitbanged (software-timed) DM9000 backend, the offloads it enables, and the gap against the mainline driver.
 - [Warm Restart](warm-restart.md): the software restart that this device does not have, built from a jump back into the bootrom, and the one condition that makes it reliable.

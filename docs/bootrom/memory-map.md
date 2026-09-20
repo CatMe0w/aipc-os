@@ -215,7 +215,7 @@ Not every region in the 8 KB is general-purpose SRAM. Write-readback tests in US
 
 **Status legend**: HW = hardware-managed, that is, not reliably writable by the CPU in USB boot mode. Stack = the bootrom stack, writable SRAM but in use, and free after EXECUTE. SRAM = general-purpose memory, free to use. UA = unimplemented address, reads noise, writes ineffective.
 
-After EXECUTE gives control to a stub, the stack region (0xE70-0xFFC) and the USB staging regions (0x000-0x03F, 0x200-0x23F) become free. The UART region (0x1000-0x10FF) can stay hardware-managed, which depends on the peripheral state. The range 0x1580-0x1FFF stores nothing and stays unusable in every peripheral state. [The Unimplemented Address RNG](../aipc-os-original/unimplemented-address-rng.md) is built from it.
+After EXECUTE gives control to a stub, the stack region (0xE70-0xFFC) and the USB staging regions (0x000-0x03F, 0x200-0x23F) become free. The UART region (0x1000-0x10FF) can stay hardware-managed, which depends on the peripheral state. The range 0x1580-0x1FFF stores nothing and stays unusable in every peripheral state. [The Unimplemented-Address RNG](../aipc-os-original/unimplemented-address-rng.md) is built from it.
 
 ### Write Granularity
 
