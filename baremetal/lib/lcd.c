@@ -25,20 +25,6 @@ static void busy_wait(volatile uint32_t count)
         ;
 }
 
-static void gpio_set_output(uint32_t pin, uint32_t value)
-{
-    uint32_t bank = (pin >> 5) & 3u;
-    uint32_t bit = pin & 0x1Fu;
-    uint32_t dir = 0x08000000u + 0x7Cu + 8u * bank;
-    uint32_t out = 0x08000000u + 0x80u + 8u * bank;
-
-    REG32(dir) &= ~(1u << bit);
-    if (value)
-        REG32(out) |= (1u << bit);
-    else
-        REG32(out) &= ~(1u << bit);
-}
-
 void lcd_fill(uint16_t color)
 {
     volatile uint16_t *fb = (volatile uint16_t *)(uintptr_t)FB_ADDR;
@@ -51,11 +37,6 @@ void lcd_init(void)
 {
     SYSCTRL(0x74) = 0x00000008u;
     SYSCTRL(0x78) = 0x564F0010u;
-
-    /* Panel power rails and reset. */
-    gpio_set_output(104, 1);
-    gpio_set_output(69, 0);
-    gpio_set_output(4, 0);
 
     uint32_t clk_gate = SYSCTRL(0x0C) & ~SYSCTRL_CLK_LCD_EN_N;
     SYSCTRL(0x0C) = clk_gate | SYSCTRL_LCD_RESET;

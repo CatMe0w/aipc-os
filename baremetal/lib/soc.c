@@ -21,9 +21,14 @@
 
 #define NF_TIMING0_BLK0     REG32(0x2002A05Cu)
 
+#define SYSCTRL_GPIO3_DIR   REG32(0x0800008Cu)
+#define SYSCTRL_GPIO3_OUT   REG32(0x08000090u)
+#define AMP_ENABLE_BIT      0x00000020u   /* GPIO69, both speaker amplifiers */
+
 #define SYSCTRL_GPIO4_DIR   REG32(0x08000094u)
 #define SYSCTRL_GPIO4_OUT   REG32(0x08000098u)
 #define POWER_ON_BIT        0x00000200u   /* GPIO105 = DGPIO3 = POWER_ON */
+#define WORK_LED_BIT        0x00000100u   /* GPIO104 = DGPIO2 = WORK_STATUS */
 
 #define UART_TX_LIMIT       0x00100000u
 
@@ -68,6 +73,27 @@ void power_hold(void)
 {
     SYSCTRL_GPIO4_OUT |= POWER_ON_BIT;
     SYSCTRL_GPIO4_DIR &= ~POWER_ON_BIT;
+}
+
+/* The work status LED. Its net also carries the USB_BOOT strap, so the bootrom
+ * leaves the pin an input and the LED stays dark until software drives it. */
+void work_led(uint32_t on)
+{
+    if (on)
+        SYSCTRL_GPIO4_OUT |= WORK_LED_BIT;
+    else
+        SYSCTRL_GPIO4_OUT &= ~WORK_LED_BIT;
+    SYSCTRL_GPIO4_DIR &= ~WORK_LED_BIT;
+}
+
+/* Both speaker amplifiers, active high. See docs/soc/audio.md. */
+void speaker_amp(uint32_t on)
+{
+    if (on)
+        SYSCTRL_GPIO3_OUT |= AMP_ENABLE_BIT;
+    else
+        SYSCTRL_GPIO3_OUT &= ~AMP_ENABLE_BIT;
+    SYSCTRL_GPIO3_DIR &= ~AMP_ENABLE_BIT;
 }
 
 void nf_hw_init(void)

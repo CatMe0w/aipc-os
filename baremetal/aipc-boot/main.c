@@ -40,6 +40,8 @@ static void map_memory(void)
 void boot_main(void)
 {
     power_hold();
+    work_led(1);
+    speaker_amp(0);
 
     uart_init();
     log_init();

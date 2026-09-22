@@ -5,6 +5,8 @@ void uart_init(void);
 void uart_putc(char c);
 
 void power_hold(void);
+void work_led(uint32_t on);
+void speaker_amp(uint32_t on);
 
 void l2_init(void);
 void nf_hw_init(void);
