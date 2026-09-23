@@ -156,7 +156,7 @@ In the current clean image this RAM-resident table reads as all `0xFF`. The stat
 Key signals that other EBOOT documents reference:
 
 - `GPIO1[9]` = `WLED_PWM`, the LCD backlight PWM output (see [lcd-driver.md](lcd-driver.md))
-- `GPIO4[8]` = `DGPIO2` = the `USB_BOOT` strap pin, held high to prevent a re-entry into USB boot mode after a warm reset
+- `GPIO4[8]` = `DGPIO2` = the `USB_BOOT` strap pin. The same net drives the work-status LED, and EBOOT holds it high to light the LED. It cannot hold a strap value across a reset, because the bootrom forces the pin back to an input before it samples it.
 
 ## Unresolved
 

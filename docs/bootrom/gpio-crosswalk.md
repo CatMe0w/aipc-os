@@ -116,7 +116,7 @@ EBOOT routes pads with `gpio_enable_alt(id)`, where `id` runs 0 to 56 and has no
 | 79 | `GPIO3[15]` | `GPIO79` | `SPI_DIN` |
 | 102 | `GPIO4[6]` | `DGPIO0` | `GPIO0 -> Z_nSMCS0` |
 | 103 | `GPIO4[7]` | `DGPIO1` | `GPIO1 -> AC_DET` |
-| 104 | `GPIO4[8]` | `DGPIO2` | `USB_BOOT` |
+| 104 | `GPIO4[8]` | `DGPIO2` | `USB_BOOT -> WORK_STATUS` |
 | 105 | `GPIO4[9]` | `DGPIO3` | `BOOT0 -> POWER_ON` |
 | 106 or 107 | `GPIO4[10]` or `[11]` | `DGPIO19` | `GPIO19 -> SPI_CS#` |
 | 106 or 107 | `GPIO4[10]` or `[11]` | `DGPIO28` | `GPIO28 -> USB_SLAEN` |
@@ -129,7 +129,7 @@ The last six rows of the table are hard to read, because the dedicated window is
 | --- | --- | --- | --- | --- | --- | --- |
 | 102 | `GPIO4[6]` | `GPIO4[in 3]` | `DGPIO0` | 206 | `GPIO0` | `Z_nSMCS0` |
 | 103 | `GPIO4[7]` | `GPIO4[in 4]` | `DGPIO1` | 208 | `GPIO1` | `AC_DET` |
-| 104 | `GPIO4[8]` | `GPIO4[in 5]` | `DGPIO2` | 210 | `USB_BOOT` | - |
+| 104 | `GPIO4[8]` | `GPIO4[in 5]` | `DGPIO2` | 210 | `USB_BOOT` | `WORK_STATUS` |
 | 105 | `GPIO4[9]` | `GPIO4[in 6]` | `DGPIO3` | 51 | `BOOT0` | `POWER_ON` |
 | 106 or 107 | `GPIO4[10]` or `[11]` | `GPIO4[in 7]` or `[in 8]` | `DGPIO19` | 55 | `GPIO19` | `SPI_CS#` |
 | 106 or 107 | `GPIO4[10]` or `[11]` | `GPIO4[in 7]` or `[in 8]` | `DGPIO28` | 53 | `GPIO28` | `USB_SLAEN` |
@@ -149,6 +149,14 @@ In this window only, the input bit is the output bit minus 3. Hardware confirms 
 #### The net names in the last two columns are net labels
 
 The net `GPIO0` is on pin `DGPIO0`, not on the SoC pin `GPIO0`, which is package pin 41 and carries `TMS`. The net `GPIO28` is worse, because a SoC pin `GPIO28` also exists, at `GPIO1[28]`, and it carries `WIFI_SDIO_CLK`.
+
+#### `USB_BOOT` also drives the work-status LED
+
+A high output on pin 104 lights the LED, and a low output puts it out. The net drives the base of an NPN emitter follower through 47 kOhm, and the emitter is `WORK_STATUS`, pin 9 of the indicator connector `J7`. An emitter follower does not invert, which agrees with a measurement: a low output puts the LED out, and the panel keeps its picture.
+
+The bootrom leaves the pin as an input after it samples the strap. A 100 kOhm resistor pulls the net to ground, thus the LED stays dark until software drives the pin high. The USB boot button connects the same net to `3V3_CPU`, so it lights the LED too.
+
+The other two indicator signals on `J7` are not GPIOs. `POWLED`, pin 10, is `VBAT` through 1.5 kOhm. `CHARGE_STAT`, pin 11, is the `CHRG` output of the charger IC.
 
 #### `BOOT0` and `POWER_ON` are one wire with two roles
 

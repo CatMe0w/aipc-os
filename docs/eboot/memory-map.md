@@ -20,7 +20,7 @@ EBOOT touches several SYSCTRL offsets beyond the bootrom set. The new ones are b
 | Offset | Usage |
 | --- | --- |
 | +0x04 | CPU PLL configuration (see _CPU Clock Formula_ below) |
-| +0x0C | Peripheral reset and clock gate. Bit 3 = LCD clock enable, inverted polarity, clear to enable. Bit 19 = LCD reset pulse. |
+| +0x0C | Peripheral reset and clock gate. Bits 3 and 19 belong to the LCD, see [docs/soc/lcd.md](../soc/lcd.md). |
 | +0x2C | PWM high and low time: `(high_ticks << 16) | low_ticks`. Base tick = 12 MHz. |
 | +0x74 | Sharepin mux register 0. The bootrom documents its existence, and EBOOT uses new bits. |
 | +0x78 | Sharepin mux register 1, mixed polarity. See `gpio-driver.md`. |

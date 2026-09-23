@@ -39,7 +39,7 @@ EBOOT is linked for virtual `0x80038000` but executes from physical `0x30038000`
 - [Partition Format](partition-format.md): `PTB` block layout, entry table, the eight standard partition tags, factory defaults, and the `ECEC` sub-image container inside the `NK` partition.
 - [GPIO Driver](gpio-driver.md): GPIO register model, two independent pin numbering systems, the 57-entry alt-function dispatch table, and the hypothesized GPIO interrupt controller.
 - [NAND Driver](nand-driver.md): NAND sequencer usage, the interleaved physical page layout of 512 data bytes plus 16 ECC bytes, chip-database driven geometry, and the fresh-READ-per-chunk access pattern.
-- [LCD Driver](lcd-driver.md): LCD controller register map, end-to-end bring-up sequence, 800x480 panel timing, framebuffer placement, and PWM backlight.
+- [LCD Driver](lcd-driver.md): the end-to-end bring-up sequence, the different refresh rate EBOOT leaves behind, framebuffer placement, and where the backlight comes from. The controller itself is in [docs/soc/lcd.md](../soc/lcd.md).
 - [Ethernet Driver](ethernet-driver.md): ENC28J60 driver layer, the OEM Ethernet HAL vtable, the BOOTME/TFTP/EDBG download state machine, and the hardcoded network defaults.
 - [USB HID Input](usb-hid-input.md): CH374 USB-over-SPI bridge, HID boot-protocol keyboard path, and the maintenance-mode password gate.
 - [Maintenance Mode](maintenance-mode.md): the hidden factory and service menu - menu items, format and update handlers, partition type mapping, and the "Format Nand disk" stub.

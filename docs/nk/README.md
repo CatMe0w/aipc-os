@@ -19,7 +19,7 @@ Mask ROM bootrom -> nboot -> EBOOT -> NK (WinCE kernel)
 - [Partition and ECEC Layout](partition-and-ecec-layout.md): NK child partition table, ECEC image header, periodic metadata pages, logical-to-raw-offset formula, and chain information record.
 - [ROMHDR and TOC](romhdr-and-toc.md): WinCE `ROMHDR` structure, ROM module table, ROM file table, compact `e32_rom` header, and compact `o32_rom` section descriptors.
 - [Module Rebuild](module-rebuild.md): how to turn a ROM module descriptor into a PE file for a decompiler, with image base selection, section byte extraction, in-image pointer relocation, export directory synthesis, and import directory exposure.
-- [Display Driver](display-driver.md): LCD MMIO mapping, framebuffer address model, and confirmed LCD register fields.
+- [Display Driver](display-driver.md): where the panel timing lives, the MMIO mapping, and the two framebuffer address domains the driver keeps apart. The controller itself is in [docs/soc/lcd.md](../soc/lcd.md).
 - [SDHC Driver](sdhc-driver.md): command, PIO, L2 DMA, clock and interrupt behavior of the WinCE `sdhc_anyka.dll`.
 - [DM9000 Ethernet Driver](dm9000-driver.md): DM9000A board wiring, the GPIO-timed parallel bus protocol, and the structure of the WinCE `dm9000x.dll`.
 - [Power Management](power-management.md): WinCE power-state policy, OAL poweroff through GPIO105, and the unverified RTC reboot path.

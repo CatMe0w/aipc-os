@@ -96,7 +96,7 @@ The respective drivers enable their own alt functions later, not `hw_phase1_init
 After `hw_phase1_init` returns, `oem_platform_init` does this:
 
 1. **Power-on-reason setup** (`power_on_reason_init`). It reads the power-on reason, configures the keep-power-on GPIO path, drives GPIO pin `104` high, and stores the reason in bootargs.
-2. **Panel GPIO preset**. It looks up the panel reset pin and the panel power pin, and drives both low. On v1.88 these helpers return pin `69` and pin `4`.
+2. **GPIO preset**. It drives two board pins low, through the helpers `get_lcd_panel_reset_pin` and `get_lcd_panel_power_pin`. On v1.88 they return pin `69` and pin `4`. Neither pin reaches the panel on this board: pin `69` enables the speaker amplifiers (see [docs/soc/audio.md](../soc/audio.md)), and pin `4` is `KEY_L` (see [NK Touchpad Driver](../nk/touchpad-driver.md)). The panel reset is `LCD+0x08`, a controller register.
 3. **LCD bring-up** (`lcd_init`). It programs the LCD controller.
 4. **Framebuffer console setup**. It clears 5 MB at `0x87B00000`, initializes the console framebuffer parameters, and prints the version and banner strings.
 5. **Touchpad init**. It calls `touchpad_init_1`, samples one keycode, then calls `touchpad_init_3`.
@@ -226,7 +226,7 @@ If an `EDBG_CMD_JUMPIMG` command already filled the launch-state globals, `check
 
 1. Read a power-on reason code from a helper path, and print one of `REASON_PWRBTN`, `REASON_USB`, `REASON_CHARGER`, `REASON_ALARM`, `REASON_NONE`, or a raw decimal reason value.
 2. Look up a board-specific "KeepPowerOn" pin. If it exists, configure it through `gpio_bank_config_write`, one aux-config helper, and `gpio_bank_data_write`.
-3. Drive GPIO pin `104` high in every case, through `gpio_set_value(104, 1)`.
+3. Drive GPIO pin `104` high in every case, through `gpio_set_value(104, 1)`. This lights the work-status LED (see [docs/bootrom/gpio-crosswalk.md](../bootrom/gpio-crosswalk.md)).
 4. Store the final power-on reason code to bootargs at `0xA002084C`.
 
 The keep-power-on GPIO is board-specific, and the lookup is indirect. The fixed pin `104` write is present in the verified v1.88 path.
