@@ -14,3 +14,4 @@ Provided as-is. May not be in English.
 - [CPU clock source](cpufreq/README.md)
 - [GPIO interrupt](gpio-edge/README.md)
 - [Unimplemented-address RNG](rng/README.md)
+- [LCD timing](lcd-timing/README.md)
