@@ -7,6 +7,7 @@
  */
 
 #include "boot.h"
+#include "eboot_patch.h"
 #include "fat.h"
 #include "lcd.h"
 #include "log.h"
@@ -15,6 +16,7 @@
 #include "sd.h"
 #include "soc.h"
 #include "timer.h"
+#include "layout.h"
 
 /* Our own load address. No payload may grow into it. */
 #define IMAGE_BASE   0x33000000u
@@ -31,6 +33,10 @@
 
 #define EBOOT_DST    0x30037FD4u
 #define EBOOT_BYTES  0x00064000u
+/* The container header is 0x2C bytes, thus the first instruction is here. */
+#define EBOOT_CODE   (EBOOT_DST + 0x2Cu)
+
+extern const uint8_t nkpf_start[], nkpf_end[];
 
 extern void jump_payload(uint32_t entry) __attribute__((noreturn));
 
@@ -87,6 +93,28 @@ int boot_gdbstub(void)
     jump_payload(GDBSTUB_DST);
 }
 
+static void copy_blob(uint32_t dst, const uint8_t *start, const uint8_t *end)
+{
+    uint8_t *d = (uint8_t *)(uintptr_t)dst;
+
+    while (start < end)
+        *d++ = *start++;
+}
+
+/* Returns the nkpf address for the EBOOT handoff, or 0 to leave the handoff
+ * alone. */
+static uint32_t nkpf_install(void)
+{
+    uint32_t bytes = nkpf_end - nkpf_start;
+
+    if (bytes > NKPF_MAX) {
+        log_puts("nkpf: image too large\n");
+        return 0;
+    }
+    copy_blob(NKPF_PHYS, nkpf_start, nkpf_end);
+    return NKPF_PHYS;
+}
+
 int boot_wince(void)
 {
     int rc;
@@ -110,6 +138,8 @@ int boot_wince(void)
         log_rc(rc);
         return rc;
     }
+
+    eboot_patch((uint32_t *)EBOOT_CODE, EBOOT_BYTES - 0x2Cu, nkpf_install());
 
     log_puts("eboot: entering\n");
     quiesce();

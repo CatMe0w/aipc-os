@@ -28,6 +28,7 @@ SLOTS: dict[str, list[tuple[str, int]]] = {
     ],
     "aipc-boot": [("aipc-boot", 0x301B0000)],
     "doom": [("DOOM", 0x301A0000)],
+    "nkpf": [("nkpf", 0x30180000)],
 }
 
 DEFAULT_SLOT = "opennboot"

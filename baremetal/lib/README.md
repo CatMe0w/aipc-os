@@ -12,6 +12,8 @@ Drivers shared by the images under `baremetal/`.
 | `mmu.c`, `mmu_arm926.S` | Section table, cache and write buffer control | aipc-boot, DOOM |
 | `sd.c`, `fat.c` | SD card and read-only FAT16/FAT32 | aipc-boot, openNBOOT |
 | `nand.c`, `ecc.c` | NAND reads and the 4x528 interleaved ECC layout | aipc-boot, openNBOOT |
+| `pf.c` | Pattern finder, from the `xnu_pf` patchfinder of pongoOS | aipc-boot, nkpf |
+| `fbcon.c`, `font8x8_basic.h` | Framebuffer console, from `fb.c` of pongoOS | nkpf |
 
 ## Building
 

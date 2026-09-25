@@ -9,6 +9,10 @@ CompileFlags:
     - -Wall
     - -Wextra
     - -Wno-unused-parameter
+Diagnostics:
+  Includes:
+    IgnoreHeader:
+      - lvgl\.h
 
 ---
 If:
@@ -17,6 +21,7 @@ CompileFlags:
   Add:
     - -I.
     - -I../lib
+    - -I../nkpf
     - -Ithird_party
     - -DLV_CONF_INCLUDE_SIMPLE
     - -DLOG_BASE=0x301B0000u
@@ -74,3 +79,32 @@ CompileFlags:
     - -I.
     - -I../stub
     - -I../../../gdbstub
+
+---
+# Frozen one-time probe code
+If:
+  PathMatch: probes/.*
+Diagnostics:
+  UnusedIncludes: None
+
+---
+# nkpf
+If:
+  PathMatch: nkpf/[^/]*
+CompileFlags:
+  Add:
+    - -I.
+    - -I../lib
+    - -DNKPF_DIAG
+    - -DLOG_BASE=0x30180000u
+    - -DLOG_NO_UART
+
+---
+If:
+  PathMatch: nkpf/resident/.*
+CompileFlags:
+  Add:
+    - -I.
+    - -I..
+    - -I../../lib
+    - -DNKPF_DIAG

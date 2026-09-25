@@ -27,8 +27,9 @@ Reverse-engineered from scratch.
 
 Code that runs on the AK7802 with no operating system.
 
-- `opennboot/`: Custom firmware openNBOOT. Replaces the stock nboot in NAND block 0 and boots arbitrary ARM payloads from SD.
-- `aipc-boot/`: The payload openNBOOT hands off to. An GUI menu that boots a Linux zImage or the GDB stub from SD, or stock WinCE from NAND.
+- `nkpf/`: Custom firmware layer for stock WinCE.
+- `opennboot/`: Custom bootloader openNBOOT. Boots arbitrary ARM payloads from SD.
+- `aipc-boot/`: A GUI menu that boots Linux, GDB stub, or stock WinCE.
 - `gdbstub/`: GDB stub, a replacement for the bootrom USB boot mode.
 - `doom/`: A [doomgeneric](https://github.com/ozkl/doomgeneric)-based DOOM port.
 - `probes/`: One-shot ARM probes and lab reports. Not for reuse.

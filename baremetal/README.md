@@ -4,6 +4,7 @@ Everything here runs on the AK7802 with no operating system. Only openNBOOT is p
 
 | Directory | Contents |
 | --- | --- |
+| [nkpf](nkpf/) | Custom firmware layer for stock WinCE |
 | [opennboot](opennboot/) | Replaces the stock nboot in NAND block 0. It boots an ARM payload from SD when a card is present, and otherwise boots stock WinCE from NAND |
 | [aipc-boot](aipc-boot/) | The payload that openNBOOT hands off to. A GUI bootloader that boots Linux, the GDB stub, or stock WinCE |
 | [gdbstub](gdbstub/) | A debug agent that replaces the bootrom USB boot mode |
@@ -46,9 +47,11 @@ DDR is 64 MB at `0x30000000..0x33FFFFFF`.
 | `0x301C0000` | gdbstub trace, current run  |
 | `0x301B0000` | aipc-boot                   |
 | `0x301A0000` | DOOM                        |
+| `0x30190000` | nkpf (image)                |
+| `0x30180000` | nkpf (log)                  |
 
-The pool sits in the gap between the top of the running EBOOT image and the WinCE kernel load address. A log therefore survives a WinCE handoff, and it is still readable after the device boots WinCE. No address survives everything. A Linux zImage overwrites this range, and WinCE takes everything above `0x33B00000` once it runs. When a kernel load destroys a log, the UART still has it, because every writer here mirrors to the UART.
+The pool sits in the gap between the top of the running EBOOT image and the WinCE kernel load address. A log therefore survives a WinCE handoff, and it is still readable after the device boots WinCE. No address survives everything. A Linux zImage overwrites this range, and WinCE takes everything above `0x33B00000` once it runs.
 
-That overlap works in both directions, and the second direction is the dangerous one. The lines logged after a load corrupt any payload that covers the pool. One `log_puts()` call writes into the middle of the image, and a compressed kernel then fails to decompress with no output at all. Anything that loads past `0x30110000` must call `log_detach()` first. That call gives up the DDR half of the log and keeps the UART. The EBOOT container ends at `0x3009BFD4` and never reaches the pool, which is why the WinCE path keeps its log.
+Anything that loads past `0x30110000` must call `log_detach()` first. That call gives up the DDR half of the log and keeps the UART, or `log_puts()` may write into the middle of the image, and a compressed kernel then fails to decompress with no output at all.
 
 `opennboot log` reads the whole pool from the host. It takes a `--slot` name from the table above, or `--all`.

@@ -1,5 +1,7 @@
 #include "log.h"
+#ifndef LOG_NO_UART
 #include "soc.h"
+#endif
 
 static volatile char *log_ptr;
 static volatile char *log_end;
@@ -23,7 +25,9 @@ void log_putc(char c)
 {
     if (log_ptr < log_end)
         *log_ptr++ = c;
+#ifndef LOG_NO_UART
     uart_putc(c);
+#endif
 }
 
 void log_puts(const char *s)
