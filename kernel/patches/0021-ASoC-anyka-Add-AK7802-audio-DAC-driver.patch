@@ -18,7 +18,7 @@ Subject: [PATCH] ASoC: anyka: Add AK7802 audio DAC driver
  create mode 100644 sound/soc/anyka/anyka-dac.c
 
 diff --git a/arch/arm/boot/dts/anyka/ak7802-netbook.dts b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
-index e5c613dfd..7119960ab 100644
+index 58af93001..5373995c5 100644
 --- a/arch/arm/boot/dts/anyka/ak7802-netbook.dts
 +++ b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
 @@ -88,6 +88,12 @@ enet: ethernet {
@@ -34,7 +34,7 @@ index e5c613dfd..7119960ab 100644
  	reserved-memory {
  		#address-cells = <1>;
  		#size-cells = <1>;
-@@ -169,3 +175,17 @@ &ps2 {
+@@ -170,3 +176,17 @@ &ps2 {
  &l2rng {
  	status = "okay";
  };
@@ -53,7 +53,7 @@ index e5c613dfd..7119960ab 100644
 +	status = "okay";
 +};
 diff --git a/arch/arm/boot/dts/anyka/ak7802.dtsi b/arch/arm/boot/dts/anyka/ak7802.dtsi
-index feddce534..ae8272eac 100644
+index ecf9a67c0..57cbc4030 100644
 --- a/arch/arm/boot/dts/anyka/ak7802.dtsi
 +++ b/arch/arm/boot/dts/anyka/ak7802.dtsi
 @@ -92,6 +92,16 @@ ps2: ps2@20026000 {
@@ -74,13 +74,13 @@ index feddce534..ae8272eac 100644
  		compatible = "anyka,ak7802-l2rng";
  		reg = <0x48001580 0xa80>;
 diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
-index 01cd7c4fe..5fef8dc32 100644
+index 5a4acd155..0804206a8 100644
 --- a/arch/arm/configs/aipc_defconfig
 +++ b/arch/arm/configs/aipc_defconfig
-@@ -55,6 +55,11 @@ CONFIG_POWER_RESET_GPIO=y
- # CONFIG_HWMON is not set
- CONFIG_FB=y
+@@ -57,6 +57,11 @@ CONFIG_FB=y
+ CONFIG_BACKLIGHT_CLASS_DEVICE=y
  CONFIG_FRAMEBUFFER_CONSOLE=y
+ CONFIG_FRAMEBUFFER_CONSOLE_LEGACY_ACCELERATION=y
 +CONFIG_SOUND=y
 +CONFIG_SND=y
 +CONFIG_SND_SOC=y

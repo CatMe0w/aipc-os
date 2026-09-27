@@ -16,7 +16,7 @@ Subject: [PATCH] pinctrl: anyka: Add AK7802 pin controller driver
  create mode 100644 drivers/pinctrl/pinctrl-anyka.c
 
 diff --git a/arch/arm/boot/dts/anyka/ak7802-netbook.dts b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
-index 0dea79362..9656471ac 100644
+index f435d1eb6..726bfe220 100644
 --- a/arch/arm/boot/dts/anyka/ak7802-netbook.dts
 +++ b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
 @@ -38,6 +38,8 @@ display_reserved: framebuffer@33b00000 {
@@ -28,7 +28,7 @@ index 0dea79362..9656471ac 100644
  	status = "okay";
  	memory-region = <&display_reserved>;
  	width = <800>;
-@@ -51,6 +53,8 @@ &usb0 {
+@@ -52,6 +54,8 @@ &usb0 {
  };
  
  &spi0 {
@@ -38,7 +38,7 @@ index 0dea79362..9656471ac 100644
  	anyka,input-clock-hz = <248000000>;
  	status = "okay";
 diff --git a/arch/arm/boot/dts/anyka/ak7802.dtsi b/arch/arm/boot/dts/anyka/ak7802.dtsi
-index a7c978a6e..61aac4de6 100644
+index a6bd80bf0..283dec269 100644
 --- a/arch/arm/boot/dts/anyka/ak7802.dtsi
 +++ b/arch/arm/boot/dts/anyka/ak7802.dtsi
 @@ -19,6 +19,39 @@ sysctrl: system-controller@8000000 {
@@ -595,19 +595,19 @@ index 8dc61e4cc..7778b240c 100644
  	if (!ret)
  		dev_info(&pdev->dev,
 diff --git a/drivers/video/fbdev/anyka-lcdfb.c b/drivers/video/fbdev/anyka-lcdfb.c
-index 6585ad75d..eae1adeff 100644
+index 6a58aad86..b123f4a6d 100644
 --- a/drivers/video/fbdev/anyka-lcdfb.c
 +++ b/drivers/video/fbdev/anyka-lcdfb.c
-@@ -49,8 +49,6 @@
+@@ -70,8 +70,6 @@
  
  #define SYSCTRL_CLOCK_GATE	0x00c
  #define SYSCTRL_PWM		0x02c
 -#define SYSCTRL_SHAREPIN0	0x074
 -#define SYSCTRL_SHAREPIN1	0x078
- #define SYSCTRL_GPIO_DIR_BASE	0x07c
- #define SYSCTRL_GPIO_OUT_BASE	0x080
  #define SYSCTRL_LCD_CLK_EN_N	BIT(3)
-@@ -243,14 +241,6 @@ static int anyka_lcdfb_init_sysctrl(struct anyka_lcdfb_par *par)
+ #define SYSCTRL_LCD_RESET	BIT(19)
+ 
+@@ -405,14 +403,6 @@ static int anyka_lcdfb_init_sysctrl(struct anyka_lcdfb_par *par)
  	u32 clk_gate;
  	int ret;
  
@@ -619,6 +619,6 @@ index 6585ad75d..eae1adeff 100644
 -	if (ret)
 -		return ret;
 -
- 	anyka_lcdfb_set_gpio_output(par, 104, true);
- 	anyka_lcdfb_set_gpio_output(par, 69, false);
- 	anyka_lcdfb_set_gpio_output(par, 4, false);
+ 	ret = regmap_read(par->sysctrl, SYSCTRL_CLOCK_GATE, &clk_gate);
+ 	if (ret)
+ 		return ret;

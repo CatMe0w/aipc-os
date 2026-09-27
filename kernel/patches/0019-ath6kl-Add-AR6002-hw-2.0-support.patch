@@ -25,7 +25,7 @@ Subject: [PATCH] ath6kl: Add AR6002 hw 2.0 support
  create mode 100644 drivers/net/wireless/ath/ath6kl/ar6002.c
 
 diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
-index 4fa4e9fc6..7befab846 100644
+index b8ee91f30..eb6647135 100644
 --- a/arch/arm/configs/aipc_defconfig
 +++ b/arch/arm/configs/aipc_defconfig
 @@ -29,6 +29,8 @@ CONFIG_IP_MULTICAST=y

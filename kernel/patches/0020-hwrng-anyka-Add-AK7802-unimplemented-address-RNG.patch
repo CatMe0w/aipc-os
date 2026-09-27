@@ -14,10 +14,10 @@ Subject: [PATCH] hwrng: anyka: Add AK7802 unimplemented-address RNG
  create mode 100644 drivers/char/hw_random/anyka-l2rng.c
 
 diff --git a/arch/arm/boot/dts/anyka/ak7802-netbook.dts b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
-index 75ece96ee..e5c613dfd 100644
+index 1c744fa97..58af93001 100644
 --- a/arch/arm/boot/dts/anyka/ak7802-netbook.dts
 +++ b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
-@@ -165,3 +165,7 @@ &ps2 {
+@@ -166,3 +166,7 @@ &ps2 {
  	data-gpios = <&gpio 15 GPIO_ACTIVE_HIGH>;
  	status = "okay";
  };
@@ -26,7 +26,7 @@ index 75ece96ee..e5c613dfd 100644
 +	status = "okay";
 +};
 diff --git a/arch/arm/boot/dts/anyka/ak7802.dtsi b/arch/arm/boot/dts/anyka/ak7802.dtsi
-index cdf681ac0..feddce534 100644
+index 786ac39db..ecf9a67c0 100644
 --- a/arch/arm/boot/dts/anyka/ak7802.dtsi
 +++ b/arch/arm/boot/dts/anyka/ak7802.dtsi
 @@ -92,6 +92,12 @@ ps2: ps2@20026000 {
@@ -43,7 +43,7 @@ index cdf681ac0..feddce534 100644
  		compatible = "anyka,ak880x-intc";
  		reg = <0x8000000 0x1000>;
 diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
-index 7befab846..01cd7c4fe 100644
+index eb6647135..5a4acd155 100644
 --- a/arch/arm/configs/aipc_defconfig
 +++ b/arch/arm/configs/aipc_defconfig
 @@ -48,7 +48,7 @@ CONFIG_KEYBOARD_GPIO_POLLED=y
@@ -55,7 +55,7 @@ index 7befab846..01cd7c4fe 100644
  # CONFIG_PTP_1588_CLOCK is not set
  CONFIG_POWER_RESET=y
  CONFIG_POWER_RESET_GPIO=y
-@@ -85,3 +85,4 @@ CONFIG_DEBUG_FS=y
+@@ -87,3 +87,4 @@ CONFIG_DEBUG_FS=y
  # CONFIG_SLUB_DEBUG is not set
  CONFIG_SCHEDSTATS=y
  # CONFIG_FTRACE is not set

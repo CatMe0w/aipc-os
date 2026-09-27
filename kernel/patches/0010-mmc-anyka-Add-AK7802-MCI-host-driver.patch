@@ -13,10 +13,10 @@ Subject: [PATCH] mmc: anyka: Add AK7802 MCI host driver
  create mode 100644 drivers/mmc/host/anyka-mmc.c
 
 diff --git a/arch/arm/boot/dts/anyka/ak7802-netbook.dts b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
-index 9656471ac..008f8b388 100644
+index 726bfe220..dd2fcf491 100644
 --- a/arch/arm/boot/dts/anyka/ak7802-netbook.dts
 +++ b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
-@@ -74,3 +74,11 @@ ch374: ch374@0 {
+@@ -75,3 +75,11 @@ ch374: ch374@0 {
  		 */
  	};
  };
@@ -29,10 +29,10 @@ index 9656471ac..008f8b388 100644
 +	status = "okay";
 +};
 diff --git a/arch/arm/boot/dts/anyka/ak7802.dtsi b/arch/arm/boot/dts/anyka/ak7802.dtsi
-index 61aac4de6..4b8755c01 100644
+index 283dec269..94d44b849 100644
 --- a/arch/arm/boot/dts/anyka/ak7802.dtsi
 +++ b/arch/arm/boot/dts/anyka/ak7802.dtsi
-@@ -108,6 +108,24 @@ spi0: spi@20024000 {
+@@ -110,6 +110,24 @@ spi0: spi@20024000 {
  		status = "disabled";
  	};
  

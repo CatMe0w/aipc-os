@@ -11,7 +11,7 @@ Subject: [PATCH] ARM: anyka: Enable the SDIO Wi-Fi interface
  4 files changed, 76 insertions(+), 2 deletions(-)
 
 diff --git a/arch/arm/boot/dts/anyka/ak7802-netbook.dts b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
-index 0d1307597..75ece96ee 100644
+index 9034ce1b3..1c744fa97 100644
 --- a/arch/arm/boot/dts/anyka/ak7802-netbook.dts
 +++ b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
 @@ -28,6 +28,23 @@ memory@30000000 {
@@ -38,7 +38,7 @@ index 0d1307597..75ece96ee 100644
  	poweroff {
  		compatible = "gpio-poweroff";
  		gpios = <&gpio 105 GPIO_ACTIVE_LOW>;
-@@ -129,6 +146,17 @@ &mmc0 {
+@@ -130,6 +147,17 @@ &mmc0 {
  	status = "okay";
  };
  
@@ -57,7 +57,7 @@ index 0d1307597..75ece96ee 100644
  	pinctrl-names = "default", "gpio";
  	pinctrl-0 = <&uart1_pins>;
 diff --git a/arch/arm/boot/dts/anyka/ak7802.dtsi b/arch/arm/boot/dts/anyka/ak7802.dtsi
-index b68b63ede..cdf681ac0 100644
+index 9e469a1e8..786ac39db 100644
 --- a/arch/arm/boot/dts/anyka/ak7802.dtsi
 +++ b/arch/arm/boot/dts/anyka/ak7802.dtsi
 @@ -59,6 +59,8 @@ sdio_pins: sdio-pins {
@@ -69,7 +69,7 @@ index b68b63ede..cdf681ac0 100644
  		};
  	};
  
-@@ -152,6 +154,21 @@ mmc0: mmc@20020000 {
+@@ -154,6 +156,21 @@ mmc0: mmc@20020000 {
  		status = "disabled";
  	};
  
@@ -92,7 +92,7 @@ index b68b63ede..cdf681ac0 100644
  		compatible = "anyka,ak98-fshc";
  		reg = <0x70000000 0x1000>;
 diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
-index fd56b3fba..4fa4e9fc6 100644
+index a712a4f31..b8ee91f30 100644
 --- a/arch/arm/configs/aipc_defconfig
 +++ b/arch/arm/configs/aipc_defconfig
 @@ -36,7 +36,10 @@ CONFIG_BLK_DEV_SD=y
@@ -107,7 +107,7 @@ index fd56b3fba..4fa4e9fc6 100644
  CONFIG_INPUT_EVDEV=y
  # CONFIG_KEYBOARD_ATKBD is not set
  CONFIG_KEYBOARD_GPIO_POLLED=y
-@@ -53,7 +56,10 @@ CONFIG_FRAMEBUFFER_CONSOLE=y
+@@ -55,7 +58,10 @@ CONFIG_FRAMEBUFFER_CONSOLE_LEGACY_ACCELERATION=y
  CONFIG_USB=y
  CONFIG_USB_CH37X_HCD=y
  CONFIG_USB_STORAGE=y

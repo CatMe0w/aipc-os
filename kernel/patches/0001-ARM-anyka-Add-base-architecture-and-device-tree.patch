@@ -8,12 +8,12 @@ Subject: [PATCH] ARM: anyka: Add base architecture and device tree
  arch/arm/Makefile                          |  1 +
  arch/arm/boot/dts/Makefile                 |  1 +
  arch/arm/boot/dts/anyka/Makefile           |  3 +
- arch/arm/boot/dts/anyka/ak7802-netbook.dts | 72 ++++++++++++++++++
- arch/arm/boot/dts/anyka/ak7802.dtsi        | 86 ++++++++++++++++++++++
+ arch/arm/boot/dts/anyka/ak7802-netbook.dts | 73 ++++++++++++++++++
+ arch/arm/boot/dts/anyka/ak7802.dtsi        | 88 ++++++++++++++++++++++
  arch/arm/mach-anyka/Kconfig                | 20 +++++
  arch/arm/mach-anyka/Makefile               |  2 +
  arch/arm/mach-anyka/anyka.c                | 17 +++++
- 9 files changed, 204 insertions(+)
+ 9 files changed, 207 insertions(+)
  create mode 100644 arch/arm/boot/dts/anyka/Makefile
  create mode 100644 arch/arm/boot/dts/anyka/ak7802-netbook.dts
  create mode 100644 arch/arm/boot/dts/anyka/ak7802.dtsi
@@ -69,10 +69,10 @@ index 000000000..f13fe76ac
 +	ak7802-netbook.dtb
 diff --git a/arch/arm/boot/dts/anyka/ak7802-netbook.dts b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
 new file mode 100644
-index 000000000..0dea79362
+index 000000000..f435d1eb6
 --- /dev/null
 +++ b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
-@@ -0,0 +1,72 @@
+@@ -0,0 +1,73 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/dts-v1/;
 +
@@ -106,7 +106,7 @@ index 000000000..0dea79362
 +		ranges;
 +
 +		display_reserved: framebuffer@33b00000 {
-+			reg = <0x33b00000 0x00100000>;
++			reg = <0x33b00000 0x00177000>;
 +			no-map;
 +		};
 +	};
@@ -119,6 +119,7 @@ index 000000000..0dea79362
 +	height = <480>;
 +	stride = <1600>;
 +	format = "r5g6b5";
++	anyka,pixel-clock-divider = <2>;
 +};
 +
 +&usb0 {
@@ -147,10 +148,10 @@ index 000000000..0dea79362
 +};
 diff --git a/arch/arm/boot/dts/anyka/ak7802.dtsi b/arch/arm/boot/dts/anyka/ak7802.dtsi
 new file mode 100644
-index 000000000..a7c978a6e
+index 000000000..a6bd80bf0
 --- /dev/null
 +++ b/arch/arm/boot/dts/anyka/ak7802.dtsi
-@@ -0,0 +1,86 @@
+@@ -0,0 +1,88 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +#include <dt-bindings/interrupt-controller/irq.h>
 +
@@ -213,6 +214,8 @@ index 000000000..a7c978a6e
 +		compatible = "anyka,ak7802-lcd";
 +		reg = <0x20010000 0x1000>, <0x2002d014 0x4>;
 +		reg-names = "lcd", "ahb-priority";
++		interrupt-parent = <&main_intc>;
++		interrupts = <1>;
 +		syscon = <&sysctrl>;
 +		#address-cells = <1>;
 +		#size-cells = <0>;

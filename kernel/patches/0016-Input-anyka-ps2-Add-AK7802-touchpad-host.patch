@@ -14,10 +14,10 @@ Subject: [PATCH] Input: anyka-ps2: Add AK7802 touchpad host
  create mode 100644 drivers/input/serio/anyka-ps2.c
 
 diff --git a/arch/arm/boot/dts/anyka/ak7802-netbook.dts b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
-index 4904e7d92..0d1307597 100644
+index d4633d4dd..9034ce1b3 100644
 --- a/arch/arm/boot/dts/anyka/ak7802-netbook.dts
 +++ b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
-@@ -128,3 +128,12 @@ &mmc0 {
+@@ -129,3 +129,12 @@ &mmc0 {
  	anyka,input-clock-hz = <124000000>;
  	status = "okay";
  };
@@ -31,7 +31,7 @@ index 4904e7d92..0d1307597 100644
 +	status = "okay";
 +};
 diff --git a/arch/arm/boot/dts/anyka/ak7802.dtsi b/arch/arm/boot/dts/anyka/ak7802.dtsi
-index 4b8755c01..b68b63ede 100644
+index 94d44b849..9e469a1e8 100644
 --- a/arch/arm/boot/dts/anyka/ak7802.dtsi
 +++ b/arch/arm/boot/dts/anyka/ak7802.dtsi
 @@ -23,6 +23,16 @@ pinctrl: pinctrl {
@@ -84,7 +84,7 @@ index 4b8755c01..b68b63ede 100644
  		compatible = "anyka,ak880x-intc";
  		reg = <0x8000000 0x1000>;
 diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
-index 0c9dde6f1..fd56b3fba 100644
+index 755d2134b..a712a4f31 100644
 --- a/arch/arm/configs/aipc_defconfig
 +++ b/arch/arm/configs/aipc_defconfig
 @@ -40,8 +40,9 @@ CONFIG_DM9000_GPIO_BUS=y
