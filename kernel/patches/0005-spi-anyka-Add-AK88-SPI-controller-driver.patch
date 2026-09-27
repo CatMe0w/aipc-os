@@ -7,8 +7,8 @@ Subject: [PATCH] spi: anyka: Add AK88 SPI controller driver
  drivers/spi/Kconfig         |  14 ++
  drivers/spi/Makefile        |   2 +
  drivers/spi/spi-ak88-test.c |  59 +++++
- drivers/spi/spi-ak88.c      | 477 ++++++++++++++++++++++++++++++++++++
- 4 files changed, 552 insertions(+)
+ drivers/spi/spi-ak88.c      | 486 ++++++++++++++++++++++++++++++++++++
+ 4 files changed, 561 insertions(+)
  create mode 100644 drivers/spi/spi-ak88-test.c
  create mode 100644 drivers/spi/spi-ak88.c
 
@@ -117,10 +117,10 @@ index 000000000..d06f179f0
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/spi/spi-ak88.c b/drivers/spi/spi-ak88.c
 new file mode 100644
-index 000000000..8dc61e4cc
+index 000000000..5fb454ba6
 --- /dev/null
 +++ b/drivers/spi/spi-ak88.c
-@@ -0,0 +1,477 @@
+@@ -0,0 +1,486 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Minimal SPI master support for Anyka AK78/AK88/AK98 SoCs.
@@ -187,7 +187,16 @@ index 000000000..8dc61e4cc
 +	void __iomem *base;
 +	struct regmap *sysctrl;
 +	u32 input_clock_hz;
++	u32 ctrl;	/* last value written to SPICON */
 +};
++
++static void ak88_spi_write_ctrl(struct ak88_spi *hw, u32 ctrl)
++{
++	if (ctrl == hw->ctrl)
++		return;
++	hw->ctrl = ctrl;
++	writel(ctrl, hw->base + AK88_SPICON);
++}
 +
 +static int ak88_spi_enable_clock(struct ak88_spi *hw)
 +{
@@ -242,10 +251,9 @@ index 000000000..8dc61e4cc
 +	if (div > 128)
 +		div = 128;
 +
-+	ctrl = readl(hw->base + AK88_SPICON);
-+	ctrl &= ~AK88_SPICON_CLKDIV_MASK;
++	ctrl = hw->ctrl & ~AK88_SPICON_CLKDIV_MASK;
 +	ctrl |= (div - 1) << 8;
-+	writel(ctrl, hw->base + AK88_SPICON);
++	ak88_spi_write_ctrl(hw, ctrl);
 +}
 +
 +u32 ak88_spi_build_ctrl(u32 ctrl, u32 mode, bool tx, bool rx);
@@ -272,56 +280,56 @@ index 000000000..8dc61e4cc
 +
 +static void ak88_spi_program_mode(struct ak88_spi *hw, u32 mode, bool tx, bool rx)
 +{
-+	u32 ctrl = readl(hw->base + AK88_SPICON);
++	ak88_spi_write_ctrl(hw, ak88_spi_build_ctrl(hw->ctrl, mode, tx, rx));
++}
 +
-+	ctrl = ak88_spi_build_ctrl(ctrl, mode, tx, rx);
++/*
++ * A byte takes well under 1 us on the wire at the rates in use, so most waits
++ * end within a few register reads. Only fall back to readl_poll_timeout(),
++ * which reads the clock on every pass, when they do not.
++ */
++#define AK88_FAST_POLLS			16
 +
-+	writel(ctrl, hw->base + AK88_SPICON);
++static int ak88_spi_wait(struct ak88_spi *hw, unsigned int reg, u32 mask,
++			 u32 want)
++{
++	u32 val;
++	int i;
++
++	for (i = 0; i < AK88_FAST_POLLS; i++)
++		if ((readl(hw->base + reg) & mask) == want)
++			return 0;
++
++	return readl_poll_timeout(hw->base + reg, val, (val & mask) == want, 1,
++				  AK88_XFER_TIMEOUT_US);
 +}
 +
 +static int ak88_spi_wait_tx_empty(struct ak88_spi *hw)
 +{
-+	u32 val;
-+
-+	return readl_poll_timeout(hw->base + AK88_SPISTA, val,
-+				  val & AK88_SPISTA_TXHEMP, 1,
-+				  AK88_XFER_TIMEOUT_US);
++	return ak88_spi_wait(hw, AK88_SPISTA, AK88_SPISTA_TXHEMP,
++			     AK88_SPISTA_TXHEMP);
 +}
 +
 +static int ak88_spi_wait_rx_ready(struct ak88_spi *hw)
 +{
-+	u32 val;
-+
-+	return readl_poll_timeout(hw->base + AK88_SPISTA, val,
-+				  val & AK88_SPISTA_RXHFULL, 1,
-+				  AK88_XFER_TIMEOUT_US);
++	return ak88_spi_wait(hw, AK88_SPISTA, AK88_SPISTA_RXHFULL,
++			     AK88_SPISTA_RXHFULL);
 +}
 +
 +static int ak88_spi_wait_count_zero(struct ak88_spi *hw)
 +{
-+	u32 val;
-+
-+	return readl_poll_timeout(hw->base + AK88_SPICNT, val,
-+				  !(val & 0xffff), 1,
-+				  AK88_XFER_TIMEOUT_US);
++	return ak88_spi_wait(hw, AK88_SPICNT, 0xffff, 0);
 +}
 +
 +static int ak88_spi_wait_done(struct ak88_spi *hw)
 +{
-+	u32 val;
-+
-+	return readl_poll_timeout(hw->base + AK88_SPISTA, val,
-+				  !(val & AK88_SPISTA_MPROC), 1,
-+				  AK88_XFER_TIMEOUT_US);
++	return ak88_spi_wait(hw, AK88_SPISTA, AK88_SPISTA_MPROC, 0);
 +}
 +
 +static int ak88_spi_wait_transfer_complete(struct ak88_spi *hw)
 +{
-+	u32 val;
-+
-+	return readl_poll_timeout(hw->base + AK88_SPISTA, val,
-+				  val & AK88_SPISTA_TRANSF, 1,
-+				  AK88_XFER_TIMEOUT_US);
++	return ak88_spi_wait(hw, AK88_SPISTA, AK88_SPISTA_TRANSF,
++			     AK88_SPISTA_TRANSF);
 +}
 +
 +static u32 ak88_spi_pack_word(const u8 *buf, size_t len)
@@ -477,7 +485,7 @@ index 000000000..8dc61e4cc
 +{
 +	struct ak88_spi *hw = spi_controller_get_devdata(spi->controller);
 +	bool asserted = spi->mode & SPI_CS_HIGH ? inactive : !inactive;
-+	u32 ctrl = readl(hw->base + AK88_SPICON);
++	u32 ctrl = hw->ctrl;
 +
 +	/*
 +	 * The SPI core passes the inverse of its logical activate argument here.
@@ -490,7 +498,7 @@ index 000000000..8dc61e4cc
 +	else
 +		ctrl &= ~AK88_SPICON_CS_FORCE;
 +
-+	writel(ctrl, hw->base + AK88_SPICON);
++	ak88_spi_write_ctrl(hw, ctrl);
 +}
 +
 +static int ak88_spi_setup(struct spi_device *spi)
@@ -571,6 +579,7 @@ index 000000000..8dc61e4cc
 +
 +	platform_set_drvdata(pdev, ctlr);
 +
++	hw->ctrl = readl(hw->base + AK88_SPICON);
 +	writel(0, hw->base + AK88_SPIINT);
 +	writel(AK88_SPI_TIMEOUT_VALUE, hw->base + AK88_SPITOUT);
 +	ak88_spi_set_speed(hw, 1000000);

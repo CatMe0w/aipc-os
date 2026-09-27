@@ -512,7 +512,7 @@ index 000000000..3a52304b3
 +MODULE_DESCRIPTION("Anyka AK78/AK88/AK98 pin controller");
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/spi/spi-ak88.c b/drivers/spi/spi-ak88.c
-index 8dc61e4cc..7778b240c 100644
+index 5fb454ba6..8c0dd1b87 100644
 --- a/drivers/spi/spi-ak88.c
 +++ b/drivers/spi/spi-ak88.c
 @@ -50,9 +50,6 @@
@@ -525,7 +525,7 @@ index 8dc61e4cc..7778b240c 100644
  
  #define AK88_DEFAULT_INPUT_CLOCK_HZ	248000000
  #define AK88_SPICON_CLKDIV_MASK		(0x7f << 8)
-@@ -76,35 +73,6 @@ static int ak88_spi_enable_clock(struct ak88_spi *hw)
+@@ -85,35 +82,6 @@ static int ak88_spi_enable_clock(struct ak88_spi *hw)
  				  AK88_CLOCK_CTRL_SPI, 0);
  }
  
@@ -561,7 +561,7 @@ index 8dc61e4cc..7778b240c 100644
  static void ak88_spi_set_speed(struct ak88_spi *hw, u32 speed_hz)
  {
  	u32 ctrl;
-@@ -388,7 +356,6 @@ static int ak88_spi_probe(struct platform_device *pdev)
+@@ -396,7 +364,6 @@ static int ak88_spi_probe(struct platform_device *pdev)
  {
  	struct spi_controller *ctlr;
  	struct ak88_spi *hw;
@@ -569,7 +569,7 @@ index 8dc61e4cc..7778b240c 100644
  	u32 sharepin;
  	int ret;
  
-@@ -411,24 +378,11 @@ static int ak88_spi_probe(struct platform_device *pdev)
+@@ -419,24 +386,11 @@ static int ak88_spi_probe(struct platform_device *pdev)
  	device_property_read_u32(&pdev->dev, "anyka,input-clock-hz",
  				 &hw->input_clock_hz);
  

@@ -7,9 +7,9 @@ Subject: [PATCH] usb: ch37x: Add WCH CH37x USB HCD
  drivers/usb/Makefile         |    1 +
  drivers/usb/host/Kconfig     |   10 +
  drivers/usb/host/Makefile    |    1 +
- drivers/usb/host/ch37x-hcd.c | 2643 ++++++++++++++++++++++++++++++++++
+ drivers/usb/host/ch37x-hcd.c | 2694 ++++++++++++++++++++++++++++++++++
  drivers/usb/host/ch37x.h     |  168 +++
- 5 files changed, 2823 insertions(+)
+ 5 files changed, 2874 insertions(+)
  create mode 100644 drivers/usb/host/ch37x-hcd.c
  create mode 100644 drivers/usb/host/ch37x.h
 
@@ -60,10 +60,10 @@ index 174580c12..6021cb1d6 100644
  obj-$(CONFIG_USB_EHCI_PCI)	+= ehci-pci.o
 diff --git a/drivers/usb/host/ch37x-hcd.c b/drivers/usb/host/ch37x-hcd.c
 new file mode 100644
-index 000000000..15a263d56
+index 000000000..6cc2f4458
 --- /dev/null
 +++ b/drivers/usb/host/ch37x-hcd.c
-@@ -0,0 +1,2643 @@
+@@ -0,0 +1,2694 @@
 +/*
 + * USB host controller driver for SPI to USB chip ch370/ch374.
 + *
@@ -114,6 +114,7 @@ index 000000000..15a263d56
 +#include <linux/device.h>
 +#include <linux/platform_device.h>
 +#include <linux/gpio/consumer.h>
++#include <linux/iopoll.h>
 +#include <linux/gpio.h>
 +#include <linux/slab.h>
 +#include <linux/of.h>
@@ -209,7 +210,8 @@ index 000000000..15a263d56
 +	RESET_HCD,
 +	RESET_PORT,
 +	CHECK_CONNECT,
-+	CHECK_UNLINK
++	CHECK_UNLINK,
++	IRQ_PENDING
 +};
 +
 +enum {
@@ -281,6 +283,8 @@ index 000000000..15a263d56
 +	struct list_head ep_list; /* list of EP's with work */
 +	u16 frame_number;
 +	int olddevnum;
++	int xfer_addr;	/* REG_USB_ADDR as last programmed, -1 if unknown */
++	int xfer_speed; /* usb_device speed last programmed, -1 if unknown */
 +
 +	int conn_port; /* Port that is currently connecting, -1 if none.*/
 +	struct ch37x_port ports[NUM_PORTS + 1];
@@ -308,6 +312,7 @@ index 000000000..15a263d56
 +	struct device *dev;
 +	struct spi_device *spi;
 +	int irq;
++	struct gpio_desc *int_gpiod;
 +
 +	struct mutex thread_mutex;
 +	atomic_t suspend_flag;
@@ -327,7 +332,8 @@ index 000000000..15a263d56
 +	struct list_head ep_list;
 +	u32 naks;
 +	u8 retransmit; /* packet needs retransmission */
-+	ktime_t next_poll; /* do not retry this endpoint before this time */
++	ktime_t next_poll; /* retry this endpoint by this time */
++	ktime_t poll_from; /* do not retry this endpoint before this time */
 +	enum pkt_state pkt_state;
 +	enum pkt_state curr_pkt;
 +};
@@ -401,17 +407,27 @@ index 000000000..15a263d56
 +	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
 +	struct spi_device *spi = to_spi_device(hcd->self.controller);
 +
-+	unsigned char header[2];
-+	unsigned char txbuf[1];
++	unsigned char txbuf[3] = { mAddr, CMD_SPI_374WRITE, mData };
 +	int ret;
-+	header[0] = mAddr;
-+	header[1] = CMD_SPI_374WRITE;
-+	txbuf[0] = mData;
 +
-+	ret = ch37x_spi_header_then_data(spi, header, ARRAY_SIZE(header),
-+					 txbuf, NULL, ARRAY_SIZE(txbuf));
++	/* Writes to these registers invalidate xfer_addr or xfer_speed. */
++	switch (mAddr) {
++	case REG_SYS_CTRL:
++		ch37x_hcd->xfer_addr = -1;
++		ch37x_hcd->xfer_speed = -1;
++		break;
++	case REG_USB_ADDR:
++		ch37x_hcd->xfer_addr = -1;
++		break;
++	case REG_HUB_SETUP:
++	case REG_USB_SETUP:
++		ch37x_hcd->xfer_speed = -1;
++		break;
++	}
++
++	ret = spi_write(spi, txbuf, sizeof(txbuf));
 +	ch37x_hcd_dbg_data(ch37x_hcd, "%s:tx:0x%02x,0x%02x,0x%02x\n",
-+			   __func__, header[0], header[1], txbuf[0]);
++			   __func__, txbuf[0], txbuf[1], txbuf[2]);
 +	if (ret)
 +		dev_err(&spi->dev, "%s: reg 0x%02x write 0x%02x failed: %d\n", __func__, mAddr, mData, ret);
 +
@@ -468,20 +484,18 @@ index 000000000..15a263d56
 +
 +static void Write374Block(struct usb_hcd *hcd, unsigned char mAddr, unsigned char mLen, unsigned char *mBuf)
 +{
-+	unsigned char txbuf[256];
++	unsigned char txbuf[2 + 255];
 +	int ret = 0;
 +	int i = 0;
 +
 +	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
 +	struct spi_device *spi = to_spi_device(hcd->self.controller);
-+	unsigned char header[2];
 +
-+	header[0] = mAddr;
-+	header[1] = CMD_SPI_374WRITE;
-+	memcpy(txbuf, mBuf, mLen);
++	txbuf[0] = mAddr;
++	txbuf[1] = CMD_SPI_374WRITE;
++	memcpy(txbuf + 2, mBuf, mLen);
 +
-+	ret = ch37x_spi_header_then_data(spi, header, ARRAY_SIZE(header),
-+					 txbuf, NULL, mLen);
++	ret = spi_write(spi, txbuf, 2 + mLen);
 +	if (ret)
 +		return;
 +
@@ -826,13 +840,19 @@ index 000000000..15a263d56
 +			      ch37x_hcd->olddevnum);
 +		ch37x_hcd->olddevnum = dev->devnum;
 +	}
++	if (ch37x_hcd->xfer_addr == dev->devnum)
++		return;
 +	set_host_usb_addr(hcd, dev->devnum);
++	ch37x_hcd->xfer_addr = dev->devnum;
 +}
 +
 +static void ch37x_set_speed(struct usb_hcd *hcd, struct usb_device *dev)
 +{
 +	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
 +	u8 reg_usbsetup;
++
++	if (ch37x_hcd->xfer_speed == dev->speed)
++		return;
 +
 +	reg_usbsetup = Read374Byte(hcd, REG_USB_SETUP);
 +	if (dev->speed == USB_SPEED_LOW) {
@@ -846,6 +866,7 @@ index 000000000..15a263d56
 +			     (reg_usbsetup & BIT_SETP_RAM_MODE) | BIT_SETP_HOST_MODE | BIT_SETP_AUTO_SOF); // full-speed
 +		Write374Byte(hcd, REG_HUB_SETUP, Read374Byte(hcd, REG_HUB_SETUP) & ~BIT_HUB_PRE_PID); // diable PRE PID
 +	}
++	ch37x_hcd->xfer_speed = dev->speed;
 +}
 +
 +static void init_ch37x_host(struct usb_hcd *hcd)
@@ -988,6 +1009,8 @@ index 000000000..15a263d56
 +	struct ch37x_ep *ch37x_ep;
 +	int cmd = -EINVAL;
 +	int index = -1;
++	u8 regs[2]; /* REG_USB_H_PID, REG_USB_H_CTRL */
++	bool tog;
 +
 +	if (!urb) {
 +		ch37x_hcd_dbg(ch37x_hcd, "%s:URB NULL\n", __func__);
@@ -1026,34 +1049,31 @@ index 000000000..15a263d56
 +		return;
 +	}
 +
-+	Write374Byte(hcd, REG_USB_H_PID, cmd);
++	regs[0] = cmd;
 +	if (ch37x_hcd->pid_state == CH374_DEF_USB_PID_SETUP && ch37x_ep->curr_pkt == PKT_STATE_SETUP) {
 +		ch37x_hcd_dbg(ch37x_hcd, "%s: index:%d, line[%d]\n", __func__, index, __LINE__);
-+		Write374Byte(hcd, REG_USB_H_CTRL, BIT_HOST_START);
++		tog = false;
 +	} else if (ch37x_ep->curr_pkt == PKT_STATE_SETUP) {
 +		ch37x_hcd_dbg(ch37x_hcd, "%s: index:%d, line[%d], controltog: %d\n", __func__, index, __LINE__,
 +			      ch37x_hcd->ports[index].controltog);
-+		Write374Byte(hcd, REG_USB_H_CTRL,
-+			     (ch37x_hcd->ports[index].controltog ?
-+				      (BIT_HOST_START | BIT_HOST_TRAN_TOG | BIT_HOST_RECV_TOG) :
-+				      BIT_HOST_START));
++		tog = ch37x_hcd->ports[index].controltog;
 +	} else if (ch37x_ep->curr_pkt == PKT_STATE_TRANSFER) {
 +		if (ch37x_hcd->pid_state == CH374_DEF_USB_PID_IN) {
 +			ch37x_hcd_dbg(ch37x_hcd, "%s - transferintog:%d, epnum:%d!!!!!\n", __func__,
 +				      ch37x_hcd->ports[index].transferintog[epnum], epnum);
-+			Write374Byte(hcd, REG_USB_H_CTRL,
-+				     (ch37x_hcd->ports[index].transferintog[epnum] ?
-+					      (BIT_HOST_START | BIT_HOST_TRAN_TOG | BIT_HOST_RECV_TOG) :
-+					      BIT_HOST_START));
++			tog = ch37x_hcd->ports[index].transferintog[epnum];
 +		} else {
 +			ch37x_hcd_dbg(ch37x_hcd, "%s - transferouttog:%d, epnum:%d!!!!!\n", __func__,
 +				      ch37x_hcd->ports[index].transferouttog[epnum], epnum);
-+			Write374Byte(hcd, REG_USB_H_CTRL,
-+				     (ch37x_hcd->ports[index].transferouttog[epnum] ?
-+					      (BIT_HOST_START | BIT_HOST_TRAN_TOG | BIT_HOST_RECV_TOG) :
-+					      BIT_HOST_START));
++			tog = ch37x_hcd->ports[index].transferouttog[epnum];
 +		}
++	} else {
++		Write374Byte(hcd, REG_USB_H_PID, cmd);
++		return;
 +	}
++	/* REG_USB_H_CTRL follows REG_USB_H_PID, so one write sets both. */
++	regs[1] = tog ? BIT_HOST_START | BIT_HOST_TRAN_TOG | BIT_HOST_RECV_TOG : BIT_HOST_START;
++	Write374Block(hcd, REG_USB_H_PID, sizeof(regs), regs);
 +	ch37x_hcd_dbg(ch37x_hcd, "%s: index:%d, line[%d], end\n", __func__, index, __LINE__);
 +}
 +
@@ -1113,7 +1133,7 @@ index 000000000..15a263d56
 +				}
 +			}
 +		}
-+		if (ktime_before(now, ch37x_ep->next_poll)) {
++		if (ktime_before(now, ch37x_ep->poll_from)) {
 +			if (ktime_before(ch37x_ep->next_poll, wake))
 +				wake = ch37x_ep->next_poll;
 +			continue;
@@ -1290,6 +1310,12 @@ index 000000000..15a263d56
 +	if (usb_endpoint_xfer_int(&urb->ep->desc) || usb_endpoint_xfer_isoc(&urb->ep->desc))
 +		ms = max(urb->interval, 1);
 +	ch37x_ep->next_poll = ktime_add_ms(ktime_get(), ms);
++	/*
++	 * Let a wakeup for another endpoint poll this one up to a quarter
++	 * interval early, so that endpoints with the same interval share one
++	 * wakeup.
++	 */
++	ch37x_ep->poll_from = ktime_sub_us(ch37x_ep->next_poll, ms * USEC_PER_MSEC / 4);
 +
 +	ch37x_hcd->curr_urb = NULL;
 +}
@@ -1466,8 +1492,6 @@ index 000000000..15a263d56
 +	result_code &= BIT_STAT_DEV_RESP;
 +
 +	ch37x_hcd_dbg_data(ch37x_hcd, "%s:REG_USB_STATUS(0x%x), pid_status=0x%x\n", __func__, status, result_code);
-+
-+	usleep_range(200, 240);
 +
 +	if (!urb) {
 +		ch37x_hcd_dbg(ch37x_hcd, "%s: 0x%p\n ", __func__, urb);
@@ -1669,19 +1693,16 @@ index 000000000..15a263d56
 +/**
 + * interrupt handler
 + */
-+static irqreturn_t ch37x_irq_thread_handler(int irq, void *dev_id)
++static irqreturn_t ch37x_irq_handler(int irq, void *dev_id)
 +{
 +	struct usb_hcd *hcd = dev_id;
 +	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
-+	u8 intvalue;
 +
-+	intvalue = Read374Byte(hcd, REG_INTER_FLAG);
-+
-+	ch37x_hcd_dbg_data(ch37x_hcd, "line[%d], reg:0x%02x\n", __LINE__, intvalue);
-+
-+	if ((intvalue & 0x03) == 0)
-+		return IRQ_HANDLED;
-+
++	/*
++	 * INT# is level-low and stays asserted until the SPI thread clears
++	 * REG_INTER_FLAG, so the line stays masked until that thread goes idle.
++	 */
++	set_bit(IRQ_PENDING, &ch37x_hcd->todo);
 +#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 0))
 +	if (ch37x_hcd->spi_thread && ch37x_hcd->spi_thread->state != TASK_RUNNING) {
 +#else
@@ -1702,21 +1723,19 @@ index 000000000..15a263d56
 +	return IRQ_HANDLED;
 +}
 +
-+static irqreturn_t ch37x_irq_handler(int irq, void *dev_id)
-+{
-+	return IRQ_WAKE_THREAD;
-+}
-+
 +/* return zero if no work was performed, 1 otherwise.  */
 +static int ch37x_handle_irqs(struct usb_hcd *hcd)
 +{
 +	struct ch37x_hcd_data *ch37x_hcd = hcd_to_ch37x(hcd);
++	u8 regs[2]; /* REG_INTER_FLAG, REG_USB_STATUS */
 +	u8 interrupt;
 +	u8 status;
 +
-+	interrupt = Read374Byte(hcd, REG_INTER_FLAG);
-+	ch37x_hcd_dbg_data(ch37x_hcd, "%s:line[%d], interrupt: 0x%x, REG_H_PID(0x%x)\n", __func__, __LINE__, interrupt,
-+			   Read374Byte(hcd, REG_USB_H_PID));
++	Read374Block(hcd, REG_INTER_FLAG, sizeof(regs), regs);
++	interrupt = regs[0];
++	status = regs[1];
++	ch37x_hcd_dbg_data(ch37x_hcd, "%s:line[%d], interrupt: 0x%x\n", __func__, __LINE__,
++			   interrupt);
 +
 +	if ((interrupt & 0x03) == 0) {
 +		return 0;
@@ -1731,7 +1750,6 @@ index 000000000..15a263d56
 +
 +	if (interrupt & BIT_IF_TRANSFER) {
 +		Write374Byte(hcd, REG_INTER_FLAG, BIT_IF_USB_PAUSE | BIT_IF_TRANSFER);
-+		status = Read374Byte(hcd, REG_USB_STATUS);
 +		ch37x_host_transfer_done(hcd, status);
 +	}
 +
@@ -1800,6 +1818,24 @@ index 000000000..15a263d56
 +	return retval;
 +}
 +
++/*
++ * A transaction usually completes within tens of microseconds. Poll INT# for
++ * up to CH37X_INT_POLL_US before going to sleep, because the sleep, the
++ * interrupt and the wakeup cost more CPU time than the poll.
++ */
++#define CH37X_INT_POLL_US 200
++
++static bool ch37x_poll_int(struct ch37x_hcd_data *ch37x_hcd)
++{
++	int asserted;
++
++	if (!ch37x_hcd->int_gpiod || !ch37x_hcd->curr_urb)
++		return false;
++
++	return !read_poll_timeout_atomic(gpiod_get_value, asserted, asserted > 0, 2,
++					 CH37X_INT_POLL_US, false, ch37x_hcd->int_gpiod);
++}
++
 +static void ch37x_wait_for_work(struct ch37x_hcd_data *ch37x_hcd)
 +{
 +	ktime_t deadline = ch37x_hcd->next_poll;
@@ -1831,6 +1867,10 @@ index 000000000..15a263d56
 +	}
 +
 +	while (!kthread_should_stop() && !atomic_read(&ch37x_hcd->suspend_flag)) {
++		if (!i_worked && ch37x_poll_int(ch37x_hcd)) {
++			set_bit(IRQ_PENDING, &ch37x_hcd->todo);
++			i_worked = 1;
++		}
 +		if (!i_worked) {
 +			set_current_state(TASK_INTERRUPTIBLE);
 +			if (test_and_clear_bit(ENABLE_IRQ, &ch37x_hcd->todo)) {
@@ -1850,6 +1890,9 @@ index 000000000..15a263d56
 +			}
 +			ch37x_wait_for_work(ch37x_hcd);
 +			set_current_state(TASK_RUNNING);
++			/* Completions are polled while this thread runs. */
++			if (!test_and_set_bit(ENABLE_IRQ, &ch37x_hcd->todo))
++				disable_irq_nosync(ch37x_hcd->irq);
 +		}
 +
 +		i_worked = 0;
@@ -1857,7 +1900,8 @@ index 000000000..15a263d56
 +
 +		if (ch37x_hcd->urb_done)
 +			i_worked |= ch37x_urb_done(hcd);
-+		else if (ch37x_handle_irqs(hcd))
++		else if (test_and_clear_bit(IRQ_PENDING, &ch37x_hcd->todo) &&
++			 ch37x_handle_irqs(hcd))
 +			i_worked = 1;
 +		else if (!ch37x_hcd->curr_urb) {
 +			i_worked |= ch37x_select_and_start_urb(hcd);
@@ -2516,6 +2560,7 @@ index 000000000..15a263d56
 +		goto error;
 +	}
 +
++	ch37x_hcd->int_gpiod = irq_gpiod;
 +	if (irq_gpiod) {
 +		gpio_num = desc_to_gpio(irq_gpiod);
 +		irq_gpio_value = gpiod_get_raw_value_cansleep(irq_gpiod);
@@ -2549,6 +2594,8 @@ index 000000000..15a263d56
 +#endif
 +
 +	ch37x_hcd->spi = spi;
++	ch37x_hcd->xfer_addr = -1;
++	ch37x_hcd->xfer_speed = -1;
 +	ch37x_hcd->dev = &spi->dev;
 +	ch37x_hcd->irq = irq;
 +	if (spi_get_csgpiod(spi, 0)) {
@@ -2604,8 +2651,12 @@ index 000000000..15a263d56
 +	atomic_set(&ch37x_hcd->urb_process, 0);
 +	mutex_init(&ch37x_hcd->thread_mutex);
 +
-+	retval = devm_request_threaded_irq(&spi->dev, irq, ch37x_irq_handler, ch37x_irq_thread_handler,
-+					   flags | IRQF_ONESHOT, "spi-ch37x-hcd", hcd);
++	/*
++	 * The thread disables this interrupt on every wakeup. Without this flag,
++	 * disable_irq_nosync() masks the line only when the next interrupt comes.
++	 */
++	irq_set_status_flags(irq, IRQ_DISABLE_UNLAZY);
++	retval = devm_request_irq(&spi->dev, irq, ch37x_irq_handler, flags, "spi-ch37x-hcd", hcd);
 +	if (retval < 0) {
 +		dev_err(&spi->dev, "failed to request irq %d error %d\n", irq, retval);
 +		goto error;
