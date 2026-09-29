@@ -1,0 +1,442 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: CatMe0w <CatMe0w@live.cn>
+Date: Mon, 28 Sep 2026 14:04:47 -0600
+Subject: [PATCH] power: supply: anyka: Add AK7802 battery driver
+
+---
+ arch/arm/boot/dts/anyka/ak7802-netbook.dts |   6 +
+ arch/arm/configs/aipc_defconfig            |   2 +
+ drivers/power/supply/Kconfig               |  10 +
+ drivers/power/supply/Makefile              |   1 +
+ drivers/power/supply/anyka-battery.c       | 359 +++++++++++++++++++++
+ 5 files changed, 378 insertions(+)
+ create mode 100644 drivers/power/supply/anyka-battery.c
+
+diff --git a/arch/arm/boot/dts/anyka/ak7802-netbook.dts b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
+index 5373995c5..50d4d730c 100644
+--- a/arch/arm/boot/dts/anyka/ak7802-netbook.dts
++++ b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
+@@ -45,6 +45,12 @@ wifi_pwrseq: wifi-pwrseq {
+ 		post-power-on-delay-ms = <10>;
+ 	};
+ 
++	battery {
++		compatible = "anyka,ak7802-battery";
++		syscon = <&sysctrl>;
++		ac-gpios = <&gpio 103 GPIO_ACTIVE_HIGH>;
++	};
++
+ 	poweroff {
+ 		compatible = "gpio-poweroff";
+ 		gpios = <&gpio 105 GPIO_ACTIVE_LOW>;
+diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
+index b98174c3b..c610f7f01 100644
+--- a/arch/arm/configs/aipc_defconfig
++++ b/arch/arm/configs/aipc_defconfig
+@@ -51,6 +51,8 @@ CONFIG_HW_RANDOM=y
+ # CONFIG_PTP_1588_CLOCK is not set
+ CONFIG_POWER_RESET=y
+ CONFIG_POWER_RESET_GPIO=y
++CONFIG_POWER_SUPPLY=y
++CONFIG_BATTERY_ANYKA=y
+ # CONFIG_HWMON is not set
+ CONFIG_FB=y
+ CONFIG_BACKLIGHT_CLASS_DEVICE=y
+diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
+index f0ede1cec..35fefd640 100644
+--- a/drivers/power/supply/Kconfig
++++ b/drivers/power/supply/Kconfig
+@@ -110,6 +110,16 @@ config BATTERY_ACT8945A
+ 	  Say Y here to enable support for power supply provided by
+ 	  Active-semi ActivePath ACT8945A charger.
+ 
++config BATTERY_ANYKA
++	tristate "Anyka AK7802 battery and AC adapter"
++	depends on ARCH_ANYKA || COMPILE_TEST
++	depends on GPIOLIB && OF
++	select MFD_SYSCON
++	help
++	  Say Y or M here to report the battery voltage, the estimated
++	  capacity and the AC adapter state of an Anyka AK7802 board. The
++	  driver samples the AD5 input of ADC1 and one AC detect GPIO.
++
+ config BATTERY_CHAGALL
+ 	tristate "Pegatron Chagall battery driver"
+ 	depends on I2C
+diff --git a/drivers/power/supply/Makefile b/drivers/power/supply/Makefile
+index 31fe4a145..2406ceaba 100644
+--- a/drivers/power/supply/Makefile
++++ b/drivers/power/supply/Makefile
+@@ -22,6 +22,7 @@ obj-$(CONFIG_TEST_POWER)	+= test_power.o
+ obj-$(CONFIG_BATTERY_88PM860X)	+= 88pm860x_battery.o
+ obj-$(CONFIG_CHARGER_ADP5061)	+= adp5061.o
+ obj-$(CONFIG_BATTERY_ACT8945A)	+= act8945a_charger.o
++obj-$(CONFIG_BATTERY_ANYKA)	+= anyka-battery.o
+ obj-$(CONFIG_BATTERY_AXP20X)	+= axp20x_battery.o
+ obj-$(CONFIG_CHARGER_AXP20X)	+= axp20x_ac_power.o
+ obj-$(CONFIG_BATTERY_CHAGALL)	+= chagall-battery.o
+diff --git a/drivers/power/supply/anyka-battery.c b/drivers/power/supply/anyka-battery.c
+new file mode 100644
+index 000000000..da8b74d65
+--- /dev/null
++++ b/drivers/power/supply/anyka-battery.c
+@@ -0,0 +1,359 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Anyka AK7802 battery and AC adapter driver.
++ *
++ * Copyright (C) 2026 CatMe0w
++ */
++
++#include <linux/bitfield.h>
++#include <linux/delay.h>
++#include <linux/devm-helpers.h>
++#include <linux/gpio/consumer.h>
++#include <linux/mfd/syscon.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/power_supply.h>
++#include <linux/regmap.h>
++#include <linux/workqueue.h>
++
++#define ANYKA_SYSCTRL_CLKDIV2		0x08
++#define ANYKA_CLKDIV2_ADC1_DIVIDER	GENMASK(2, 0)
++#define ANYKA_CLKDIV2_ADC1_CLOCK	BIT(3)
++#define ANYKA_CLKDIV2_ADC1_NRESET	BIT(22)
++#define ANYKA_CLKDIV2_ADC1_POWER_DOWN	BIT(29)
++#define ANYKA_SYSCTRL_ANALOG1		0x5c
++#define ANYKA_ANALOG1_PD_REFERENCE	BIT(0)
++#define ANYKA_ANALOG1_AD5_SEL1		BIT(29)
++#define ANYKA_SYSCTRL_ADC1_TIMING	0x60
++#define ANYKA_ADC1_BIT_CYCLES		GENMASK(15, 0)
++#define ANYKA_SYSCTRL_ANALOG2		0x64
++#define ANYKA_ANALOG2_ADC1_ENABLE	BIT(8)
++#define ANYKA_ANALOG2_AD5_SEL2		BIT(11)
++#define ANYKA_SYSCTRL_ADC1_STATUS	0x70
++#define ANYKA_ADC1_STATUS_AD5		GENMASK(9, 0)
++
++#define ANYKA_BATTERY_POLL_MS		3000
++#define ANYKA_BATTERY_SAMPLES		5
++#define ANYKA_BATTERY_ZERO_RETRIES	100
++
++struct anyka_battery_state {
++	bool valid;
++	bool ac_online;
++	unsigned int level;	/* 20 mV per step */
++	unsigned int capacity;
++};
++
++struct anyka_battery {
++	struct device *dev;
++	struct regmap *sysctrl;
++	struct gpio_desc *ac_gpio;
++	struct power_supply *ac;
++	struct power_supply *battery;
++	struct delayed_work work;
++	struct mutex lock;
++	struct anyka_battery_state state;
++};
++
++/* The drops at levels 346 and 370 are intended. */
++static const struct {
++	u16 end;
++	u16 start;
++	u8 divisor;
++	u8 base;
++} anyka_battery_curve[] = {
++	{ 345, 300, 45,  0 }, { 368, 345, 23,  5 }, { 374, 368,  6, 10 },
++	{ 377, 374,  3, 20 }, { 379, 377,  2, 30 }, { 382, 379,  3, 40 },
++	{ 387, 382,  5, 50 }, { 392, 387,  5, 60 }, { 398, 392,  6, 70 },
++	{ 406, 398,  8, 80 }, { 420, 406, 14, 90 },
++};
++
++static unsigned int anyka_battery_capacity(unsigned int level)
++{
++	unsigned int i;
++
++	if (level <= 300)
++		return 0;
++
++	for (i = 0; i < ARRAY_SIZE(anyka_battery_curve); i++) {
++		if (level <= anyka_battery_curve[i].end)
++			return (level - anyka_battery_curve[i].start) * 100 /
++			       anyka_battery_curve[i].divisor / 10 +
++			       anyka_battery_curve[i].base;
++	}
++
++	return 100;
++}
++
++static void anyka_battery_adc_init(struct anyka_battery *bat)
++{
++	regmap_update_bits(bat->sysctrl, ANYKA_SYSCTRL_CLKDIV2,
++			   ANYKA_CLKDIV2_ADC1_NRESET, 0);
++	regmap_update_bits(bat->sysctrl, ANYKA_SYSCTRL_CLKDIV2,
++			   ANYKA_CLKDIV2_ADC1_NRESET |
++			   ANYKA_CLKDIV2_ADC1_POWER_DOWN |
++			   ANYKA_CLKDIV2_ADC1_CLOCK |
++			   ANYKA_CLKDIV2_ADC1_DIVIDER,
++			   ANYKA_CLKDIV2_ADC1_NRESET |
++			   ANYKA_CLKDIV2_ADC1_CLOCK |
++			   FIELD_PREP(ANYKA_CLKDIV2_ADC1_DIVIDER, 2));
++	regmap_update_bits(bat->sysctrl, ANYKA_SYSCTRL_ADC1_TIMING,
++			   ANYKA_ADC1_BIT_CYCLES,
++			   FIELD_PREP(ANYKA_ADC1_BIT_CYCLES, 800));
++	regmap_update_bits(bat->sysctrl, ANYKA_SYSCTRL_ANALOG1,
++			   ANYKA_ANALOG1_PD_REFERENCE, 0);
++	regmap_update_bits(bat->sysctrl, ANYKA_SYSCTRL_ANALOG2,
++			   ANYKA_ANALOG2_ADC1_ENABLE,
++			   ANYKA_ANALOG2_ADC1_ENABLE);
++}
++
++static int anyka_battery_read_ad5(struct anyka_battery *bat)
++{
++	unsigned int sum = 0, samples = 0, zeros = 0, val;
++	int ret = 0;
++
++	regmap_update_bits(bat->sysctrl, ANYKA_SYSCTRL_ANALOG1,
++			   ANYKA_ANALOG1_AD5_SEL1, 0);
++	usleep_range(12000, 13000);
++	regmap_update_bits(bat->sysctrl, ANYKA_SYSCTRL_ANALOG2,
++			   ANYKA_ANALOG2_AD5_SEL2, ANYKA_ANALOG2_AD5_SEL2);
++
++	while (samples < ANYKA_BATTERY_SAMPLES) {
++		regmap_read(bat->sysctrl, ANYKA_SYSCTRL_ADC1_STATUS, &val);
++		val = FIELD_GET(ANYKA_ADC1_STATUS_AD5, val);
++		if (val) {
++			sum += val;
++			samples++;
++			usleep_range(1000, 2000);
++			continue;
++		}
++		if (++zeros > ANYKA_BATTERY_ZERO_RETRIES) {
++			ret = -EIO;
++			break;
++		}
++		usleep_range(2000, 3000);
++	}
++
++	regmap_update_bits(bat->sysctrl, ANYKA_SYSCTRL_ANALOG1,
++			   ANYKA_ANALOG1_AD5_SEL1, ANYKA_ANALOG1_AD5_SEL1);
++	regmap_update_bits(bat->sysctrl, ANYKA_SYSCTRL_ANALOG2,
++			   ANYKA_ANALOG2_AD5_SEL2, 0);
++
++	return ret ? ret : sum / ANYKA_BATTERY_SAMPLES;
++}
++
++static void anyka_battery_poll(struct work_struct *work)
++{
++	struct anyka_battery *bat = container_of(work, struct anyka_battery,
++						 work.work);
++	struct anyka_battery_state new = { .valid = true };
++	bool changed;
++	int raw, ac;
++
++	raw = anyka_battery_read_ad5(bat);
++	ac = gpiod_get_value_cansleep(bat->ac_gpio);
++	if (raw < 0 || ac < 0) {
++		dev_warn_ratelimited(bat->dev, "cannot sample the battery\n");
++		goto out;
++	}
++
++	new.ac_online = ac;
++	new.level = 333 * raw / 1024 * 2;
++	new.capacity = anyka_battery_capacity(new.level);
++
++	mutex_lock(&bat->lock);
++	changed = !bat->state.valid ||
++		  bat->state.ac_online != new.ac_online ||
++		  bat->state.level != new.level ||
++		  bat->state.capacity != new.capacity;
++	bat->state = new;
++	mutex_unlock(&bat->lock);
++
++	if (changed) {
++		power_supply_changed(bat->ac);
++		power_supply_changed(bat->battery);
++	}
++out:
++	schedule_delayed_work(&bat->work,
++			      msecs_to_jiffies(ANYKA_BATTERY_POLL_MS));
++}
++
++static int anyka_battery_get_state(struct power_supply *psy,
++				   struct anyka_battery_state *state)
++{
++	struct anyka_battery *bat = power_supply_get_drvdata(psy);
++
++	mutex_lock(&bat->lock);
++	*state = bat->state;
++	mutex_unlock(&bat->lock);
++
++	return state->valid ? 0 : -ENODATA;
++}
++
++static int anyka_ac_get_property(struct power_supply *psy,
++				 enum power_supply_property psp,
++				 union power_supply_propval *val)
++{
++	struct anyka_battery_state state;
++	int ret;
++
++	ret = anyka_battery_get_state(psy, &state);
++	if (ret)
++		return ret;
++
++	switch (psp) {
++	case POWER_SUPPLY_PROP_ONLINE:
++		val->intval = state.ac_online;
++		return 0;
++	default:
++		return -EINVAL;
++	}
++}
++
++static int anyka_battery_get_property(struct power_supply *psy,
++				      enum power_supply_property psp,
++				      union power_supply_propval *val)
++{
++	struct anyka_battery_state state;
++	int ret;
++
++	switch (psp) {
++	case POWER_SUPPLY_PROP_PRESENT:
++		val->intval = 1;
++		return 0;
++	case POWER_SUPPLY_PROP_TECHNOLOGY:
++		val->intval = POWER_SUPPLY_TECHNOLOGY_LION;
++		return 0;
++	default:
++		break;
++	}
++
++	ret = anyka_battery_get_state(psy, &state);
++	if (ret)
++		return ret;
++
++	switch (psp) {
++	case POWER_SUPPLY_PROP_STATUS:
++		val->intval = state.ac_online ? POWER_SUPPLY_STATUS_CHARGING :
++						POWER_SUPPLY_STATUS_DISCHARGING;
++		break;
++	case POWER_SUPPLY_PROP_CAPACITY:
++		val->intval = state.capacity;
++		break;
++	case POWER_SUPPLY_PROP_CAPACITY_LEVEL:
++		if (state.ac_online)
++			val->intval = POWER_SUPPLY_CAPACITY_LEVEL_UNKNOWN;
++		else if (state.capacity >= 50)
++			val->intval = POWER_SUPPLY_CAPACITY_LEVEL_HIGH;
++		else if (state.capacity > 10)
++			val->intval = POWER_SUPPLY_CAPACITY_LEVEL_LOW;
++		else
++			val->intval = POWER_SUPPLY_CAPACITY_LEVEL_CRITICAL;
++		break;
++	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
++		val->intval = state.level * 20000;
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static enum power_supply_property anyka_ac_props[] = {
++	POWER_SUPPLY_PROP_ONLINE,
++};
++
++static enum power_supply_property anyka_battery_props[] = {
++	POWER_SUPPLY_PROP_STATUS,
++	POWER_SUPPLY_PROP_PRESENT,
++	POWER_SUPPLY_PROP_TECHNOLOGY,
++	POWER_SUPPLY_PROP_CAPACITY,
++	POWER_SUPPLY_PROP_CAPACITY_LEVEL,
++	POWER_SUPPLY_PROP_VOLTAGE_NOW,
++};
++
++static const struct power_supply_desc anyka_ac_desc = {
++	.name		= "ac",
++	.type		= POWER_SUPPLY_TYPE_MAINS,
++	.properties	= anyka_ac_props,
++	.num_properties	= ARRAY_SIZE(anyka_ac_props),
++	.get_property	= anyka_ac_get_property,
++};
++
++static const struct power_supply_desc anyka_battery_desc = {
++	.name		= "battery",
++	.type		= POWER_SUPPLY_TYPE_BATTERY,
++	.properties	= anyka_battery_props,
++	.num_properties	= ARRAY_SIZE(anyka_battery_props),
++	.get_property	= anyka_battery_get_property,
++};
++
++static char *anyka_ac_supplied_to[] = { "battery" };
++
++static int anyka_battery_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct power_supply_config cfg = {};
++	struct anyka_battery *bat;
++	int ret;
++
++	bat = devm_kzalloc(dev, sizeof(*bat), GFP_KERNEL);
++	if (!bat)
++		return -ENOMEM;
++
++	bat->dev = dev;
++	mutex_init(&bat->lock);
++
++	bat->sysctrl = syscon_regmap_lookup_by_phandle(dev->of_node, "syscon");
++	if (IS_ERR(bat->sysctrl))
++		return dev_err_probe(dev, PTR_ERR(bat->sysctrl),
++				     "no system controller\n");
++
++	bat->ac_gpio = devm_gpiod_get(dev, "ac", GPIOD_IN);
++	if (IS_ERR(bat->ac_gpio))
++		return dev_err_probe(dev, PTR_ERR(bat->ac_gpio),
++				     "no AC detect GPIO\n");
++
++	anyka_battery_adc_init(bat);
++
++	cfg.drv_data = bat;
++	cfg.fwnode = dev_fwnode(dev);
++	bat->battery = devm_power_supply_register(dev, &anyka_battery_desc,
++						  &cfg);
++	if (IS_ERR(bat->battery))
++		return PTR_ERR(bat->battery);
++
++	cfg.supplied_to = anyka_ac_supplied_to;
++	cfg.num_supplicants = ARRAY_SIZE(anyka_ac_supplied_to);
++	bat->ac = devm_power_supply_register(dev, &anyka_ac_desc, &cfg);
++	if (IS_ERR(bat->ac))
++		return PTR_ERR(bat->ac);
++
++	ret = devm_delayed_work_autocancel(dev, &bat->work, anyka_battery_poll);
++	if (ret)
++		return ret;
++
++	schedule_delayed_work(&bat->work, 0);
++
++	return 0;
++}
++
++static const struct of_device_id anyka_battery_of_match[] = {
++	{ .compatible = "anyka,ak7802-battery" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, anyka_battery_of_match);
++
++static struct platform_driver anyka_battery_driver = {
++	.probe = anyka_battery_probe,
++	.driver = {
++		.name = "anyka-battery",
++		.of_match_table = anyka_battery_of_match,
++	},
++};
++module_platform_driver(anyka_battery_driver);
++
++MODULE_DESCRIPTION("Anyka AK7802 battery and AC adapter driver");
++MODULE_LICENSE("GPL");
