@@ -6,8 +6,8 @@ Subject: [PATCH] gpio: anyka: Add AK880x GPIO driver
 ---
  drivers/gpio/Kconfig      |   8 +
  drivers/gpio/Makefile     |   1 +
- drivers/gpio/gpio-anyka.c | 544 ++++++++++++++++++++++++++++++++++++++
- 3 files changed, 553 insertions(+)
+ drivers/gpio/gpio-anyka.c | 551 ++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 560 insertions(+)
  create mode 100644 drivers/gpio/gpio-anyka.c
 
 diff --git a/drivers/gpio/Kconfig b/drivers/gpio/Kconfig
@@ -43,14 +43,14 @@ index 4d0e90040..feff5cf9d 100644
  obj-$(CONFIG_GPIO_ASPEED_SGPIO)		+= gpio-aspeed-sgpio.o
 diff --git a/drivers/gpio/gpio-anyka.c b/drivers/gpio/gpio-anyka.c
 new file mode 100644
-index 000000000..76a6fce3a
+index 000000000..56065f2c1
 --- /dev/null
 +++ b/drivers/gpio/gpio-anyka.c
-@@ -0,0 +1,544 @@
+@@ -0,0 +1,551 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * GPIO controller support for Anyka AK78/AK88/AK98 SoCs.
-+ * 
++ *
 + * Copyright (C) 2026 CatMe0w
 + * Based on vendor kernel code provided by:
 + * Copyright (C) 2001-2010 ANYKA LTD.
@@ -139,6 +139,16 @@ index 000000000..76a6fce3a
 +static void __iomem *anyka_gpio_in_reg(struct anyka_gpio *ag, unsigned int offset)
 +{
 +	return ag->base + ANYKA_GPIO_IN1 + (offset / ANYKA_GPIO_GROUP_SIZE) * 4;
++}
++
++static u32 anyka_gpio_read_in(struct anyka_gpio *ag, unsigned int offset)
++{
++	u32 val = readl_relaxed(anyka_gpio_in_reg(ag, offset));
++
++	if (ag->ak7802 && offset >= 96)
++		val <<= 3;
++
++	return val;
 +}
 +
 +static void __iomem *anyka_gpio_bias_reg(struct anyka_gpio *ag, unsigned int offset)
@@ -253,15 +263,12 @@ index 000000000..76a6fce3a
 +static int anyka_gpio_get(struct gpio_chip *gc, unsigned int offset)
 +{
 +	struct anyka_gpio *ag = gpiochip_get_data(gc);
-+	void __iomem *reg;
 +	u32 val;
 +
 +	if (anyka_gpio_get_direction(gc, offset))
-+		reg = anyka_gpio_in_reg(ag, offset);
++		val = anyka_gpio_read_in(ag, offset);
 +	else
-+		reg = anyka_gpio_out_reg(ag, offset);
-+
-+	val = readl_relaxed(reg);
++		val = readl_relaxed(anyka_gpio_out_reg(ag, offset));
 +
 +	return !!(val & BIT(anyka_gpio_bit(offset)));
 +}
@@ -281,7 +288,7 @@ index 000000000..76a6fce3a
 +			continue;
 +
 +		dir = readl_relaxed(anyka_gpio_dir_reg(ag, offset));
-+		val = (readl_relaxed(anyka_gpio_in_reg(ag, offset)) & dir) |
++		val = (anyka_gpio_read_in(ag, offset) & dir) |
 +		      (readl_relaxed(anyka_gpio_out_reg(ag, offset)) & ~dir);
 +
 +		bitmap_write(bits, val & m, offset, ANYKA_GPIO_GROUP_SIZE);
