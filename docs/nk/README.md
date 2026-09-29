@@ -24,6 +24,7 @@ Mask ROM bootrom -> nboot -> EBOOT -> NK (WinCE kernel)
 - [DM9000 Ethernet Driver](dm9000-driver.md): DM9000A board wiring, the GPIO-timed parallel bus protocol, and the structure of the WinCE `dm9000x.dll`.
 - [Power Management](power-management.md): WinCE power-state policy, OAL poweroff through GPIO105, and the unverified RTC reboot path.
 - [Touchpad Driver](touchpad-driver.md): PS/2 initialization, GPIO command transmission, UART reception, and the button bits in the motion packet.
+- [Battery Driver](battery-driver.md): voltage sampling, capacity curve, and status fields. The correctness of the battery circuit and its driver is in doubt.
 
 ## Conventions
 
