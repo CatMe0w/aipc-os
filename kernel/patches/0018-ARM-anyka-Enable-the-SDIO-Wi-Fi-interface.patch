@@ -92,10 +92,10 @@ index 9e469a1e8..786ac39db 100644
  		compatible = "anyka,ak98-fshc";
  		reg = <0x70000000 0x1000>;
 diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
-index a712a4f31..b8ee91f30 100644
+index 97892949a..e29a279fb 100644
 --- a/arch/arm/configs/aipc_defconfig
 +++ b/arch/arm/configs/aipc_defconfig
-@@ -36,7 +36,10 @@ CONFIG_BLK_DEV_SD=y
+@@ -35,7 +35,10 @@ CONFIG_BLK_DEV_SD=y
  CONFIG_NETDEVICES=y
  CONFIG_DM9000=y
  CONFIG_DM9000_GPIO_BUS=y
@@ -107,7 +107,7 @@ index a712a4f31..b8ee91f30 100644
  CONFIG_INPUT_EVDEV=y
  # CONFIG_KEYBOARD_ATKBD is not set
  CONFIG_KEYBOARD_GPIO_POLLED=y
-@@ -55,7 +58,10 @@ CONFIG_FRAMEBUFFER_CONSOLE_LEGACY_ACCELERATION=y
+@@ -54,7 +57,10 @@ CONFIG_FRAMEBUFFER_CONSOLE_LEGACY_ACCELERATION=y
  CONFIG_USB=y
  CONFIG_USB_CH37X_HCD=y
  CONFIG_USB_STORAGE=y

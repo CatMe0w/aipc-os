@@ -84,10 +84,10 @@ index 94d44b849..9e469a1e8 100644
  		compatible = "anyka,ak880x-intc";
  		reg = <0x8000000 0x1000>;
 diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
-index 755d2134b..a712a4f31 100644
+index e5453e5f6..97892949a 100644
 --- a/arch/arm/configs/aipc_defconfig
 +++ b/arch/arm/configs/aipc_defconfig
-@@ -40,8 +40,9 @@ CONFIG_DM9000_GPIO_BUS=y
+@@ -39,8 +39,9 @@ CONFIG_DM9000_GPIO_BUS=y
  CONFIG_INPUT_EVDEV=y
  # CONFIG_KEYBOARD_ATKBD is not set
  CONFIG_KEYBOARD_GPIO_POLLED=y

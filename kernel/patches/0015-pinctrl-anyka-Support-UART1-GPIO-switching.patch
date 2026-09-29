@@ -22,7 +22,7 @@ index f5e6922b4..d6dc89c7f 100644
  	  Say Y here to support the internal GPIO controller found in
  	  Anyka AK78/AK88/AK98 ARM926 SoCs.
 diff --git a/drivers/gpio/gpio-anyka.c b/drivers/gpio/gpio-anyka.c
-index 76a6fce3a..03957780c 100644
+index 56065f2c1..1e3b77cd3 100644
 --- a/drivers/gpio/gpio-anyka.c
 +++ b/drivers/gpio/gpio-anyka.c
 @@ -15,6 +15,8 @@
@@ -43,7 +43,7 @@ index 76a6fce3a..03957780c 100644
  	void __iomem *base;
  	spinlock_t lock;
  	struct gpio_chip gc;
-@@ -131,50 +135,40 @@ static u32 anyka_gpio_group_mask(struct gpio_chip *gc, unsigned int group)
+@@ -141,50 +145,40 @@ static u32 anyka_gpio_group_mask(struct gpio_chip *gc, unsigned int group)
  
  static void anyka_gpio_force_mux(struct anyka_gpio *ag, unsigned int offset)
  {
@@ -106,7 +106,7 @@ index 76a6fce3a..03957780c 100644
  }
  
  static int anyka_gpio_request(struct gpio_chip *gc, unsigned int offset)
-@@ -466,6 +460,11 @@ static int anyka_gpio_probe(struct platform_device *pdev)
+@@ -473,6 +467,11 @@ static int anyka_gpio_probe(struct platform_device *pdev)
  	if (IS_ERR(ag->base))
  		return PTR_ERR(ag->base);
  
@@ -118,7 +118,7 @@ index 76a6fce3a..03957780c 100644
  	device_property_read_u32(&pdev->dev, "ngpios", &ngpio);
  
  	spin_lock_init(&ag->lock);
-@@ -526,6 +525,7 @@ static int anyka_gpio_probe(struct platform_device *pdev)
+@@ -533,6 +532,7 @@ static int anyka_gpio_probe(struct platform_device *pdev)
  }
  
  static const struct of_device_id anyka_gpio_of_match[] = {

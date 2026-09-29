@@ -4,22 +4,21 @@ Date: Thu, 20 Aug 2026 10:47:49 +0800
 Subject: [PATCH] ARM: configs: Add aipc_defconfig for AIPC netbook
 
 ---
- arch/arm/configs/aipc_defconfig | 77 +++++++++++++++++++++++++++++++++
- 1 file changed, 77 insertions(+)
+ arch/arm/configs/aipc_defconfig | 76 +++++++++++++++++++++++++++++++++
+ 1 file changed, 76 insertions(+)
  create mode 100644 arch/arm/configs/aipc_defconfig
 
 diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
 new file mode 100644
-index 000000000..5d6ec3576
+index 000000000..15059f415
 --- /dev/null
 +++ b/arch/arm/configs/aipc_defconfig
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,76 @@
 +CONFIG_KERNEL_LZ4=y
 +CONFIG_SYSVIPC=y
 +CONFIG_LOG_BUF_SHIFT=15
 +CONFIG_CGROUPS=y
 +CONFIG_NAMESPACES=y
-+CONFIG_CC_OPTIMIZE_FOR_SIZE=y
 +CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y
 +CONFIG_EXPERT=y
 +CONFIG_NO_HZ_IDLE=y

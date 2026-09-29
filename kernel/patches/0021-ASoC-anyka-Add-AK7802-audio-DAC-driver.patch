@@ -74,10 +74,10 @@ index ecf9a67c0..57cbc4030 100644
  		compatible = "anyka,ak7802-l2rng";
  		reg = <0x48001580 0xa80>;
 diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
-index 5a4acd155..0804206a8 100644
+index 40adb877e..b98174c3b 100644
 --- a/arch/arm/configs/aipc_defconfig
 +++ b/arch/arm/configs/aipc_defconfig
-@@ -57,6 +57,11 @@ CONFIG_FB=y
+@@ -56,6 +56,11 @@ CONFIG_FB=y
  CONFIG_BACKLIGHT_CLASS_DEVICE=y
  CONFIG_FRAMEBUFFER_CONSOLE=y
  CONFIG_FRAMEBUFFER_CONSOLE_LEGACY_ACCELERATION=y

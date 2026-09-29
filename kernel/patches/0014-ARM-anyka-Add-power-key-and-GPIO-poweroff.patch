@@ -44,10 +44,10 @@ index 5f39bb281..d4633d4dd 100644
  		compatible = "davicom,dm9000";
  		interrupt-parent = <&gpio>;
 diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
-index 5d6ec3576..755d2134b 100644
+index 15059f415..e5453e5f6 100644
 --- a/arch/arm/configs/aipc_defconfig
 +++ b/arch/arm/configs/aipc_defconfig
-@@ -39,10 +39,13 @@ CONFIG_DM9000_GPIO_BUS=y
+@@ -38,10 +38,13 @@ CONFIG_DM9000_GPIO_BUS=y
  # CONFIG_WLAN is not set
  CONFIG_INPUT_EVDEV=y
  # CONFIG_KEYBOARD_ATKBD is not set
