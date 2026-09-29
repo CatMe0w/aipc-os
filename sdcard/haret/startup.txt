@@ -1,5 +1,6 @@
 set ramsize 0x4000000
 set ramaddr 0x30000000
 set mtype 1234
-set kernel zImage
+set kernel BOOT.BIN
+set kernel_offset 0x3000000
 boot
