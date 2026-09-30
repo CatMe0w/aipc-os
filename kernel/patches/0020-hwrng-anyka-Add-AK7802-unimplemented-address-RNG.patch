@@ -6,11 +6,11 @@ Subject: [PATCH] hwrng: anyka: Add AK7802 unimplemented-address RNG
 ---
  arch/arm/boot/dts/anyka/ak7802-netbook.dts |   4 +
  arch/arm/boot/dts/anyka/ak7802.dtsi        |   6 +
- arch/arm/configs/aipc_defconfig            |   3 +-
+ arch/arm/configs/aipc_defconfig            |   1 -
  drivers/char/hw_random/Kconfig             |  14 ++
  drivers/char/hw_random/Makefile            |   1 +
  drivers/char/hw_random/anyka-l2rng.c       | 233 +++++++++++++++++++++
- 6 files changed, 260 insertions(+), 1 deletion(-)
+ 6 files changed, 258 insertions(+), 1 deletion(-)
  create mode 100644 drivers/char/hw_random/anyka-l2rng.c
 
 diff --git a/arch/arm/boot/dts/anyka/ak7802-netbook.dts b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
@@ -43,23 +43,17 @@ index 786ac39db..ecf9a67c0 100644
  		compatible = "anyka,ak880x-intc";
  		reg = <0x8000000 0x1000>;
 diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
-index 4d4b8e039..40adb877e 100644
+index d872f85d7..dfe27a917 100644
 --- a/arch/arm/configs/aipc_defconfig
 +++ b/arch/arm/configs/aipc_defconfig
-@@ -47,7 +47,7 @@ CONFIG_KEYBOARD_GPIO_POLLED=y
- CONFIG_MOUSE_PS2=y
- CONFIG_SERIO=y
+@@ -44,7 +44,6 @@ CONFIG_INPUT_EVDEV=y
+ CONFIG_KEYBOARD_GPIO_POLLED=y
  CONFIG_SERIO_ANYKA_PS2=y
+ # CONFIG_LEGACY_PTYS is not set
 -# CONFIG_HW_RANDOM is not set
-+CONFIG_HW_RANDOM=y
  # CONFIG_PTP_1588_CLOCK is not set
  CONFIG_POWER_RESET=y
  CONFIG_POWER_RESET_GPIO=y
-@@ -86,3 +86,4 @@ CONFIG_DEBUG_FS=y
- # CONFIG_SLUB_DEBUG is not set
- CONFIG_SCHEDSTATS=y
- # CONFIG_FTRACE is not set
-+CONFIG_HW_RANDOM_ANYKA_L2=y
 diff --git a/drivers/char/hw_random/Kconfig b/drivers/char/hw_random/Kconfig
 index a5bcef4a5..db9b5a57b 100644
 --- a/drivers/char/hw_random/Kconfig

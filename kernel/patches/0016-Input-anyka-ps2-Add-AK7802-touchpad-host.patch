@@ -6,11 +6,11 @@ Subject: [PATCH] Input: anyka-ps2: Add AK7802 touchpad host
 ---
  arch/arm/boot/dts/anyka/ak7802-netbook.dts |   9 +
  arch/arm/boot/dts/anyka/ak7802.dtsi        |  28 +-
- arch/arm/configs/aipc_defconfig            |   5 +-
+ arch/arm/configs/aipc_defconfig            |   3 +-
  drivers/input/serio/Kconfig                |  11 +
  drivers/input/serio/Makefile               |   1 +
  drivers/input/serio/anyka-ps2.c            | 432 +++++++++++++++++++++
- 6 files changed, 483 insertions(+), 3 deletions(-)
+ 6 files changed, 481 insertions(+), 3 deletions(-)
  create mode 100644 drivers/input/serio/anyka-ps2.c
 
 diff --git a/arch/arm/boot/dts/anyka/ak7802-netbook.dts b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
@@ -84,21 +84,19 @@ index 94d44b849..9e469a1e8 100644
  		compatible = "anyka,ak880x-intc";
  		reg = <0x8000000 0x1000>;
 diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
-index e5453e5f6..97892949a 100644
+index 02c8199b8..b99b02c78 100644
 --- a/arch/arm/configs/aipc_defconfig
 +++ b/arch/arm/configs/aipc_defconfig
-@@ -39,8 +39,9 @@ CONFIG_DM9000_GPIO_BUS=y
+@@ -39,8 +39,7 @@ CONFIG_DM9000_GPIO_BUS=y
  CONFIG_INPUT_EVDEV=y
  # CONFIG_KEYBOARD_ATKBD is not set
  CONFIG_KEYBOARD_GPIO_POLLED=y
 -# CONFIG_MOUSE_PS2 is not set
 -# CONFIG_SERIO is not set
-+CONFIG_MOUSE_PS2=y
-+CONFIG_SERIO=y
 +CONFIG_SERIO_ANYKA_PS2=y
+ # CONFIG_LEGACY_PTYS is not set
  # CONFIG_HW_RANDOM is not set
  # CONFIG_PTP_1588_CLOCK is not set
- CONFIG_POWER_RESET=y
 diff --git a/drivers/input/serio/Kconfig b/drivers/input/serio/Kconfig
 index bacab1f58..6ae4185f8 100644
 --- a/drivers/input/serio/Kconfig

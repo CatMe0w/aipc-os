@@ -44,16 +44,17 @@ index 5f39bb281..d4633d4dd 100644
  		compatible = "davicom,dm9000";
  		interrupt-parent = <&gpio>;
 diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
-index 15059f415..e5453e5f6 100644
+index 4623c9b33..02c8199b8 100644
 --- a/arch/arm/configs/aipc_defconfig
 +++ b/arch/arm/configs/aipc_defconfig
-@@ -38,10 +38,13 @@ CONFIG_DM9000_GPIO_BUS=y
+@@ -38,11 +38,14 @@ CONFIG_DM9000_GPIO_BUS=y
  # CONFIG_WLAN is not set
  CONFIG_INPUT_EVDEV=y
  # CONFIG_KEYBOARD_ATKBD is not set
 +CONFIG_KEYBOARD_GPIO_POLLED=y
  # CONFIG_MOUSE_PS2 is not set
  # CONFIG_SERIO is not set
+ # CONFIG_LEGACY_PTYS is not set
  # CONFIG_HW_RANDOM is not set
  # CONFIG_PTP_1588_CLOCK is not set
 +CONFIG_POWER_RESET=y

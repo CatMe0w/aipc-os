@@ -30,18 +30,18 @@ index 5373995c5..50d4d730c 100644
  		compatible = "gpio-poweroff";
  		gpios = <&gpio 105 GPIO_ACTIVE_LOW>;
 diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
-index b98174c3b..c610f7f01 100644
+index 4a30cdadd..629108ddd 100644
 --- a/arch/arm/configs/aipc_defconfig
 +++ b/arch/arm/configs/aipc_defconfig
-@@ -51,6 +51,8 @@ CONFIG_HW_RANDOM=y
+@@ -47,6 +47,8 @@ CONFIG_SERIO_ANYKA_PS2=y
  # CONFIG_PTP_1588_CLOCK is not set
  CONFIG_POWER_RESET=y
  CONFIG_POWER_RESET_GPIO=y
 +CONFIG_POWER_SUPPLY=y
 +CONFIG_BATTERY_ANYKA=y
  # CONFIG_HWMON is not set
- CONFIG_FB=y
- CONFIG_BACKLIGHT_CLASS_DEVICE=y
+ CONFIG_REGULATOR=y
+ CONFIG_REGULATOR_FIXED_VOLTAGE=y
 diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
 index f0ede1cec..35fefd640 100644
 --- a/drivers/power/supply/Kconfig

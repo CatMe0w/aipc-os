@@ -4,25 +4,25 @@ Date: Thu, 20 Aug 2026 10:47:49 +0800
 Subject: [PATCH] ARM: configs: Add aipc_defconfig for AIPC netbook
 
 ---
- arch/arm/configs/aipc_defconfig | 76 +++++++++++++++++++++++++++++++++
- 1 file changed, 76 insertions(+)
+ arch/arm/configs/aipc_defconfig | 77 +++++++++++++++++++++++++++++++++
+ 1 file changed, 77 insertions(+)
  create mode 100644 arch/arm/configs/aipc_defconfig
 
 diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
 new file mode 100644
-index 000000000..15059f415
+index 000000000..4623c9b33
 --- /dev/null
 +++ b/arch/arm/configs/aipc_defconfig
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,77 @@
 +CONFIG_KERNEL_LZ4=y
 +CONFIG_SYSVIPC=y
++CONFIG_NO_HZ_IDLE=y
++CONFIG_HIGH_RES_TIMERS=y
 +CONFIG_LOG_BUF_SHIFT=15
 +CONFIG_CGROUPS=y
 +CONFIG_NAMESPACES=y
 +CONFIG_LD_DEAD_CODE_DATA_ELIMINATION=y
 +CONFIG_EXPERT=y
-+CONFIG_NO_HZ_IDLE=y
-+CONFIG_HIGH_RES_TIMERS=y
 +# CONFIG_IO_URING is not set
 +# CONFIG_ARCH_MULTI_V7 is not set
 +CONFIG_ARCH_ANYKA=y
@@ -56,6 +56,7 @@ index 000000000..15059f415
 +# CONFIG_KEYBOARD_ATKBD is not set
 +# CONFIG_MOUSE_PS2 is not set
 +# CONFIG_SERIO is not set
++# CONFIG_LEGACY_PTYS is not set
 +# CONFIG_HW_RANDOM is not set
 +# CONFIG_PTP_1588_CLOCK is not set
 +# CONFIG_HWMON is not set
