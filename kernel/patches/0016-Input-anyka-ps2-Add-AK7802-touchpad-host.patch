@@ -9,8 +9,8 @@ Subject: [PATCH] Input: anyka-ps2: Add AK7802 touchpad host
  arch/arm/configs/aipc_defconfig            |   3 +-
  drivers/input/serio/Kconfig                |  11 +
  drivers/input/serio/Makefile               |   1 +
- drivers/input/serio/anyka-ps2.c            | 432 +++++++++++++++++++++
- 6 files changed, 481 insertions(+), 3 deletions(-)
+ drivers/input/serio/anyka-ps2.c            | 437 +++++++++++++++++++++
+ 6 files changed, 486 insertions(+), 3 deletions(-)
  create mode 100644 drivers/input/serio/anyka-ps2.c
 
 diff --git a/arch/arm/boot/dts/anyka/ak7802-netbook.dts b/arch/arm/boot/dts/anyka/ak7802-netbook.dts
@@ -132,10 +132,10 @@ index 7f5137dc0..145c64809 100644
  obj-$(CONFIG_USERIO)		+= userio.o
 diff --git a/drivers/input/serio/anyka-ps2.c b/drivers/input/serio/anyka-ps2.c
 new file mode 100644
-index 000000000..a891e832d
+index 000000000..69bd1426c
 --- /dev/null
 +++ b/drivers/input/serio/anyka-ps2.c
-@@ -0,0 +1,432 @@
+@@ -0,0 +1,437 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +#include <linux/bitfield.h>
 +#include <linux/delay.h>
@@ -188,6 +188,7 @@ index 000000000..a891e832d
 +	struct pinctrl_state *gpio_pins;
 +	struct gpio_desc *clk;
 +	struct gpio_desc *data;
++	struct workqueue_struct *tx_wq;
 +	struct work_struct tx_work;
 +	spinlock_t lock;
 +	int irq;
@@ -390,7 +391,7 @@ index 000000000..a891e832d
 +	else {
 +		ps2->tx_byte = byte;
 +		ps2->tx_busy = true;
-+		schedule_work(&ps2->tx_work);
++		queue_work(ps2->tx_wq, &ps2->tx_work);
 +	}
 +	spin_unlock_irqrestore(&ps2->lock, flags);
 +	return ret;
@@ -510,6 +511,10 @@ index 000000000..a891e832d
 +	ps2->irq = platform_get_irq(pdev, 0);
 +	if (ps2->irq < 0)
 +		return ps2->irq;
++	ps2->tx_wq = devm_alloc_workqueue(dev, "anyka-ps2",
++					  WQ_HIGHPRI | WQ_PERCPU, 0);
++	if (!ps2->tx_wq)
++		return -ENOMEM;
 +	spin_lock_init(&ps2->lock);
 +	INIT_WORK(&ps2->tx_work, anyka_ps2_tx_work);
 +	serio = kzalloc_obj(*serio);
