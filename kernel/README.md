@@ -1,6 +1,6 @@
 # Linux kernel
 
-Patches against Linux v7.2 (`8d3ae59288f1e7d58d76558a6ee96d533bc5019f`).
+Patches against Linux v7.3 (`c03c1a14507dfaf8b856c2608f9ac216021fc222`).
 
 ## Build
 
@@ -16,7 +16,7 @@ That file is what both boot paths load. Put it in the root of the FAT partition.
 
 # Fetch the Linux source
 cd kernel/build
-git clone --depth 1 --branch v7.2 --single-branch https://github.com/torvalds/linux
+git clone --depth 1 --branch v7.3 --single-branch https://github.com/torvalds/linux
 cd linux
 git am ../../patches/*.patch
 
@@ -32,7 +32,7 @@ To export the patches again:
 
 ```sh
 rm -f ../../patches/*.patch
-git format-patch --no-numbered --zero-commit --no-signature -o ../../patches v7.2..HEAD
+git format-patch --no-numbered --zero-commit --no-signature -o ../../patches v7.3..HEAD
 ```
 
 ## Caveats

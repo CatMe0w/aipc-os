@@ -30,10 +30,10 @@ index 5373995c5..50d4d730c 100644
  		compatible = "gpio-poweroff";
  		gpios = <&gpio 105 GPIO_ACTIVE_LOW>;
 diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
-index 046acdfda..13f67f51c 100644
+index 22e0625ae..d8dea9702 100644
 --- a/arch/arm/configs/aipc_defconfig
 +++ b/arch/arm/configs/aipc_defconfig
-@@ -47,6 +47,8 @@ CONFIG_SERIO_ANYKA_PS2=y
+@@ -46,6 +46,8 @@ CONFIG_SERIO_ANYKA_PS2=y
  # CONFIG_PTP_1588_CLOCK is not set
  CONFIG_POWER_RESET=y
  CONFIG_POWER_RESET_GPIO=y
@@ -43,7 +43,7 @@ index 046acdfda..13f67f51c 100644
  CONFIG_REGULATOR=y
  CONFIG_REGULATOR_FIXED_VOLTAGE=y
 diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
-index f0ede1cec..35fefd640 100644
+index b89ef40df..51b107d20 100644
 --- a/drivers/power/supply/Kconfig
 +++ b/drivers/power/supply/Kconfig
 @@ -110,6 +110,16 @@ config BATTERY_ACT8945A
@@ -64,7 +64,7 @@ index f0ede1cec..35fefd640 100644
  	tristate "Pegatron Chagall battery driver"
  	depends on I2C
 diff --git a/drivers/power/supply/Makefile b/drivers/power/supply/Makefile
-index 31fe4a145..2406ceaba 100644
+index f3c0d1006..81fbec474 100644
 --- a/drivers/power/supply/Makefile
 +++ b/drivers/power/supply/Makefile
 @@ -22,6 +22,7 @@ obj-$(CONFIG_TEST_POWER)	+= test_power.o

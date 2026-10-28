@@ -13,7 +13,7 @@ Subject: [PATCH] spi: anyka: Add AK88 SPI controller driver
  create mode 100644 drivers/spi/spi-ak88.c
 
 diff --git a/drivers/spi/Kconfig b/drivers/spi/Kconfig
-index 8782514bb..03f62154c 100644
+index a0f37e2df..edb90a1d1 100644
 --- a/drivers/spi/Kconfig
 +++ b/drivers/spi/Kconfig
 @@ -60,6 +60,20 @@ config SPI_OFFLOAD
@@ -38,11 +38,11 @@ index 8782514bb..03f62154c 100644
  	tristate "Airoha SPI NAND Flash Interface"
  	depends on ARCH_AIROHA || COMPILE_TEST
 diff --git a/drivers/spi/Makefile b/drivers/spi/Makefile
-index 9fa12498c..a92c29611 100644
+index a18814fbd..91df3a24b 100644
 --- a/drivers/spi/Makefile
 +++ b/drivers/spi/Makefile
-@@ -15,6 +15,8 @@ obj-$(CONFIG_SPI_SPIDEV)		+= spidev.o
- obj-$(CONFIG_SPI_LOOPBACK_TEST)		+= spi-loopback-test.o
+@@ -16,6 +16,8 @@ obj-$(CONFIG_SPI_LOOPBACK_TEST)		+= spi-loopback-test.o
+ obj-$(CONFIG_SPI_DMA_KUNIT_TEST)	+= tests/
  
  # SPI master controller drivers (bus)
 +obj-$(CONFIG_SPI_AK88)			+= spi-ak88.o

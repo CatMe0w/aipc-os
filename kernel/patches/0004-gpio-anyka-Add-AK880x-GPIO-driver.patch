@@ -11,7 +11,7 @@ Subject: [PATCH] gpio: anyka: Add AK880x GPIO driver
  create mode 100644 drivers/gpio/gpio-anyka.c
 
 diff --git a/drivers/gpio/Kconfig b/drivers/gpio/Kconfig
-index 28cf6d2e8..f5e6922b4 100644
+index a48586bb8..1b422d6e9 100644
 --- a/drivers/gpio/Kconfig
 +++ b/drivers/gpio/Kconfig
 @@ -179,6 +179,14 @@ config GPIO_AMDPT
@@ -30,7 +30,7 @@ index 28cf6d2e8..f5e6922b4 100644
  	tristate "Aspeed GPIO support"
  	depends on ARCH_ASPEED || COMPILE_TEST
 diff --git a/drivers/gpio/Makefile b/drivers/gpio/Makefile
-index 4d0e90040..feff5cf9d 100644
+index dc9e6d643..777426ca2 100644
 --- a/drivers/gpio/Makefile
 +++ b/drivers/gpio/Makefile
 @@ -36,6 +36,7 @@ obj-$(CONFIG_GPIO_ALTERA)  		+= gpio-altera.o

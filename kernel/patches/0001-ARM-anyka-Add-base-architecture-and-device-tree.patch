@@ -22,10 +22,10 @@ Subject: [PATCH] ARM: anyka: Add base architecture and device tree
  create mode 100644 arch/arm/mach-anyka/anyka.c
 
 diff --git a/arch/arm/Kconfig b/arch/arm/Kconfig
-index 9187240a0..a55602128 100644
+index ffbc7f386..e26da876e 100644
 --- a/arch/arm/Kconfig
 +++ b/arch/arm/Kconfig
-@@ -361,6 +361,8 @@ source "arch/arm/Kconfig.platforms"
+@@ -363,6 +363,8 @@ source "arch/arm/Kconfig.platforms"
  #
  source "arch/arm/mach-actions/Kconfig"
  

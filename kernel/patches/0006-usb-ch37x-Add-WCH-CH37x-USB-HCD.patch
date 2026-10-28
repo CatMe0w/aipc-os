@@ -26,7 +26,7 @@ index eecbd631f..31dc68890 100644
  obj-$(CONFIG_USB_C67X00_HCD)	+= c67x00/
  
 diff --git a/drivers/usb/host/Kconfig b/drivers/usb/host/Kconfig
-index b3b1ec696..17c5cf9a6 100644
+index 10cff12a3..c00ea29a1 100644
 --- a/drivers/usb/host/Kconfig
 +++ b/drivers/usb/host/Kconfig
 @@ -4,6 +4,16 @@

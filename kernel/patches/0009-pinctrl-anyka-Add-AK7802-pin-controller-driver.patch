@@ -95,7 +95,7 @@ index 428c6e21b..20c45c840 100644
  	select USE_OF
  	help
 diff --git a/drivers/pinctrl/Kconfig b/drivers/pinctrl/Kconfig
-index eda54aa5f..fe70cab84 100644
+index e1ab3a916..1775b7b23 100644
 --- a/drivers/pinctrl/Kconfig
 +++ b/drivers/pinctrl/Kconfig
 @@ -84,6 +84,19 @@ config PINCTRL_APPLE_GPIO

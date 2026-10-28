@@ -11,10 +11,10 @@ Subject: [PATCH] video: fbdev: Add Anyka LCD framebuffer driver
  create mode 100644 drivers/video/fbdev/anyka-lcdfb.c
 
 diff --git a/drivers/video/fbdev/Kconfig b/drivers/video/fbdev/Kconfig
-index 085d3a202..4007d5694 100644
+index e8cd8cb76..9b5777ce8 100644
 --- a/drivers/video/fbdev/Kconfig
 +++ b/drivers/video/fbdev/Kconfig
-@@ -1776,6 +1776,19 @@ config FB_SIMPLE
+@@ -1775,6 +1775,19 @@ config FB_SIMPLE
  	  Configuration re: surface address, size, and format must be provided
  	  through device tree, or plain old platform data.
  

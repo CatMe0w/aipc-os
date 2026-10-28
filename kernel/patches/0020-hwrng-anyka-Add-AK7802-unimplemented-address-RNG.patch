@@ -43,10 +43,10 @@ index 786ac39db..ecf9a67c0 100644
  		compatible = "anyka,ak880x-intc";
  		reg = <0x8000000 0x1000>;
 diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
-index 54e4b0d51..12b8a8b0a 100644
+index f1dca2508..c0b25f2a2 100644
 --- a/arch/arm/configs/aipc_defconfig
 +++ b/arch/arm/configs/aipc_defconfig
-@@ -44,7 +44,6 @@ CONFIG_INPUT_EVDEV=y
+@@ -43,7 +43,6 @@ CONFIG_INPUT_EVDEV=y
  CONFIG_KEYBOARD_GPIO_POLLED=y
  CONFIG_SERIO_ANYKA_PS2=y
  # CONFIG_LEGACY_PTYS is not set
@@ -55,12 +55,12 @@ index 54e4b0d51..12b8a8b0a 100644
  CONFIG_POWER_RESET=y
  CONFIG_POWER_RESET_GPIO=y
 diff --git a/drivers/char/hw_random/Kconfig b/drivers/char/hw_random/Kconfig
-index a5bcef4a5..db9b5a57b 100644
+index 1bf5e3f8a..0af450066 100644
 --- a/drivers/char/hw_random/Kconfig
 +++ b/drivers/char/hw_random/Kconfig
-@@ -636,6 +636,20 @@ config HW_RANDOM_XILINX
- 	  To compile this driver as a module, choose M here: the module
- 	  will be called xilinx-trng.
+@@ -647,6 +647,20 @@ config HW_RANDOM_QCOM
+ 	  To compile this driver as a module, choose M here. The
+ 	  module will be called qcom-rng. If unsure, say N.
  
 +config HW_RANDOM_ANYKA_L2
 +	tristate "Anyka AK7802 unimplemented-address RNG"
@@ -80,13 +80,13 @@ index a5bcef4a5..db9b5a57b 100644
  
  config UML_RANDOM
 diff --git a/drivers/char/hw_random/Makefile b/drivers/char/hw_random/Makefile
-index 95b5adb49..5411576b2 100644
+index 8fce2aa6c..375c8bca1 100644
 --- a/drivers/char/hw_random/Makefile
 +++ b/drivers/char/hw_random/Makefile
-@@ -54,3 +54,4 @@ obj-$(CONFIG_HW_RANDOM_POLARFIRE_SOC) += mpfs-rng.o
- obj-$(CONFIG_HW_RANDOM_ROCKCHIP) += rockchip-rng.o
+@@ -55,3 +55,4 @@ obj-$(CONFIG_HW_RANDOM_ROCKCHIP) += rockchip-rng.o
  obj-$(CONFIG_HW_RANDOM_JH7110) += jh7110-trng.o
  obj-$(CONFIG_HW_RANDOM_XILINX) += xilinx-trng.o
+ obj-$(CONFIG_HW_RANDOM_QCOM) += qcom-rng.o
 +obj-$(CONFIG_HW_RANDOM_ANYKA_L2) += anyka-l2rng.o
 diff --git a/drivers/char/hw_random/anyka-l2rng.c b/drivers/char/hw_random/anyka-l2rng.c
 new file mode 100644

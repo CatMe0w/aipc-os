@@ -84,10 +84,10 @@ index 94d44b849..9e469a1e8 100644
  		compatible = "anyka,ak880x-intc";
  		reg = <0x8000000 0x1000>;
 diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
-index 2c133fd32..d0d3fae23 100644
+index f7ad19b9d..0c808880f 100644
 --- a/arch/arm/configs/aipc_defconfig
 +++ b/arch/arm/configs/aipc_defconfig
-@@ -39,8 +39,7 @@ CONFIG_DM9000_GPIO_BUS=y
+@@ -38,8 +38,7 @@ CONFIG_DM9000_GPIO_BUS=y
  CONFIG_INPUT_EVDEV=y
  # CONFIG_KEYBOARD_ATKBD is not set
  CONFIG_KEYBOARD_GPIO_POLLED=y
@@ -98,10 +98,10 @@ index 2c133fd32..d0d3fae23 100644
  # CONFIG_HW_RANDOM is not set
  # CONFIG_PTP_1588_CLOCK is not set
 diff --git a/drivers/input/serio/Kconfig b/drivers/input/serio/Kconfig
-index bacab1f58..6ae4185f8 100644
+index 087f0203f..bf353fd52 100644
 --- a/drivers/input/serio/Kconfig
 +++ b/drivers/input/serio/Kconfig
-@@ -271,6 +271,17 @@ config SERIO_SUN4I_PS2
+@@ -298,6 +298,17 @@ config SERIO_SUN4I_PS2
  	  To compile this driver as a module, choose M here: the
  	  module will be called sun4i-ps2.
  

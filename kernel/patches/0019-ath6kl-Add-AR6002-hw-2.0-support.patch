@@ -25,10 +25,10 @@ Subject: [PATCH] ath6kl: Add AR6002 hw 2.0 support
  create mode 100644 drivers/net/wireless/ath/ath6kl/ar6002.c
 
 diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
-index 4dbdf2d89..54e4b0d51 100644
+index abd210972..f1dca2508 100644
 --- a/arch/arm/configs/aipc_defconfig
 +++ b/arch/arm/configs/aipc_defconfig
-@@ -28,6 +28,8 @@ CONFIG_IP_MULTICAST=y
+@@ -27,6 +27,8 @@ CONFIG_IP_MULTICAST=y
  CONFIG_CFG80211=y
  CONFIG_DEVTMPFS=y
  CONFIG_DEVTMPFS_MOUNT=y
@@ -441,10 +441,10 @@ index 397a52f26..b4d1079ea 100644
  #define TARGET_TYPE_AR6004      5
  #define BMI_ROMPATCH_INSTALL               9
 diff --git a/drivers/net/wireless/ath/ath6kl/cfg80211.c b/drivers/net/wireless/ath/ath6kl/cfg80211.c
-index cc0f2c45f..a0c0898d1 100644
+index 8bbe554a9..0fd22dd50 100644
 --- a/drivers/net/wireless/ath/ath6kl/cfg80211.c
 +++ b/drivers/net/wireless/ath/ath6kl/cfg80211.c
-@@ -922,11 +922,13 @@ static int ath6kl_set_probed_ssids(struct ath6kl *ar,
+@@ -927,11 +927,13 @@ static int ath6kl_set_probed_ssids(struct ath6kl *ar,
  {
  	u8 i, j, index_to_add, ssid_found = false;
  	struct ath6kl_cfg80211_match_probe_ssid ssid_list[MAX_PROBED_SSIDS];
@@ -460,7 +460,7 @@ index cc0f2c45f..a0c0898d1 100644
  		return -EINVAL;
  
  	for (i = 0; i < n_ssids; i++) {
-@@ -964,7 +966,7 @@ static int ath6kl_set_probed_ssids(struct ath6kl *ar,
+@@ -969,7 +971,7 @@ static int ath6kl_set_probed_ssids(struct ath6kl *ar,
  		if (ssid_found)
  			continue;
  
@@ -469,7 +469,7 @@ index cc0f2c45f..a0c0898d1 100644
  			continue;
  
  		ssid_list[index_to_add].ssid.ssid_len =
-@@ -984,7 +986,7 @@ static int ath6kl_set_probed_ssids(struct ath6kl *ar,
+@@ -989,7 +991,7 @@ static int ath6kl_set_probed_ssids(struct ath6kl *ar,
  	}
  
  	/* Make sure no old entries are left behind */
@@ -478,7 +478,7 @@ index cc0f2c45f..a0c0898d1 100644
  		ath6kl_wmi_probedssid_cmd(ar->wmi, vif->fw_vif_idx, i,
  					  DISABLE_SSID_FLAG, 0, NULL);
  	}
-@@ -3998,6 +4000,27 @@ int ath6kl_cfg80211_init(struct ath6kl *ar)
+@@ -3997,6 +3999,27 @@ int ath6kl_cfg80211_init(struct ath6kl *ar)
  		NL80211_PROBE_RESP_OFFLOAD_SUPPORT_WPS2 |
  		NL80211_PROBE_RESP_OFFLOAD_SUPPORT_P2P;
  
@@ -526,7 +526,7 @@ index 648110cd3..a072cc5f5 100644
  	if (suspend_mode &&
  	    suspend_mode >= WLAN_POWER_STATE_CUT_PWR &&
 diff --git a/drivers/net/wireless/ath/ath6kl/core.h b/drivers/net/wireless/ath/ath6kl/core.h
-index 77e052336..1ab88aa48 100644
+index a0b236eee..11c78075a 100644
 --- a/drivers/net/wireless/ath/ath6kl/core.h
 +++ b/drivers/net/wireless/ath/ath6kl/core.h
 @@ -172,6 +172,20 @@ enum ath6kl_hw_flags {
@@ -550,7 +550,7 @@ index 77e052336..1ab88aa48 100644
  /* AR6003 1.0 definitions */
  #define AR6003_HW_1_0_VERSION                 0x300002ba
  
-@@ -725,6 +739,7 @@ struct ath6kl {
+@@ -726,6 +740,7 @@ struct ath6kl {
  	u8 lrssi_roam_threshold;
  	struct ath6kl_version version;
  	u32 target_type;
@@ -558,7 +558,7 @@ index 77e052336..1ab88aa48 100644
  	u8 tx_pwr;
  	struct ath6kl_node_mapping node_map[MAX_NODE_NUM];
  	u8 ibss_ps_enable;
-@@ -883,7 +898,10 @@ static inline u32 ath6kl_get_hi_item_addr(struct ath6kl *ar,
+@@ -884,7 +899,10 @@ static inline u32 ath6kl_get_hi_item_addr(struct ath6kl *ar,
  {
  	u32 addr = 0;
  
@@ -570,7 +570,7 @@ index 77e052336..1ab88aa48 100644
  		addr = ATH6KL_AR6003_HI_START_ADDR + item_offset;
  	else if (ar->target_type == TARGET_TYPE_AR6004)
  		addr = ATH6KL_AR6004_HI_START_ADDR + item_offset;
-@@ -891,6 +909,21 @@ static inline u32 ath6kl_get_hi_item_addr(struct ath6kl *ar,
+@@ -892,6 +910,21 @@ static inline u32 ath6kl_get_hi_item_addr(struct ath6kl *ar,
  	return addr;
  }
  
@@ -642,7 +642,7 @@ index 9ece8f998..305c7e802 100644
  	ath6kl_dbg(ATH6KL_DBG_HTC,
  		   "htc tx issue len %d seqno %d padded_len %d mbox 0x%X %s\n",
 diff --git a/drivers/net/wireless/ath/ath6kl/init.c b/drivers/net/wireless/ath/ath6kl/init.c
-index 782209dcb..f24eb3cd2 100644
+index 6481da4c1..f3f83bb8c 100644
 --- a/drivers/net/wireless/ath/ath6kl/init.c
 +++ b/drivers/net/wireless/ath/ath6kl/init.c
 @@ -33,6 +33,14 @@
@@ -740,10 +740,10 @@ index 782209dcb..f24eb3cd2 100644
  			   ATH6KL_ABI_VERSION, ar->version.abi_ver);
  		ret = -EIO;
 diff --git a/drivers/net/wireless/ath/ath6kl/main.c b/drivers/net/wireless/ath/ath6kl/main.c
-index 8afc6589f..7a6924119 100644
+index 9c023d7ce..d21739693 100644
 --- a/drivers/net/wireless/ath/ath6kl/main.c
 +++ b/drivers/net/wireless/ath/ath6kl/main.c
-@@ -1162,6 +1162,9 @@ static void ath6kl_set_multicast_list(struct net_device *ndev)
+@@ -1163,6 +1163,9 @@ static void ath6kl_set_multicast_list(struct net_device *ndev)
  	struct list_head mc_filter_new;
  	int ret;
  
@@ -753,7 +753,7 @@ index 8afc6589f..7a6924119 100644
  	if (!test_bit(WMI_READY, &vif->ar->flag) ||
  	    !test_bit(WLAN_ENABLED, &vif->flags))
  		return;
-@@ -1303,7 +1306,8 @@ void init_netdev(struct net_device *dev)
+@@ -1304,7 +1307,8 @@ void init_netdev(struct net_device *dev)
  					WMI_MAX_TX_META_SZ +
  					ATH6KL_HTC_ALIGN_BYTES, 4);
  
@@ -842,7 +842,7 @@ index d5eeeae77..88d632a2c 100644
  
  #define ATH6KL_FWLOG_PAYLOAD_SIZE		1500
 diff --git a/drivers/net/wireless/ath/ath6kl/txrx.c b/drivers/net/wireless/ath/ath6kl/txrx.c
-index d81825413..2d0f70cd5 100644
+index 609d458ca..ee0d35fbb 100644
 --- a/drivers/net/wireless/ath/ath6kl/txrx.c
 +++ b/drivers/net/wireless/ath/ath6kl/txrx.c
 @@ -290,6 +290,9 @@ int ath6kl_control_tx(void *devt, struct sk_buff *skb,
@@ -910,7 +910,7 @@ index d81825413..2d0f70cd5 100644
  	dhdr = (struct wmi_data_hdr *) skb->data;
  
 diff --git a/drivers/net/wireless/ath/ath6kl/wmi.c b/drivers/net/wireless/ath/ath6kl/wmi.c
-index 2b0c5038a..eb237ad34 100644
+index 2140fddba..d9ff3611b 100644
 --- a/drivers/net/wireless/ath/ath6kl/wmi.c
 +++ b/drivers/net/wireless/ath/ath6kl/wmi.c
 @@ -754,6 +754,9 @@ static int ath6kl_wmi_ready_event_rx(struct wmi *wmi, u8 *datap, int len)
@@ -964,7 +964,7 @@ index 2b0c5038a..eb237ad34 100644
  	if (bss == NULL)
  		return -ENOMEM;
  	cfg80211_put_bss(ar->wiphy, bss);
-@@ -1367,7 +1380,15 @@ static int ath6kl_wmi_error_event_rx(struct wmi *wmi, u8 *datap, int len)
+@@ -1370,7 +1383,15 @@ static int ath6kl_wmi_error_event_rx(struct wmi *wmi, u8 *datap, int len)
  static int ath6kl_wmi_stats_event_rx(struct wmi *wmi, u8 *datap, int len,
  				     struct ath6kl_vif *vif)
  {
@@ -981,7 +981,7 @@ index 2b0c5038a..eb237ad34 100644
  
  	return 0;
  }
-@@ -1820,6 +1841,16 @@ int ath6kl_wmi_cmd_send(struct wmi *wmi, u8 if_idx, struct sk_buff *skb,
+@@ -1823,6 +1844,16 @@ int ath6kl_wmi_cmd_send(struct wmi *wmi, u8 if_idx, struct sk_buff *skb,
  		return -EINVAL;
  	}
  
@@ -998,7 +998,7 @@ index 2b0c5038a..eb237ad34 100644
  	if ((sync_flag == SYNC_BEFORE_WMIFLAG) ||
  	    (sync_flag == SYNC_BOTH_WMIFLAG)) {
  		/*
-@@ -1829,12 +1860,15 @@ int ath6kl_wmi_cmd_send(struct wmi *wmi, u8 if_idx, struct sk_buff *skb,
+@@ -1832,12 +1863,15 @@ int ath6kl_wmi_cmd_send(struct wmi *wmi, u8 if_idx, struct sk_buff *skb,
  		ath6kl_wmi_sync_point(wmi, if_idx);
  	}
  
@@ -1020,7 +1020,7 @@ index 2b0c5038a..eb237ad34 100644
  
  	/* Only for OPT_TX_CMD, use BE endpoint. */
  	if (cmd_id == WMI_OPT_TX_FRAME_CMDID) {
-@@ -1847,7 +1881,9 @@ int ath6kl_wmi_cmd_send(struct wmi *wmi, u8 if_idx, struct sk_buff *skb,
+@@ -1850,7 +1884,9 @@ int ath6kl_wmi_cmd_send(struct wmi *wmi, u8 if_idx, struct sk_buff *skb,
  		ep_id = ath6kl_ac2_endpoint_id(wmi->parent_dev, WMM_AC_BE);
  	}
  
@@ -1031,7 +1031,7 @@ index 2b0c5038a..eb237ad34 100644
  
  	if ((sync_flag == SYNC_AFTER_WMIFLAG) ||
  	    (sync_flag == SYNC_BOTH_WMIFLAG)) {
-@@ -2441,6 +2477,7 @@ static int ath6kl_wmi_data_sync_send(struct wmi *wmi, struct sk_buff *skb,
+@@ -2444,6 +2480,7 @@ static int ath6kl_wmi_data_sync_send(struct wmi *wmi, struct sk_buff *skb,
  	skb_push(skb, sizeof(struct wmi_data_hdr));
  
  	data_hdr = (struct wmi_data_hdr *) skb->data;
@@ -1039,7 +1039,7 @@ index 2b0c5038a..eb237ad34 100644
  	data_hdr->info = SYNC_MSGTYPE << WMI_DATA_HDR_MSG_TYPE_SHIFT;
  	data_hdr->info3 = cpu_to_le16(if_idx & WMI_DATA_HDR_IF_IDX_MASK);
  
-@@ -3993,6 +4030,12 @@ static int ath6kl_wmi_proc_events(struct wmi *wmi, struct sk_buff *skb)
+@@ -4006,6 +4043,12 @@ static int ath6kl_wmi_proc_events(struct wmi *wmi, struct sk_buff *skb)
  	datap = skb->data;
  	len = skb->len;
  
@@ -1052,7 +1052,7 @@ index 2b0c5038a..eb237ad34 100644
  	ath6kl_dbg(ATH6KL_DBG_WMI, "wmi rx id %d len %d\n", id, len);
  	ath6kl_dbg_dump(ATH6KL_DBG_WMI_DUMP, NULL, "wmi rx ",
  			datap, len);
-@@ -4020,7 +4063,9 @@ static int ath6kl_wmi_proc_events(struct wmi *wmi, struct sk_buff *skb)
+@@ -4033,7 +4076,9 @@ static int ath6kl_wmi_proc_events(struct wmi *wmi, struct sk_buff *skb)
  		break;
  	case WMI_REGDOMAIN_EVENTID:
  		ath6kl_dbg(ATH6KL_DBG_WMI, "WMI_REGDOMAIN_EVENTID\n");
@@ -1063,7 +1063,7 @@ index 2b0c5038a..eb237ad34 100644
  		break;
  	case WMI_PSTREAM_TIMEOUT_EVENTID:
  		ath6kl_dbg(ATH6KL_DBG_WMI, "WMI_PSTREAM_TIMEOUT_EVENTID\n");
-@@ -4130,6 +4175,11 @@ int ath6kl_wmi_control_rx(struct wmi *wmi, struct sk_buff *skb)
+@@ -4143,6 +4188,11 @@ int ath6kl_wmi_control_rx(struct wmi *wmi, struct sk_buff *skb)
  	if (WARN_ON(skb == NULL))
  		return -EINVAL;
  
@@ -1076,7 +1076,7 @@ index 2b0c5038a..eb237ad34 100644
  		ath6kl_err("bad packet 1\n");
  		dev_kfree_skb(skb);
 diff --git a/include/linux/mmc/sdio_ids.h b/include/linux/mmc/sdio_ids.h
-index 0685dd717..9acdc582f 100644
+index afae93f6f..dee4dc952 100644
 --- a/include/linux/mmc/sdio_ids.h
 +++ b/include/linux/mmc/sdio_ids.h
 @@ -43,6 +43,7 @@

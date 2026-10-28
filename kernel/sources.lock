@@ -1,6 +1,6 @@
-LINUX_VERSION=7.2
-LINUX_URL=https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.2.tar.xz
-LINUX_SHA256=f9fef3d14c0df53819026f4be74459835c2a0b0dcbf5b5bbd9ea19f0829402b3
+LINUX_VERSION=7.3
+LINUX_URL=https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.3.tar.xz
+LINUX_SHA256=87363c24f10e06321eb362765521094e94471f6bff8bce2d6b3e40f39f004953
 
 FIRMWARE_URL=https://cdn.kernel.org/pub/linux/kernel/firmware/linux-firmware-20190312.tar.xz
 ATHWLAN_SHA256=6e08f2c2017182a339d366b387b66d0a79695f1c843362f29ab77e11d3456a71

@@ -26,10 +26,10 @@ index 31dc68890..b12057c93 100644
  obj-$(CONFIG_USB_C67X00_HCD)	+= c67x00/
  
 diff --git a/drivers/usb/host/Kconfig b/drivers/usb/host/Kconfig
-index 17c5cf9a6..30ac4ee67 100644
+index c00ea29a1..bd2641d04 100644
 --- a/drivers/usb/host/Kconfig
 +++ b/drivers/usb/host/Kconfig
-@@ -647,6 +647,20 @@ config USB_SL811_HCD
+@@ -648,6 +648,20 @@ config USB_SL811_HCD
  	  To compile this driver as a module, choose M here: the
  	  module will be called sl811-hcd.
  

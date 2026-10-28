@@ -10,7 +10,7 @@ Subject: [PATCH] pinctrl: anyka: Support UART1 GPIO switching
  3 files changed, 40 insertions(+), 22 deletions(-)
 
 diff --git a/drivers/gpio/Kconfig b/drivers/gpio/Kconfig
-index f5e6922b4..d6dc89c7f 100644
+index 1b422d6e9..09f99888b 100644
 --- a/drivers/gpio/Kconfig
 +++ b/drivers/gpio/Kconfig
 @@ -183,6 +183,7 @@ config GPIO_ANYKA

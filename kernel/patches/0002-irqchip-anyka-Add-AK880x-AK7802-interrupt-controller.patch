@@ -10,7 +10,7 @@ Subject: [PATCH] irqchip: anyka: Add AK880x/AK7802 interrupt controller driver
  create mode 100644 drivers/irqchip/irq-anyka.c
 
 diff --git a/drivers/irqchip/Makefile b/drivers/irqchip/Makefile
-index 74912429c..579849631 100644
+index ab33cccd8..4cd925609 100644
 --- a/drivers/irqchip/Makefile
 +++ b/drivers/irqchip/Makefile
 @@ -8,6 +8,7 @@ obj-$(CONFIG_ATH79)			+= irq-ath79-misc.o
@@ -23,7 +23,7 @@ index 74912429c..579849631 100644
  obj-$(CONFIG_ECONET_EN751221_INTC)	+= irq-econet-en751221.o
 diff --git a/drivers/irqchip/irq-anyka.c b/drivers/irqchip/irq-anyka.c
 new file mode 100644
-index 000000000..eddcb9b97
+index 000000000..a068adf5d
 --- /dev/null
 +++ b/drivers/irqchip/irq-anyka.c
 @@ -0,0 +1,249 @@
@@ -225,8 +225,8 @@ index 000000000..eddcb9b97
 +	writel_relaxed(0, ic->base + ANYKA_FIQ_MASK_REG);
 +	readl_relaxed(ic->base + ANYKA_INT_STATUS_REG);
 +
-+	ic->domain = irq_domain_add_linear(node, ANYKA_MAIN_IRQS,
-+					   &anyka_irq_domain_ops, ic);
++	ic->domain = irq_domain_create_linear(of_fwnode_handle(node), ANYKA_MAIN_IRQS,
++					      &anyka_irq_domain_ops, ic);
 +	if (!ic->domain)
 +		return -ENOMEM;
 +
@@ -265,8 +265,8 @@ index 000000000..eddcb9b97
 +
 +	writel_relaxed(0, ic->base + ANYKA_SYSCTRL_REG);
 +
-+	ic->domain = irq_domain_add_linear(node, ANYKA_SYSCTRL_IRQS,
-+					   &anyka_irq_domain_ops, ic);
++	ic->domain = irq_domain_create_linear(of_fwnode_handle(node), ANYKA_SYSCTRL_IRQS,
++					      &anyka_irq_domain_ops, ic);
 +	if (!ic->domain)
 +		return -ENOMEM;
 +
