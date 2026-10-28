@@ -1,72 +1,102 @@
 # aipc-boot
 
-The bootloader that [openNBOOT](../opennboot/) hands off to. It lives on the SD card as `BOOT.BIN`. It starts the LCD panel and the internal keyboard, then shows a menu with three choices:
+The bootloader on the SD card, as `BOOT.BIN`. [openNBOOT](../opennboot/) starts it on power-on, and HaRET can start it from Windows CE.
 
-- **Linux** loads `zImage` to `0x30008000` and starts it. The command line and the device tree are inside the image, so nothing goes in registers.
-- **GDB stub** loads `gdbstub.bin` and enters it at `0x33A00000`, the address that [gdbstub](../gdbstub/) links this build at.
-- **Windows CE** reads the stock EBOOT container out of NAND, patches it in DDR, and hands off to it. See [EBOOT patches](#eboot-patches).
+It boots Linux, bare-metal payloads, and Windows CE with or without [CFW](../cfw/).
 
-Up and down move the selection. Enter boots. A failed attempt shows its return code on screen and leaves the menu usable.
+## Configuration
 
-This is a demonstration bootloader. It does not read a configuration file, it does not check what it loads, and it knows only these three payloads.
+### `entries.ini`
+
+`aipc-boot/entries.ini` (on the first FAT32 partition of the SD card, same below) lists the Linux entries. Each section is one entry, and the section name is its title in the menu.
+
+```ini
+[Linux]
+type=linux
+kernel=/linux/zImage
+description=Afterglow 20260929 armv5te, with Linux 7.2.0
+cmdline=console=tty0 root=/dev/mmcblk0p2 rootfstype=ext4 rootwait rw
+```
+
+| Key | Required | Value |
+| --- | --- | --- |
+| `type` | yes | `linux` |
+| `kernel` | yes | path of a zImage with an appended device tree, from the root of the card |
+| `cmdline` | no | the kernel command line |
+| `description` | no | one line under the title |
+
+An entry with an unknown `type`, or without `type` or `kernel`, does not boot.
+
+`cmdline` goes to the kernel in an ATAG, so the kernel needs `CONFIG_ARM_ATAG_DTB_COMPAT`. `aipc_defconfig` sets it.
+
+### `settings.ini`
+
+aipc-boot writes `aipc-boot/settings.ini` each time a setting changes in the menu. The file can also be edited by hand, but aipc-boot does not keep comments. A missing key, or a value that is not valid, gives the default.
+
+| Section | Key | Default | Value |
+| --- | --- | --- | --- |
+| `[boot]` | `default` | the first item | title of the item that autoboot starts |
+| `[boot]` | `timeout` | `15` | autoboot delay in seconds, a positive number |
+| `[display]` | `backlight` | `100` | backlight in percent, `10` to `100` |
+| `[display]` | `theme` | `light` | `light` or `dark` |
+| `[cfw]` | a component ID | the default of the component | `on` or `off` |
+
+## Payloads
+
+A payload is a bare-metal ARM ELF file in `aipc-boot/payloads/`. aipc-boot loads each `PT_LOAD` segment to its physical address, and calls the entry point as an AAPCS function with the MMU and the caches off. It refuses a segment outside DDR, or a segment that covers aipc-boot or a framebuffer in the [memory map](#memory-map).
+
+A payload that returns goes back to the menu. It must return in SVC mode, with the MMU and the caches off, and it must not write to `0x33000000` to `0x33800000`, where aipc-boot keeps its code, data and stack.
 
 ## Building
 
+From `baremetal/`:
+
 ```
-git submodule update --init third_party/lvgl
-make
+git submodule update --init aipc-boot/third_party/lvgl
+make aipc-boot
 ```
 
-`make` also builds and bundles [nkpf](../nkpf/). To build aipc-boot with the diagnostic build of nkpf, run `make NKPF_DIAG=1`.
-
-The build needs `arm-none-eabi-gcc` with newlib. On macOS the Homebrew build usually has no newlib. Install the [Arm GNU Toolchain](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads) instead, and the Makefile finds it.
-
-## SD card layout
-
-Everything is in the root directory of the first FAT16 or FAT32 partition:
-
-| File          | Purpose                                           |
-| ------------- | ------------------------------------------------- |
-| `BOOT.BIN`    | this bootloader, loaded by openNBOOT              |
-| `zImage`      | Linux kernel with appended device tree            |
-| `gdbstub.bin` | from `baremetal/gdbstub/`, the `0x33A00000` build |
-
-The loader finds a file by its 8.3 short name. Thus `zImage` and `ZIMAGE` both work, but `zImage.bin` does not.
+This also builds CFW, because `BOOT.BIN` contains the CFW image. The output is `build/BOOT.BIN`. `AIPC_BOOT_VERSION` sets the version on the Info page, and is `dev` by default.
 
 ## Memory map
 
-The full convention is in [../README.md](../README.md). What aipc-boot touches:
+The DDR convention for all components is in [../README.md](../README.md).
 
 | Address      | Contents                                           |
 | ------------ | -------------------------------------------------- |
+| `0x30000100` | ATAG list for a Linux entry                        |
 | `0x30008000` | Linux zImage, up to `0x33000000`                   |
 | `0x30037FD4` | EBOOT container, entry at `0x30038000`             |
-| `0x30190000` | nkpf image                                         |
-| `0x301B0000` | log buffer, 64 KB, one slot of the shared log pool |
-| `0x33000000` | this image, then the malloc heap                   |
+| `0x30190000` | CFW image                                          |
+| `0x301B0000` | log window, 64 KB                                  |
+| `0x33000000` | aipc-boot, including `.bss`, below `0x33700000`    |
 | `0x33800000` | stack top                                          |
-| `0x33A00000` | `gdbstub.bin`, up to the framebuffer               |
 | `0x33B00000` | framebuffer, 800x480 RGB565                        |
-
-Both load limits are the next address with an owner. For example, a zImage must not reach this aipc-boot image, and `gdbstub.bin` must not reach the framebuffer. An oversized file fails with `rc=-9` instead of an overwrite of either one.
-
-The GDB stub needs two builds, because its `BOOT.BIN` links at `0x33000000`, where aipc-boot itself runs. `make` in `baremetal/gdbstub/` produces both. The one named `gdbstub.bin` is the one that aipc-boot loads.
+| `0x33C00000` | second framebuffer                                 |
 
 ## Log
 
-The log goes to DDR and to the UART. Its window is buffered but uncached, so it is readable after a hang without any cache maintenance:
+aipc-boot logs to the UART and to the log window at `0x301B0000`. The window is uncached, so it stays readable after a hang, and DDR keeps it across a restart. To read it, restart the device in one of these two ways:
 
-```
-(gdb) monitor md32 0x301B0000 256
-```
+- Into USB boot mode. Then run this command on the host:
 
-A zImage covers the window. The Linux path therefore calls `log_detach()` before the load and logs only to the UART from there on. Without that call, the lines logged after the load land inside the kernel image, and the kernel never decompresses.
+  ```
+  uvx opennboot log --slot aipc-boot
+  ```
 
-## EBOOT patches
+  See [opennboot](../../tools/opennboot/) for details.
+- Into the [GDB stub](../gdbstub/), with the stub as `BOOT.BIN` on the card. Then run this command in GDB:
 
-aipc-boot applies two patches to EBOOT before it starts EBOOT:
+  ```
+  (gdb) monitor md32 0x301B0000 256
+  ```
 
-- The power hold patch keeps the `POWER_ON` latch (GPIO4 bit 9) high while EBOOT rewrites the GPIO4 registers. Without it, the device turns off during boot unless the user holds the power key. See [boot-flow.md](../../docs/eboot/boot-flow.md).
-- The handoff patch makes EBOOT jump to [nkpf](../nkpf/) instead of NK. nkpf patches NK, then starts NK.
+In order to read the log, DO NOT start the GDB stub from the Payloads page, because aipc-boot clears the window each time it starts.
 
-EBOOT patches support v1.58.2 and v1.88 firmware, and possibly others.
+Note: before aipc-boot loads a zImage or a payload, it stops writing the window and logs only to the UART.
+
+## Third-party code
+
+- [LVGL](third_party/lvgl/)
+- [FatFs](third_party/fatfs/)
+- Fonts from IBM Plex ([OFL.txt](fonts/OFL.txt)) and Tabler Icons ([LICENSE.tabler](fonts/LICENSE.tabler))

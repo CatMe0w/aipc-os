@@ -1,19 +1,3 @@
-/*
- * Newlib syscall stubs for the AIPC DOOM bare-metal image.
- *
- * Newlib gives the full C library. These stubs connect the few calls that it
- * hands to the platform:
- *
- *   _sbrk   - heap growth, bounded by the linker script symbols
- *   _open   - maps any .wad filename to DDR_WAD_BASE
- *   _close  - closes the WAD fd
- *   _read   - reads bytes from the in-memory WAD
- *   _lseek  - seeks inside the in-memory WAD
- *   _fstat  - reports the WAD size, from the WAD directory header
- *   _write  - copies stdout to a DDR buffer of its own, see below
- *   _isatty, _kill, _getpid, _exit - minimal stubs
- */
-
 #include <errno.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -21,6 +5,8 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include "mmu.h"
+#include "timer.h"
 
 extern char _heap_start[];
 extern char _heap_end[];
@@ -39,20 +25,6 @@ void *_sbrk(ptrdiff_t incr)
     heap_ptr += incr;
     return prev;
 }
-
-/*
- * The WAD as a virtual file.
- *
- * DOOM finds the WAD size with fseek(fd, 0, SEEK_END). The size therefore
- * comes from the WAD directory header, not from a constant.
- *
- * WAD header layout, little-endian:
- *   [0..3]  magic       "IWAD" or "PWAD"
- *   [4..7]  num_lumps   number of directory entries
- *   [8..11] dir_offset  byte offset of the directory
- *
- * File size = dir_offset + num_lumps * 16. Each directory entry is 16 bytes.
- */
 
 #define DDR_WAD_BASE  0x30B00000u
 #define WAD_FD        3
@@ -176,10 +148,15 @@ int _kill(int pid, int sig)
     return -1;
 }
 
+void return_to_caller(void) __attribute__((noreturn));
+
+/* Quit returns to the caller of _start, for example the aipc-boot menu. */
 void _exit(int status)
 {
     (void)status;
-    while (1) {}
+    timer_stop();
+    mmu_cache_disable();
+    return_to_caller();
 }
 
 /* DOOM calls M_MakeDirectory() for the save-game directory. Bare metal has no

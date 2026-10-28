@@ -27,7 +27,7 @@ Reverse-engineered from scratch.
 
 Code that runs on the AK7802 with no operating system.
 
-- `nkpf/`: Custom firmware layer for stock WinCE.
+- `cfw/`: Custom firmware for stock WinCE.
 - `opennboot/`: Custom bootloader openNBOOT. Boots arbitrary ARM payloads from SD.
 - `aipc-boot/`: A GUI menu that boots Linux, GDB stub, or stock WinCE.
 - `gdbstub/`: GDB stub, a replacement for the bootrom USB boot mode.

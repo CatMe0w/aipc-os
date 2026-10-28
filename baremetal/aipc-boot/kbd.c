@@ -1,8 +1,3 @@
-/*
- * Menu key map over the shared CH374 keyboard driver. The driver reports raw
- * HID usage IDs. Only the few that a menu needs pass through here.
- */
-
 #include "kbd.h"
 
 #include "ch374.h"
@@ -43,8 +38,8 @@ int kbd_pop(uint8_t *key, int *pressed)
 {
     uint8_t usage;
 
-    /* Keys that the menu does not use still reach the queue. Skip them instead
-     * of a report that the caller cannot act on. */
+    /* The driver queues every key. This skips the keys that the menu does not
+     * use. */
     while (ch374_kbd_pop(&usage, pressed)) {
         uint8_t mapped = usage_to_key(usage);
 

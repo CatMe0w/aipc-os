@@ -1,7 +1,8 @@
 ENTRY(_start)
 
 _stack_top = 0x33800000;
-_heap_end  = 0x33700000;
+/* The stack below _stack_top gets the 1 MB above _image_limit. */
+_image_limit = 0x33700000;
 
 SECTIONS
 {
@@ -27,10 +28,7 @@ SECTIONS
         _bss_end = .;
     }
 
-    . = ALIGN(16);
-    _heap_start = .;
-
-    ASSERT(_heap_start < _heap_end, "image overflows the heap")
+    ASSERT(. <= _image_limit, "image overlaps the stack")
 
     /DISCARD/ : {
         *(.ARM.attributes)

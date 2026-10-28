@@ -16,6 +16,19 @@ void log_init(void)
     log_end = e;
 }
 
+void log_resume(void)
+{
+    volatile char *p = (volatile char *)(uintptr_t)LOG_BASE;
+    volatile char *e = p + LOG_SIZE;
+
+    log_ptr = p;
+    log_end = e;
+    while (log_ptr < log_end && *log_ptr)
+        log_ptr++;
+    if (log_ptr == log_end)
+        log_init();
+}
+
 void log_detach(void)
 {
     log_ptr = log_end;

@@ -18,3 +18,7 @@ ARCHFLAGS = -mcpu=arm926ej-s -marm
 # Objects from lib/ get a lib_ prefix. Two images then never trade object
 # files, and each image compiles lib/ with its own flags.
 LIB = $(BAREMETAL_LIB)
+
+# Each object gets a .d file that lists the headers it includes. A header
+# change then rebuilds every object that includes it.
+DEPFLAGS = -MMD -MP

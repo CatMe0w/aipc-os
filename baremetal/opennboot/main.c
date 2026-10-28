@@ -52,6 +52,9 @@ void boot_main(void)
 {
     uart_init();
     log_init();
+    /* aipc-boot finds this banner in NAND block 0 and shows it up to the
+     * newline. Keep "openNBOOT" at its start and only once in the image. A
+     * version can follow, for example "openNBOOT v1.1". */
     log_puts("openNBOOT\n");
 
     l2_init();

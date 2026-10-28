@@ -92,7 +92,7 @@ index 9e469a1e8..786ac39db 100644
  		compatible = "anyka,ak98-fshc";
  		reg = <0x70000000 0x1000>;
 diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
-index b99b02c78..d4f9b0df6 100644
+index d0d3fae23..4dbdf2d89 100644
 --- a/arch/arm/configs/aipc_defconfig
 +++ b/arch/arm/configs/aipc_defconfig
 @@ -25,7 +25,7 @@ CONFIG_UNIX=y

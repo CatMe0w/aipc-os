@@ -29,11 +29,10 @@ jobs:
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
       - name: Build
+        env:
+          AIPC_BOOT_VERSION: ${{ github.ref_name }}
         run: |
-          make -C baremetal/opennboot
-          make -C baremetal/aipc-boot
-          make -C baremetal/gdbstub
-          make -C baremetal/doom
+          make -C baremetal
           make -C tools/opennboot/stub
           make -C tools/aipc-ddr-init/stub
 
@@ -43,9 +42,9 @@ jobs:
           if-no-files-found: error
           path: |
             baremetal/opennboot/opennboot.bin
-            baremetal/aipc-boot/BOOT.BIN
-            baremetal/gdbstub/gdbstub.bin
-            baremetal/doom/doom.bin
+            baremetal/aipc-boot/build/BOOT.BIN
+            baremetal/gdbstub/gdbstub-0x33A00000.elf
+            baremetal/doom/doom.elf
             tools/opennboot/stub/nf_read.bin
             tools/opennboot/stub/nf_write.bin
             tools/aipc-ddr-init/stub/ddr_init_v1_88.bin
@@ -162,7 +161,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y genimage mtools dosfstools e2fsprogs xz-utils
+          sudo apt-get install -y genimage mtools dosfstools e2fsprogs xz-utils zip
 
       - uses: actions/download-artifact@v8
         with:
@@ -181,8 +180,10 @@ jobs:
 
       - name: Build
         run: |
-          cp images/baremetal/aipc-boot/BOOT.BIN baremetal/aipc-boot/
-          cp images/baremetal/gdbstub/gdbstub.bin baremetal/gdbstub/
+          mkdir -p baremetal/aipc-boot/build
+          cp images/baremetal/aipc-boot/build/BOOT.BIN baremetal/aipc-boot/build/
+          cp images/baremetal/gdbstub/gdbstub-0x33A00000.elf baremetal/gdbstub/
+          cp images/baremetal/doom/doom.elf baremetal/doom/
           HARET_DIST="$PWD/haret-out" \
             ZIMAGE="$PWD/kernel-out/zImage" \
             ./sdcard/build.sh
@@ -192,7 +193,7 @@ jobs:
           xz -T0 -c \
             sdcard/build/images/aipc-os-sdcard.img \
             > aipc-os-sdcard.img.xz
-          sha256sum aipc-os-sdcard.img.xz > aipc-os-sdcard.img.xz.sha256
+          cp sdcard/build/images/aipc-os-update.zip .
 
       - uses: actions/upload-artifact@v7
         with:
@@ -200,12 +201,12 @@ jobs:
           if-no-files-found: error
           path: |
             aipc-os-sdcard.img.xz
-            aipc-os-sdcard.img.xz.sha256
+            aipc-os-update.zip
 
   publish:
     name: Publish the release
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [baremetal, wheel, haret, sdcard]
+    needs: [wheel, sdcard]
     runs-on: ubuntu-26.04
     permissions:
       contents: write
@@ -214,18 +215,8 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
-          path: artifacts
-
-      - name: Collect
-        run: |
-          mkdir -p release
-          cp artifacts/baremetal/baremetal/aipc-boot/BOOT.BIN release/
-          cp artifacts/baremetal/baremetal/gdbstub/gdbstub.bin release/
-          cp artifacts/baremetal/baremetal/doom/doom.bin release/
-          cp artifacts/kernel/zImage release/
-          cp artifacts/haret/* release/
-          cp artifacts/sdcard/* release/
-          ls -la release
+          name: sdcard
+          path: release
 
       - name: Attest release assets
         uses: actions/attest@v4

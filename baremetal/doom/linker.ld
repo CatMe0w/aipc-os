@@ -6,6 +6,8 @@ MEMORY
 {
     DDR   (rwx) : ORIGIN = 0x30200000, LENGTH = 0x800000  /* 8 MB: code/data/heap/stack */
     STACK  (rw) : ORIGIN = 0x309E0000, LENGTH = STACK_SIZE
+    /* Up to aipc-boot, which a payload must not cover */
+    WAD    (r)  : ORIGIN = 0x30B00000, LENGTH = 0x02500000
 }
 
 SECTIONS
@@ -29,6 +31,10 @@ SECTIONS
 
     _heap_start = .;
     _heap_end   = 0x309E0000;
+
+    .wad : {
+        KEEP(*(.wad))
+    } > WAD
 
     .stack (NOLOAD) : {
         _stack_bottom = .;

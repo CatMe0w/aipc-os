@@ -21,10 +21,26 @@ CompileFlags:
   Add:
     - -I.
     - -I../lib
-    - -I../nkpf
     - -Ithird_party
+    - -Ithird_party/fatfs
     - -DLV_CONF_INCLUDE_SIMPLE
     - -DLOG_BASE=0x301B0000u
+
+---
+If:
+  PathMatch: aipc-boot/sysinfo\.c
+CompileFlags:
+  Add:
+    - -DAIPC_BOOT_VERSION="dev"
+
+---
+# The Makefile compiles fonts/ from aipc-boot/.
+If:
+  PathMatch: aipc-boot/fonts/.*
+CompileFlags:
+  Add:
+    - -I..
+    - -I../third_party
 
 ---
 If:
@@ -88,23 +104,32 @@ Diagnostics:
   UnusedIncludes: None
 
 ---
-# nkpf
 If:
-  PathMatch: nkpf/[^/]*
+  PathMatch: cfw/[^/]*
 CompileFlags:
   Add:
     - -I.
+    - -Inkpf
     - -I../lib
-    - -DNKPF_DIAG
     - -DLOG_BASE=0x30180000u
     - -DLOG_NO_UART
 
 ---
 If:
-  PathMatch: nkpf/resident/.*
+  PathMatch: cfw/(core|eboot|nkpf|components)/.*
+CompileFlags:
+  Add:
+    - -I..
+    - -I../nkpf
+    - -I../../lib
+    - -DLOG_BASE=0x30180000u
+    - -DLOG_NO_UART
+
+---
+If:
+  PathMatch: cfw/residents/[^/]*/.*
 CompileFlags:
   Add:
     - -I.
-    - -I..
-    - -I../../lib
-    - -DNKPF_DIAG
+    - -I../..
+    - -I../../../lib

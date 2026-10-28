@@ -8,6 +8,9 @@
  * A modifier key has its own usage ID, 0xE0 (left control) through 0xE7 (right
  * GUI), the numbering that the HID usage tables already give it.
  *
+ * The device is enumerated at a fixed address with a fixed interrupt
+ * endpoint, without its descriptors. See docs/eboot/usb-hid-input.md.
+ *
  * timer.c must run before ch374_kbd_init().
  */
 

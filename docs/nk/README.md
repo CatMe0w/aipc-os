@@ -25,6 +25,7 @@ Mask ROM bootrom -> nboot -> EBOOT -> NK (WinCE kernel)
 - [Power Management](power-management.md): WinCE power-state policy, OAL poweroff through GPIO105, and the unverified RTC reboot path.
 - [Touchpad Driver](touchpad-driver.md): PS/2 initialization, GPIO command transmission, UART reception, and the button bits in the motion packet.
 - [Battery Driver](battery-driver.md): voltage sampling, capacity curve, and status fields. The correctness of the battery circuit and its driver is in doubt.
+- [RTC Poll Stall](rtc-poll-stall.md): the RTC read state machine in the OAL timer tick, the interrupt livelock that stops WinCE after `BackLight Initializing... OK`, and the fix.
 
 ## Conventions
 

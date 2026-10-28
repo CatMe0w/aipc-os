@@ -10,10 +10,13 @@ Drivers shared by the images under `baremetal/`.
 | `ch374.c` | Internal keyboard over the CH374 USB host bridge | aipc-boot, DOOM |
 | `lcd.c` | Panel bring-up, 800x480 RGB565 | aipc-boot, DOOM |
 | `mmu.c`, `mmu_arm926.S` | Section table, cache and write buffer control | aipc-boot, DOOM |
-| `sd.c`, `fat.c` | SD card and read-only FAT16/FAT32 | aipc-boot, openNBOOT |
+| `sd.c` | SD card read/write, with fast read | aipc-boot, openNBOOT |
+| `fat.c` | Read-only FAT16/FAT32, one file from the root directory | openNBOOT |
 | `nand.c`, `ecc.c` | NAND reads and the 4x528 interleaved ECC layout | aipc-boot, openNBOOT |
-| `pf.c` | Pattern finder, from the `xnu_pf` patchfinder of pongoOS | aipc-boot, nkpf |
-| `fbcon.c`, `font8x8_basic.h` | Framebuffer console, from `fb.c` of pongoOS | nkpf |
+| `pf.c` | Pattern finder, from the `xnu_pf` patchfinder of pongoOS | CFW |
+| `fbcon.c`, `font8x8_basic.h` | Framebuffer console, from `fb.c` of pongoOS | CFW |
+| `mmio.h` | `REG32()` register access by physical address | all |
+| `cfw_abi.h` | The image header and the call into CFW | aipc-boot, CFW |
 
 ## Building
 

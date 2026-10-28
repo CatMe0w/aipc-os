@@ -19,6 +19,10 @@ void nand_init(void);
 int nand_probe_geometry(void);
 int nand_load_image(void *dst, uint32_t start_block, uint32_t bytes);
 
+/* Reads len bytes from column col of page, with no ECC. len is a multiple of
+ * 4 and at most 512. Block 0, which the bootrom reads, has no ECC. */
+int nand_read_raw(uint32_t page, uint32_t col, void *dst, uint32_t len);
+
 #define IPL_START_BLOCK 2u
 
 uint32_t nand_corrections(void);

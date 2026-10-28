@@ -32,3 +32,11 @@ void mmu_start(void);
 void mmu_cache_disable(void);
 
 void drain_write_buffer(void);
+
+/* Cleans the D-cache and invalidates the I-cache, with the MMU still on.
+ * Call it after a copy of code and before a jump into that code. */
+void cache_sync(void);
+
+/* Cleans and invalidates the D-cache. Call it before a DMA write to cached
+ * memory, so that no line of the target is in the cache. */
+void dcache_flush(void);

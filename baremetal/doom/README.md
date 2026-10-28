@@ -2,7 +2,13 @@
 
 Bare-metal DOOM port for the AIPC netbook, based on [doomgeneric](https://github.com/ozkl/doomgeneric).
 
-## Quick start
+## Quick start (new)
+
+DOOM is bundled with the AIPC OS sdcard image. Start "doom.elf" from the Payloads page.
+
+The remaining instructions are for the classic method. These are only needed if you want to build your own DOOM binary.
+
+## Quick start (classic)
 
 Requires `arm-none-eabi-gcc` with newlib.
 

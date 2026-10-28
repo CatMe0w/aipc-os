@@ -3,7 +3,7 @@ CC       = $(CROSS)gcc
 OBJCOPY  = $(CROSS)objcopy
 
 CFLAGS   = -mcpu=arm926ej-s -marm -Os -fomit-frame-pointer -ffreestanding -nostdlib \
-           -nostartfiles -Wall -Wextra -std=gnu11
+           -nostartfiles -Wall -Wextra -std=gnu11 -MMD -MP
 
 LDFLAGS  = -T linker.ld -nostdlib -Wl,--gc-sections
 
@@ -45,6 +45,8 @@ gdbstub-0x%.bin: gdbstub-0x%.elf
 	@echo "$@: $$(wc -c < $@) bytes (base 0x$*)"
 
 clean:
-	rm -f $(OBJS) gdbstub.elf BOOT.BIN gdbstub.bin gdbstub-0x*.elf gdbstub-0x*.bin
+	rm -f $(OBJS) $(OBJS:.o=.d) gdbstub.elf BOOT.BIN gdbstub.bin gdbstub-0x*.elf gdbstub-0x*.bin
+
+-include $(OBJS:.o=.d)
 
 .PHONY: all clean

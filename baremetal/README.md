@@ -4,7 +4,7 @@ Everything here runs on the AK7802 with no operating system. Only openNBOOT is p
 
 | Directory | Contents |
 | --- | --- |
-| [nkpf](nkpf/) | Custom firmware layer for stock WinCE |
+| [cfw](cfw/) | Custom firmware for stock WinCE. It patches EBOOT and NK in DDR each time aipc-boot starts WinCE |
 | [opennboot](opennboot/) | Replaces the stock nboot in NAND block 0. It boots an ARM payload from SD when a card is present, and otherwise boots stock WinCE from NAND |
 | [aipc-boot](aipc-boot/) | The payload that openNBOOT hands off to. A GUI bootloader that boots Linux, the GDB stub, or stock WinCE |
 | [gdbstub](gdbstub/) | A debug agent that replaces the bootrom USB boot mode |
@@ -31,8 +31,9 @@ DDR is 64 MB at `0x30000000..0x33FFFFFF`.
 | `0x32000000` | probe image, results at `0x32008000` | ours |
 | `0x33000000` | openNBOOT SD payload, at most 10 MB | ours |
 | `0x33800000` | payload stack top | ours |
-| `0x33A00000` | `gdbstub.bin`, the build that aipc-boot loads | ours |
+| `0x33A00000` | `gdbstub-0x33A00000.elf`, the build that aipc-boot loads | ours |
 | `0x33B00000` | framebuffer, 800x480 RGB565, LCD DMA base `0x03B00000` | OEM EBOOT |
+| `0x33C00000` | aipc-boot second framebuffer | ours |
 | `0x33ED3C00` | WinCE runtime framebuffer | OEM WinCE |
 
 ## Log pool
@@ -47,11 +48,19 @@ DDR is 64 MB at `0x30000000..0x33FFFFFF`.
 | `0x301C0000` | gdbstub trace, current run  |
 | `0x301B0000` | aipc-boot                   |
 | `0x301A0000` | DOOM                        |
-| `0x30190000` | nkpf (image)                |
-| `0x30180000` | nkpf (log)                  |
+| `0x30190000` | CFW, see below              |
+| `0x30180000` | CFW (log)                   |
 
 The pool sits in the gap between the top of the running EBOOT image and the WinCE kernel load address. A log therefore survives a WinCE handoff, and it is still readable after the device boots WinCE. No address survives everything. A Linux zImage overwrites this range, and WinCE takes everything above `0x33B00000` once it runs.
 
 Anything that loads past `0x30110000` must call `log_detach()` first. That call gives up the DDR half of the log and keeps the UART, or `log_puts()` may write into the middle of the image, and a compressed kernel then fails to decompress with no output at all.
+
+The CFW window at `0x30190000` holds three parts. EBOOT and WinCE map DDR at `0x80000000`, so the same parts are at `0x80190000` and up in both:
+
+| Address | Contents |
+| --- | --- |
+| `0x30190000` | CFW image with its `.bss`, at most 40 KB (`CFW_MAX`) |
+| `0x3019A000` | CFW stack, 8 KB, top at `0x3019C000` |
+| `0x3019C000` | nk resident, 16 KB. It runs inside WinCE |
 
 `opennboot log` reads the whole pool from the host. It takes a `--slot` name from the table above, or `--all`.

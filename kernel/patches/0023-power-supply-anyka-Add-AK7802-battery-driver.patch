@@ -30,7 +30,7 @@ index 5373995c5..50d4d730c 100644
  		compatible = "gpio-poweroff";
  		gpios = <&gpio 105 GPIO_ACTIVE_LOW>;
 diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
-index 4a30cdadd..629108ddd 100644
+index 046acdfda..13f67f51c 100644
 --- a/arch/arm/configs/aipc_defconfig
 +++ b/arch/arm/configs/aipc_defconfig
 @@ -47,6 +47,8 @@ CONFIG_SERIO_ANYKA_PS2=y

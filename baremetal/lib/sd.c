@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include "sd.h"
+#include "mmio.h"
 
-#define REG32(a)      (*(volatile uint32_t *)(uintptr_t)(a))
 #define SYSCTRL(off)  REG32(0x08000000u + (off))
 #define MCI(off)      REG32(0x20020000u + (off))
 
@@ -11,10 +11,12 @@
 #define MCI_RESP0     MCI(0x14)
 #define MCI_DATATIMER MCI(0x24)
 #define MCI_DATALEN   MCI(0x28)
+#define MCI_DATACNT   MCI(0x30)
 #define MCI_DATACTRL  MCI(0x2C)
 #define MCI_STA       MCI(0x34)
 #define MCI_MASK      MCI(0x38)
 #define MCI_DMACTRL   MCI(0x3C)
+#define MCI_FIFO      MCI(0x40)
 
 #define MCI_ENABLE        (1u << 20)
 #define MCI_FAIL          (1u << 19)
@@ -25,6 +27,7 @@
 #define CPSM_RESPONSE     (1u << 7)
 #define CPSM_LONGRSP      (1u << 8)
 #define CPSM_RSPCRC_NOCHK (1u << 10)
+#define CPSM_WITHDATA     (1u << 11)
 
 #define DPSM_ENABLE       (1u << 0)
 #define DPSM_DIR_READ     (1u << 1)
@@ -35,21 +38,50 @@
 #define STA_RESPTIMEO     (1u << 2)
 #define STA_RESPEND       (1u << 4)
 #define STA_CMDSENT       (1u << 5)
+#define STA_DATACRCFAIL   (1u << 1)
+#define STA_DATATIMEO     (1u << 3)
+#define STA_DATAEND       (1u << 6)
+#define STA_DATABLOCKEND  (1u << 7)
+#define STA_STARTBITERR   (1u << 8)
+#define STA_RXACTIVE      (1u << 11)
+#define STA_FIFOFULL      (1u << 12)
+#define STA_DATA_ERROR    (STA_DATACRCFAIL | STA_DATATIMEO | STA_STARTBITERR)
 
 #define RESP_MASK         (STA_RESPEND | STA_RESPTIMEO | STA_RESPCRCFAIL)
+
+/* R1 card status */
+#define R1_ERRORS         0xFDF90008u
+#define R1_READY_FOR_DATA (1u << 8)
+#define R1_STATE(r)       (((r) >> 9) & 0xFu)
+#define R1_STATE_TRAN     4u
 
 #define L2_CONBUF0_7      REG32(0x2002C088u)
 #define L2_BUFASSIGN1     REG32(0x2002C090u)
 #define L2_BUFSTAT1       REG32(0x2002C0A0u)
+#define L2_DMAREQ         REG32(0x2002C080u)
+#define  L2_DMA_ENABLE    (1u << 0)
+#define  L2_FRACTION      (1u << 9)
+#define  L2_REQ_MASK      0xFFFF0000u
 
 /* Buffer 4 for MCI, buffer 5 for NFC, so the fallback path has no contention. */
 #define SD_L2_BUF_ID      4u
 #define SD_L2_BUF_ADDR    (0x48000000u + SD_L2_BUF_ID * 512u)
+/* L2 common buffer config [15:8] is the per-buffer direction. Reads expect
+ * the bit clear, so a write sets it and clears it again. */
+#define SD_L2_DIR_WRITE   (1u << (SD_L2_BUF_ID + 8))
 
 #define MCI_DMACTRL_L2    0x01000001u  /* BUFEN + 128 words at bit 17 */
 
-/* ~100 ms at the transfer clock. Both OEM drivers program all-ones instead,
- * but they run under a layer that has its own timeout. This driver does not. */
+/* L2 DMA between DDR and the SD buffer. The count is in 64-byte operations.
+ * An operation count above 128 stalls after the first block, so a request
+ * moves in chunks of 8 KiB. */
+#define L2_DMA_ADDR       REG32(0x2002C000u + SD_L2_BUF_ID * 4u)
+#define L2_DMA_COUNT      REG32(0x2002C040u + SD_L2_BUF_ID * 4u)
+#define L2_DMA_REQ        (1u << (24u + SD_L2_BUF_ID))
+#define L2_DMA_CHUNK      8192u
+
+/* About 100 ms at 20.67 MHz. All ones would never time out, and this driver
+ * has no other timeout. */
 #define MCI_DATA_TIMEOUT  0x00200000u
 
 static int      g_sdhc;
@@ -144,11 +176,15 @@ int sd_init(void)
     g_bus_4bit = 0;
     g_rca_arg = 0;
 
-    g_pin_save.sc_0c = SYSCTRL(0x0C);
-    g_pin_save.sc_74 = SYSCTRL(0x74);
-    g_pin_save.sc_78 = SYSCTRL(0x78);
-    g_pin_save.sc_a0 = SYSCTRL(0xA0);
-    g_pin_save.valid = 1;
+    /* A second sd_init() before sd_release_pins() must keep the values from
+     * the first, or the release would restore the SD setup. */
+    if (!g_pin_save.valid) {
+        g_pin_save.sc_0c = SYSCTRL(0x0C);
+        g_pin_save.sc_74 = SYSCTRL(0x74);
+        g_pin_save.sc_78 = SYSCTRL(0x78);
+        g_pin_save.sc_a0 = SYSCTRL(0xA0);
+        g_pin_save.valid = 1;
+    }
 
     /* Clock-gate toggle: clears sticky MCI state from a prior attempt. */
     SYSCTRL(0x0C) |=  (1u << 2);
@@ -291,8 +327,7 @@ static int sd_read_block_once(uint32_t lba, void *dst)
         }
     }
 
-    const volatile uint32_t *src =
-        (const volatile uint32_t *)(uintptr_t)SD_L2_BUF_ADDR;
+    const volatile uint32_t *src = MMIO_PTR(SD_L2_BUF_ADDR);
     uint32_t *dw = (uint32_t *)dst;
     for (uint32_t w = 0; w < 128u; w++)
         dw[w] = src[w];
@@ -301,8 +336,8 @@ static int sd_read_block_once(uint32_t lba, void *dst)
     return 0;
 }
 
-/* The first transfer after init always times out. The OEM Linux driver hides
- * this behind block-layer retries. One retry is always enough here. */
+/* The first transfer after sd_init() always fails once. See
+ * docs/nk/sdhc-driver.md#first-transfer-after-initialization. */
 #define SD_READ_TRIES 5u
 
 int sd_read_block(uint32_t lba, void *dst)
@@ -315,4 +350,242 @@ int sd_read_block(uint32_t lba, void *dst)
             return 0;
     }
     return rc;
+}
+
+/* The card programs the block after the data phase. Polls CMD13 until it is
+ * back in the transfer state, up to about 1 s. */
+static int sd_wait_ready(void)
+{
+    for (uint32_t i = 0; i < 40000u; i++) {
+        uint32_t r1;
+
+        if (send_resp(13, g_rca_arg, CPSM_RESPONSE, &r1) == 0 &&
+            (r1 & R1_READY_FOR_DATA) && R1_STATE(r1) == R1_STATE_TRAN)
+            return 0;
+        small_delay();
+    }
+    return -13;
+}
+
+static int sd_write_block_once(uint32_t lba, const void *src)
+{
+    uint32_t arg = g_sdhc ? lba : (lba << 9);
+    uint32_t r1, sta, seen = 0;
+    int rc = 0;
+
+    MCI_CMD      = 0;
+    MCI_DATACTRL = 0;
+    MCI_DMACTRL  = 0;
+
+    if (send_resp(24, arg, CPSM_RESPONSE | CPSM_WITHDATA, &r1) < 0 ||
+        (r1 & R1_ERRORS)) {
+        sd_stop_transfer();
+        return -24;
+    }
+
+    L2_CONBUF0_7 |= (1u << (SD_L2_BUF_ID + 24));
+    L2_CONBUF0_7 |= SD_L2_DIR_WRITE;
+    volatile uint32_t *dst = MMIO_PTR(SD_L2_BUF_ADDR);
+    const uint32_t *sw = (const uint32_t *)src;
+    for (uint32_t w = 0; w < 128u; w++)
+        dst[w] = sw[w];
+
+    MCI_DMACTRL   = MCI_DMACTRL_L2;
+    MCI_DATATIMER = MCI_DATA_TIMEOUT;
+    MCI_DATALEN   = 512u;
+    MCI_DATACTRL  = DPSM_ENABLE | DPSM_BLKSZ_512
+                  | (g_bus_4bit ? DPSM_BUS_4BIT : 0u);
+
+    for (uint32_t i = 0;; i++) {
+        sta = MCI_STA;
+        seen |= sta;
+        if (sta & STA_DATA_ERROR) {
+            rc = -2;
+            break;
+        }
+        if ((seen & (STA_DATAEND | STA_DATABLOCKEND)) ==
+            (STA_DATAEND | STA_DATABLOCKEND))
+            break;
+        if (i >= WAIT_LIMIT) {
+            rc = -3;
+            break;
+        }
+    }
+
+    sd_stop_transfer();
+    L2_CONBUF0_7 &= ~SD_L2_DIR_WRITE;
+    if (rc) {
+        /* Ends the receive state that a failed data phase can leave. */
+        (void)send_resp(12, 0, CPSM_RESPONSE, 0);
+    }
+    if (sd_wait_ready())
+        return rc ? rc : -4;
+    return rc;
+}
+
+#define SD_WRITE_TRIES 3u
+
+int sd_write_block(uint32_t lba, const void *src)
+{
+    int rc = -1;
+
+    for (uint32_t try = 0; try < SD_WRITE_TRIES; try++) {
+        rc = sd_write_block_once(lba, src);
+        if (rc == 0)
+            return 0;
+    }
+    return rc;
+}
+
+static void l2_dma_chunk(uint32_t addr, uint32_t bytes)
+{
+    L2_DMA_ADDR  = addr;
+    L2_DMA_COUNT = bytes / 64u;
+    L2_DMAREQ = (L2_DMAREQ & ~(L2_FRACTION | L2_REQ_MASK)) | L2_DMA_ENABLE |
+                L2_DMA_REQ;
+}
+
+/* Polls for one chunk. MCI_DATA_TIMEOUT ends a transfer that stalls on the
+ * card side well before this limit. */
+#define DMA_WAIT_LIMIT 20000000u
+
+int sd_read_blocks(uint32_t lba, uint32_t n, void *dst)
+{
+    uint32_t addr = (uint32_t)(uintptr_t)dst;
+    uint32_t total = n * 512u, sent, r1, seen = 0;
+    uint32_t enable = L2_DMAREQ & L2_DMA_ENABLE;
+    int rc = 0;
+
+    if (n == 0 || n > SD_BLOCKS_MAX || (addr & 63u))
+        return -1;
+    if (send_resp(23, n, CPSM_RESPONSE, &r1) < 0 || (r1 & R1_ERRORS))
+        return SD_ENOCMD23;
+
+    MCI_CMD      = 0;
+    MCI_DATACTRL = 0;
+    MCI_DMACTRL  = 0;
+    L2_CONBUF0_7 |= (1u << (SD_L2_BUF_ID + 24));
+
+    sent = total < L2_DMA_CHUNK ? total : L2_DMA_CHUNK;
+    l2_dma_chunk(addr, sent);
+
+    MCI_DMACTRL   = MCI_DMACTRL_L2;
+    MCI_DATATIMER = MCI_DATA_TIMEOUT;
+    MCI_DATALEN   = total;
+    MCI_DATACTRL  = DPSM_ENABLE | DPSM_DIR_READ | DPSM_BLKSZ_512
+                  | (g_bus_4bit ? DPSM_BUS_4BIT : 0u);
+    MCI_ARG  = g_sdhc ? lba : (lba << 9);
+    MCI_MASK = 0x1FFu;
+    MCI_CMD  = CPSM_ENABLE | CPSM_RESPONSE | CPSM_WITHDATA | (18u << 1);
+
+    if (!(wait_sta(RESP_MASK) & STA_RESPEND) || (MCI_RESP0 & R1_ERRORS)) {
+        rc = -18;
+        goto out;
+    }
+    for (uint32_t i = 0;; i++) {
+        uint32_t sta = MCI_STA;
+
+        seen |= sta;
+        if (sta & STA_DATA_ERROR) {
+            rc = -20;
+            break;
+        }
+        if (!(L2_DMAREQ & L2_DMA_REQ)) {
+            if (sent < total) {
+                uint32_t b = total - sent < L2_DMA_CHUNK ? total - sent
+                                                         : L2_DMA_CHUNK;
+
+                l2_dma_chunk(addr + sent, b);
+                sent += b;
+                i = 0;
+                continue;
+            }
+            if (seen & STA_DATAEND) {
+                rc = MCI_DATACNT ? -21 : 0;
+                break;
+            }
+        }
+        if (i >= DMA_WAIT_LIMIT) {
+            rc = -22;
+            break;
+        }
+    }
+
+out:
+    sd_stop_transfer();
+    if (L2_DMAREQ & L2_DMA_REQ)
+        L2_DMA_COUNT = 0;
+    L2_DMAREQ = (L2_DMAREQ & ~(L2_FRACTION | L2_REQ_MASK | L2_DMA_ENABLE)) |
+                enable;
+    /* CMD23 ends a complete transfer. One that failed needs CMD12. */
+    if (rc)
+        (void)send_resp(12, 0, CPSM_RESPONSE, 0);
+    return rc;
+}
+
+/* CMD6 in set mode for function 1 of group 1, high speed. The 64-byte switch
+ * status comes through the inner FIFO, because it is shorter than a block. */
+static int switch_high_speed(void)
+{
+    uint32_t status[16], r1, sta, seen = 0;
+
+    sd_stop_transfer();
+    MCI_DATATIMER = MCI_DATA_TIMEOUT;
+    MCI_DATALEN   = 64u;
+    MCI_DATACTRL  = DPSM_ENABLE | DPSM_DIR_READ | (64u << 16)
+                  | (g_bus_4bit ? DPSM_BUS_4BIT : 0u);
+    if (send_resp(6, 0x80FFFFF1u, CPSM_RESPONSE | CPSM_WITHDATA, &r1) < 0 ||
+        (r1 & R1_ERRORS)) {
+        sd_stop_transfer();
+        return -6;
+    }
+    for (uint32_t w = 0; w < 16u; w++) {
+        uint32_t i = 0;
+
+        for (;;) {
+            sta = MCI_STA;
+            seen |= sta;
+            if ((sta & STA_DATA_ERROR) || ++i >= WAIT_LIMIT) {
+                sd_stop_transfer();
+                return -62;
+            }
+            if ((sta & (STA_FIFOFULL | STA_RXACTIVE)) ==
+                (STA_FIFOFULL | STA_RXACTIVE))
+                break;
+        }
+        status[w] = MCI_FIFO;
+    }
+    for (uint32_t i = 0; !(seen & STA_DATAEND) && i < WAIT_LIMIT; i++)
+        seen |= MCI_STA;
+    sd_stop_transfer();
+    /* Byte 16 holds the function that group 1 selected. */
+    return (status[4] & 0xFu) == 1u ? 0 : -64;
+}
+
+/* Like any data transfer, CMD6 can be the first one after sd_init(), which
+ * always fails once. */
+#define SD_SWITCH_TRIES 3u
+
+int sd_high_speed(void)
+{
+    int rc = -1;
+
+    for (uint32_t try = 0; try < SD_SWITCH_TRIES && rc; try++)
+        rc = switch_high_speed();
+    if (rc)
+        return rc;
+    /* MCI_CLOCK 0x0101: 31 MHz from the 124 MHz input */
+    sd_set_clock_divider(0x02u);
+    return sd_wait_ready();
+}
+
+/* SD_CD# is GPIO13, low while a card is in the slot. */
+#define GPIO1_DIR         SYSCTRL(0x7C)
+#define GPIO1_IN          SYSCTRL(0xBC)
+#define SD_CD_BIT         (1u << 13)
+
+int sd_card_present(void)
+{
+    GPIO1_DIR |= SD_CD_BIT;
+    return (GPIO1_IN & SD_CD_BIT) == 0;
 }

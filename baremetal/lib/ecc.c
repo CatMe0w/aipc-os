@@ -31,8 +31,6 @@ int ecc_locate(uint32_t reg, uint32_t *byte_out, uint8_t *mask_out)
     return 0;
 }
 
-/* Stricter than the OEM loader. An out-of-range position or an empty register
- * set is a failure here, not a silent pass. */
 int ecc_apply(const uint32_t *regs, uint32_t n,
               uint8_t *data, uint8_t *tag, uint32_t tag_len)
 {

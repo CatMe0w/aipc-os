@@ -1,6 +1,5 @@
 #include "soc.h"
-
-#define REG32(a)  (*(volatile uint32_t *)(uintptr_t)(a))
+#include "mmio.h"
 
 #define SYSCTRL_SHAREPIN2   REG32(0x08000074u)
 #define SYSCTRL_SHAREPIN1   REG32(0x08000078u)
@@ -21,14 +20,23 @@
 
 #define NF_TIMING0_BLK0     REG32(0x2002A05Cu)
 
+#define SYSCTRL_GPIO1_DIR   REG32(0x0800007Cu)
+#define SYSCTRL_GPIO1_IN    REG32(0x080000BCu)
+#define POWER_KEY_BIT       0x00000008u   /* GPIO3 = TDO = POWER_KEY */
+#define JTAG_MUX_BIT        0x00000001u   /* SHAREPIN1: pins 0..3 are JTAG */
+
 #define SYSCTRL_GPIO3_DIR   REG32(0x0800008Cu)
 #define SYSCTRL_GPIO3_OUT   REG32(0x08000090u)
 #define AMP_ENABLE_BIT      0x00000020u   /* GPIO69, both speaker amplifiers */
 
 #define SYSCTRL_GPIO4_DIR   REG32(0x08000094u)
+#define SYSCTRL_GPIO4_IN    REG32(0x080000C8u)
 #define SYSCTRL_GPIO4_OUT   REG32(0x08000098u)
 #define POWER_ON_BIT        0x00000200u   /* GPIO105 = DGPIO3 = POWER_ON */
 #define WORK_LED_BIT        0x00000100u   /* GPIO104 = DGPIO2 = WORK_STATUS */
+#define AC_DET_BIT          0x00000080u   /* GPIO103 = DGPIO1 = AC_DET */
+/* The GPIO4 input register is 3 bits behind the other GPIO4 registers. */
+#define AC_DET_IN_BIT       (AC_DET_BIT >> 3)
 
 #define UART_TX_LIMIT       0x00100000u
 
@@ -38,8 +46,8 @@
 #define STR_(x)         #x
 #define STR(x)          STR_(x)
 
-/* Write the divider only if the controller is unconfigured. The v1.88 bootrom
- * sets a different one, and an overwrite would change the baud rate. */
+/* Write the divider only if the controller is unconfigured. A bootrom can
+ * set a different one, and an overwrite would change the baud rate. */
 void uart_init(void)
 {
     SYSCTRL_SHAREPIN1 |= 0x00000200u;
@@ -75,6 +83,14 @@ void power_hold(void)
     SYSCTRL_GPIO4_DIR &= ~POWER_ON_BIT;
 }
 
+/* Drops the latch. The device stays on while the power key is down, or on
+ * USB power. */
+void power_release(void)
+{
+    SYSCTRL_GPIO4_OUT &= ~POWER_ON_BIT;
+    SYSCTRL_GPIO4_DIR &= ~POWER_ON_BIT;
+}
+
 /* The work status LED. Its net also carries the USB_BOOT strap, so the bootrom
  * leaves the pin an input and the LED stays dark until software drives it. */
 void work_led(uint32_t on)
@@ -84,6 +100,23 @@ void work_led(uint32_t on)
     else
         SYSCTRL_GPIO4_OUT &= ~WORK_LED_BIT;
     SYSCTRL_GPIO4_DIR &= ~WORK_LED_BIT;
+}
+
+/* On the v1.58.2 device, AC_DET reads 1 when the battery or the DC adapter is
+ * present, and 0 on USB power only. See docs/nk/battery-driver.md. */
+uint32_t ac_det(void)
+{
+    SYSCTRL_GPIO4_DIR |= AC_DET_BIT;
+    return (SYSCTRL_GPIO4_IN & AC_DET_IN_BIT) != 0;
+}
+
+/* POWER_KEY is low while the key is pressed. The pin is a GPIO only when the
+ * JTAG mux bit is clear. See docs/nk/power-management.md. */
+uint32_t power_key_down(void)
+{
+    SYSCTRL_SHAREPIN1 &= ~JTAG_MUX_BIT;
+    SYSCTRL_GPIO1_DIR |= POWER_KEY_BIT;
+    return (SYSCTRL_GPIO1_IN & POWER_KEY_BIT) == 0;
 }
 
 /* Both speaker amplifiers, active high. See docs/soc/audio.md. */
@@ -107,8 +140,8 @@ void nf_hw_init(void)
     NF_TIMING0_BLK0 = 0x000F5BD1u;
 }
 
-/* Reload SP, because our call frames moved it, and unmask IRQ and FIQ. This is
- * the state that the OEM nboot leaves for EBOOT. */
+/* Reload SP, because our call frames moved it, and unmask IRQ and FIQ. EBOOT
+ * expects this state. */
 void handoff_eboot(void)
 {
     __asm__ volatile (

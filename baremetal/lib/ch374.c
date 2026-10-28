@@ -1,21 +1,10 @@
-/*
- * Internal keyboard, a USB HID device behind a CH374 USB host bridge on SPI.
- *
- * The register numbers and the token sequence come from the EBOOT driver. See
- * docs/eboot/usb-hid-input.md. This driver enumerates the device at a fixed
- * address with a fixed interrupt endpoint and never reads its descriptors.
- *
- * This layer maps nothing. It queues the HID usage IDs that it reads, and each
- * image turns them into its own keys.
- */
-
 #include <string.h>
 
 #include "ch374.h"
 #include "log.h"
 #include "timer.h"
+#include "mmio.h"
 
-#define REG32(a)      (*(volatile uint32_t *)(uintptr_t)(a))
 #define SYSCTRL(off)  REG32(0x08000000u + (off))
 
 #define SPI_BASE      0x20024000u

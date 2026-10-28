@@ -11,6 +11,10 @@
 
 void log_init(void);
 
+/* Continues a log that log_init() started in an earlier stage of the same
+ * boot. A window with no free byte starts again empty. */
+void log_resume(void);
+
 /* Give up the DDR half of the log and keep only the UART. Without this call,
  * the lines logged after a load corrupt any payload that covers the window. */
 void log_detach(void);

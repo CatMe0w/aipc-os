@@ -43,7 +43,7 @@ index 786ac39db..ecf9a67c0 100644
  		compatible = "anyka,ak880x-intc";
  		reg = <0x8000000 0x1000>;
 diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
-index d872f85d7..dfe27a917 100644
+index 54e4b0d51..12b8a8b0a 100644
 --- a/arch/arm/configs/aipc_defconfig
 +++ b/arch/arm/configs/aipc_defconfig
 @@ -44,7 +44,6 @@ CONFIG_INPUT_EVDEV=y

@@ -8,14 +8,14 @@ A debug agent that [openNBOOT](../opennboot/) loads from SD. It replaces the boo
 make
 ```
 
-One object set gives two images. Both go in the root of the first FAT partition of the SD card:
+One object set gives two images:
 
 | Image | Base | Loaded by |
 | --- | --- | --- |
-| `BOOT.BIN` | 0x33000000 | [openNBOOT](../opennboot/), which loads SD payloads to that address |
-| `gdbstub.bin` | 0x33A00000 | [aipc-boot](../aipc-boot/), which itself runs at 0x33000000 |
+| `BOOT.BIN` | 0x33000000 | [openNBOOT](../opennboot/), which loads SD payloads to that address, from the root of the first FAT partition |
+| `gdbstub-0x33A00000.elf` | 0x33A00000 | [aipc-boot](../aipc-boot/), which itself runs at 0x33000000, from `aipc-boot/payloads/` |
 
-Both images can sit on the same card. openNBOOT reads `BOOT.BIN`, so the image under that name is the one that boots, aipc-boot or the stub.
+Both images can sit on the same card. openNBOOT reads `BOOT.BIN`, so the image under that name is the one that boots.
 
 `make gdbstub-0x31000000.bin` relocates the image to any other address. A stub that already runs at `0x33000000` or `0x33A00000` can thus load and start the next one without a card swap.
 

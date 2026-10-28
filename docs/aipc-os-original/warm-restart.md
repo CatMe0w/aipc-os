@@ -1,24 +1,24 @@
 # Warm Restart
 
-The device has no software restart. This document describes the one we built.
+The device has no software restart. This document describes the one we built: a jump back into the bootrom, preceded by a short list of blocks that the caller must stop.
+
+One of them, the USB block, decides whether the restart works at all. Three others, the backlight, the scan out and the speaker amplifier, decide whether the restart looks and sounds like a fault while it runs.
+
+## Why Jump Back
 
 The AK7802 has no full-chip reset register. The high half of `SYSCTRL+0x0C` holds a software reset bit for each module, but no bit resets the part. The `#RST` pin is an input, and no net on this board drives it from the SoC side. The reset path of the original firmware goes through the RTC watchdog, and that path is dead here. `OALIoCtlHalReboot` waits forever on its first indexed RTC read, because this board leaves the RTC crystal unfitted, and the wait has no timeout. See [power-management.md](../nk/power-management.md#rtc-clock-source).
 
-What remains is re-entry. A program that already runs on the part jumps back into the bootrom. The bootrom then probes storage again and loads the boot chain from the start. The device does not lose power, thus this is a restart of the software, not of the hardware. Anyka uses the same idea in the `reboot` command of their own USB boot stub.
+The only restart left is a re-entry of the bootrom.
 
 ## Which Entry Point
 
-Enter at `0x0000005C`, the normal-boot path, not at the reset vector at `0x00000000`.
+Enter at `0x0000005C`, the normal-boot path. The reset vector at `0x00000000` also works, but it switches the device off. It runs `detect_boot_override`, which forces GPIO104 and GPIO105 back to inputs to sample them as straps, and GPIO105 is the `POWER_ON` hold. The main 5 V enable therefore drops for the length of the sampling, and the device switches off unless the user holds the power key. See [docs/eboot/boot-flow.md](../eboot/boot-flow.md).
 
-Both entries work, but only one keeps the device on. The reset vector runs `detect_boot_override` to sample the DGPIO[3:2] straps, and that function first writes `SYSCTRL+0x94 |= 0x300` to force GPIO104 and GPIO105 back to inputs. GPIO105 is the `POWER_ON` hold. A restart through the reset vector therefore releases the main 5 V enable for the length of the strap sampling, and the device switches off unless the user holds the power key. See [docs/eboot/boot-flow.md](../eboot/boot-flow.md).
-
-`0x5C` starts after the strap check. It keeps the GPIO direction and output registers, thus `POWER_ON` stays driven. It sets its own `CPSR = 0x13` and `SP = 0x4800157C`. It does not write `SYSCTRL+0x0C`, which the reset vector sets to `0x59DB`, thus the module clock state of the caller survives into the bootrom. All module clocks on is a state that works.
-
-This entry is reliable with the USB block off. The screen flickers twice on the way through. That is cosmetic.
+`0x5C` starts after the strap check. It keeps the GPIO direction and output registers, thus `POWER_ON` stays driven. It does not write `SYSCTRL+0x0C`, which the reset vector sets to `0x59DB`, thus the module clock state of the caller survives into the bootrom. All module clocks on is a state that works.
 
 ## Restarting Into Another Mode
 
-`0x5C` is one of four fixed entry points, and the caller picks which one. The strap decides only what the bootrom picks when it starts by itself. A jump goes straight past the strap check to the handler:
+`0x5C` is one of four fixed entry points. A jump to any of them goes past the strap check straight to the handler of that mode:
 
 | Mode | Entry | Setup the caller owes |
 | --- | --- | --- |
@@ -27,23 +27,20 @@ This entry is reliable with the USB block off. The screen flickers twice on the 
 | UART console | `0x00C4` | none |
 | Diagnostic | `0x1260` | `CPSR = 0x13`, `SP = 0x48000FFC`, `SYSCTRL+0x54 = 0x05000000` |
 
-The USB entry gives the equivalent of a `reboot bootloader`, because the host then talks to the device with [ak7802-usbboot](../../tools/ak7802-usbboot/). Every other way into that mode needs the `USB_BOOT` pin held high across a power cycle. All of the setup and register work of [What the Jump Needs](#what-the-jump-needs) applies to these entries too.
-
-[docs/bootrom/boot-flow.md](../bootrom/boot-flow.md) has the dispatch addresses and the per-target preconditions. No test has exercised any entry other than `0x5C`.
+The USB boot entry gives the equivalent of a `reboot bootloader`. Every other way into that mode needs the `USB_BOOT` pin held high across a power cycle, because released straps read low. [docs/bootrom/boot-flow.md](../bootrom/boot-flow.md) has the dispatch addresses and the preconditions of each mode.
 
 ## What the Jump Needs
 
-Turn the USB block off first. This is the one step that decides whether the restart works. See [The USB Block](#the-usb-block) below.
+1. Turn the USB block off. See [The USB Block](#the-usb-block).
+2. Mask the module interrupt sources at `SYSCTRL+0x34` and `SYSCTRL+0x38`. The bootrom does not write these masks, it unmasks IRQ and FIQ at entry, and its IRQ vector forwards through the word at `0xF0` to `0x30000018`. Without the masks, a pending interrupt enters whatever the caller left at that address.
+3. Turn the backlight off, then stop the scan out. See [The Screen](#the-screen).
+4. Drive the speaker amplifier enable low. See [The Speakers](#the-speakers).
 
-Mask the module interrupt sources at `SYSCTRL+0x34` and `SYSCTRL+0x38`. The bootrom writes `CPSR = 0x13` at entry, which unmasks IRQ and FIQ, and its IRQ vector forwards to `0x30000018`.
-
-Restore no register. The bootrom entry sets its own `CPSR` and `SP`, thus nothing of the caller survives into it.
-
-Turn off any other bus master that writes memory the bootrom uses. The LCD controller only reads, thus it can stay on. Its output goes white part way through the restart, because the DDR init script in the image header runs again.
+The pin multiplexer needs no repair. The bootrom probes only SPI and NAND, and each probe sets its own pins before it reads.
 
 ## The USB Block
 
-The USB block is a bus master into the L2 buffer SRAM, and three of its windows overlap the memory that the bootrom needs:
+The USB block is a bus master into the L2 buffer SRAM, and three of its windows overlap the memory that the bootrom needs. See [memory-map.md](../bootrom/memory-map.md) for the L2 layout.
 
 | L2 window | USB use | Bootrom use |
 | --- | --- | --- |
@@ -51,34 +48,27 @@ The USB block is a bus master into the L2 buffer SRAM, and three of its windows 
 | `0x48000200` | EP3 bulk OUT DMA target | SPI and NAND read target |
 | `0x48001500` | EP0 staging | 0x7C bytes below the stack top at `0x4800157C` |
 
-A restart that leaves the block live succeeds less than one time in ten. Any transfer that the host starts lands in one of these windows and corrupts a read buffer or the stack. The result looks random, because the outcome depends on what the host does in the first moments after the jump. With the block off, the restart worked on every attempt in the test.
+A restart that leaves the block live succeeds less than one time in ten, because any transfer that the host starts lands in one of these windows and corrupts a read buffer or the stack. With the block off, the restart worked on every attempt in our tests.
 
-Clear the low three bits of `SYSCTRL+0x58`. This is the same way the bootrom turns the block off before it sets them to 6 to turn it on.
+Clear the low three bits of `SYSCTRL+0x58`, which is how the bootrom itself turns the block off. The module reset bits in the high half of `SYSCTRL+0x0C` are no substitute: a probe that set bit 31 there stopped the boot earlier than a bare jump does.
 
-Do not use the software reset bits in the high half of `SYSCTRL+0x0C`. A probe that set bit 31 there stopped the boot earlier than a bare jump does. The names of those bits come from reverse engineering, and bit 31 is not confirmed to be the USB reset.
+## The Screen
 
-This part has no SOFTCONN bit. The pull-up stays, thus the host still sees an attached device after the block goes off, and the host tools show no change.
+Neither the bootrom nor the register init script of the boot image writes the backlight PWM or the LCD controller. Both stay as the caller left them until EBOOT programs them again. The USB boot entry waits for the host in a loop with no exit, see [docs/bootrom/usb-boot.md](../bootrom/usb-boot.md), so there they stay indefinitely. A lit panel in this state looks like a hardware failure. With one version of the Linux display driver the picture faded until the LED array of the backlight showed through, and with a later version the panel turned white.
 
-## Straps
+Turn the backlight off with a high time of zero and a full period of low time in the PWM register at `SYSCTRL+0x2C`, wait for the current PWM period to end, then stop the scan out with bit 0 of `+0xB8`. A register value of zero is not a reliable way to turn the backlight off, because after full duty it left the backlight on. With the backlight off, nothing on the panel is visible, whatever its state, and in this order the backlight goes off while the panel still shows a normal frame. Scan out only reads memory, so unlike the USB block it does not threaten the restart. See [LCD controller](../soc/lcd.md) for the PWM encoding and the stop bit.
 
-`detect_boot_override` forces GPIO104 and GPIO105 to inputs before it reads them. Software therefore cannot hold a strap value across a restart. A restart that goes through the reset vector always takes the normal boot path on this board, because both pins read low once released. To reach another mode, enter its handler directly. See [Restarting Into Another Mode](#restarting-into-another-mode).
+## The Speakers
 
-## Bootrom Properties That the Restart Depends On
+When its transfers stop, the DAC holds its output at the last sample. With the amplifiers on, the speakers carry that level and the background noise of the analog section until the next stage programs the audio block, and on the USB boot entry without end. Drive GPIO69, the active-high enable of both amplifiers, low before the jump. See [Audio DAC](../soc/audio.md#on-this-board).
 
-Each probe sets its own pins, thus the caller does not need to repair the pin multiplexer before the jump. The NAND probe calls a hardware init function first, which clears `SYSCTRL+0x74` bits 4 and 3, sets bit 3, then sets `0x00C70200` in `SYSCTRL+0x78`. The SPI probe sets bit 30 of `SYSCTRL+0x78`, and the UART console sets bit 9.
+The DAC transfer uses L2 buffer 3, at `0x48000600`, which no bootrom window overlaps. The DAC therefore does not threaten the restart.
 
-The bootrom does not write the module interrupt masks at `SYSCTRL+0x34` and `SYSCTRL+0x38`, and it unmasks IRQ and FIQ at entry before it does anything else. The vector at `0x18` reads its target from the word at `0xF0`, which holds `0x30000018`. A restart without the masks is therefore safe only for an image that keeps a usable vector table at that address.
+## What the Next Stage Inherits
 
-See [boot-flow.md](../bootrom/boot-flow.md) for the decision tree that runs after the jump, and [memory-map.md](../bootrom/memory-map.md) for the L2 layout.
+No peripheral receives a reset signal, so each stage after the jump must initialize each block it uses completely. Besides the clock gates and the GPIO registers, see [Which Entry Point](#which-entry-point), two states matter:
 
-## Probe
+- The L2 buffer assignment at `0x2002C090` keeps the bits of every path the caller set up. The bootrom clears and sets only the bits of its own path. The DAC assignment in bits 29:27 and the SD assignment in bits 14:12 stay as Linux left them.
+- The SD card has no power control on this board, so it keeps the relative address, the four-bit bus width and the high-speed timing that Linux set. A driver must start with `CMD0`.
 
-[baremetal/probes/reset/README.md](../../baremetal/probes/reset/README.md) has a probe that does all of the above, and a table of the stage colors it writes to the screen.
-
-## The Linux Restart Hook
-
-The `.restart` hook of the machine descriptor calls `soft_restart()` with the address of a small routine in the `.idmap.text` section. `soft_restart()` cleans the caches and turns the MMU off, then it enters that routine. See `arch/arm/mach-anyka/restart.S` in the [kernel patches](../../kernel/).
-
-The routine runs with the MMU off and writes the registers at their physical addresses. The restart path runs with interrupts off, thus it cannot `ioremap` them.
-
-Linux keeps no vector table at `0x30000018`, and the timer source is still on when the restart starts. It therefore needs the interrupt masks.
+WinCE meets this requirement, and it boots and runs after a restart from Linux.

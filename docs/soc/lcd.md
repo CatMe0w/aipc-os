@@ -203,7 +203,9 @@ high          = duty_percent * period_cycles / 100
 low           = period_cycles - high
 ```
 
-A duty of 100 percent encodes as high `0xFFFF` and low zero. A duty of zero encodes as both zero. The boot firmware on this board sets 1 kHz at 70 percent, which is `0x20D00E10`.
+A duty of 100 percent encodes as high `0xFFFF` and low zero. The boot firmware on this board sets 1 kHz at 70 percent, which is `0x20D00E10`.
+
+To turn the backlight off, write a high time of zero and a full period of low time, for example `0x00002EE0` at 1 kHz. This turned the backlight off in every test. A register value of zero did not always turn it off: after a period at full duty, the backlight stayed on. A new value takes effect when the current period ends, so wait one period before code that requires the backlight to be off. At full duty that period is `0xFFFF` cycles, about 5.5 ms.
 
 ### Refresh rate and core bandwidth
 
@@ -219,4 +221,5 @@ Scan out reads DDR the whole time the panel is on, so a faster pixel clock takes
 
 - The OSD layer and the two YUV layers have register definitions but no measurement.
 - Why the virtual page offset at `+0x1C` reads outside the page. The field position and the unit both come from the AK98 source and neither matches what the part does.
+- Why a backlight PWM value of zero does not turn the backlight off after full duty, and whether it fails after any other duty.
 - What the low seven bits of `0x2002D014` select. Clearing them both protects scan out and speeds up the core, which a strict priority does not explain.

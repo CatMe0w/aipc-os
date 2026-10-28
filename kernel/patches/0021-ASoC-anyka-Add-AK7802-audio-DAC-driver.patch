@@ -74,7 +74,7 @@ index ecf9a67c0..57cbc4030 100644
  		compatible = "anyka,ak7802-l2rng";
  		reg = <0x48001580 0xa80>;
 diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
-index dfe27a917..4a30cdadd 100644
+index 12b8a8b0a..046acdfda 100644
 --- a/arch/arm/configs/aipc_defconfig
 +++ b/arch/arm/configs/aipc_defconfig
 @@ -54,6 +54,11 @@ CONFIG_FB=y

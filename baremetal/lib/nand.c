@@ -1,8 +1,7 @@
 #include "nand.h"
 #include "ecc.h"
 #include "log.h"
-
-#define REG32(a) (*(volatile uint32_t *)(uintptr_t)(a))
+#include "mmio.h"
 
 /* Sequencer bank 1. Bank 0 belongs to the bootrom. */
 #define NF_FIFO_HEAD        0x2002A100u
@@ -99,18 +98,18 @@ static int l2_drain(void *dst, uint32_t n)
             return NAND_EL2_FILL;
     }
 
-    const volatile uint32_t *src = (const volatile uint32_t *)L2_NF_BUFFER;
+    const volatile uint32_t *src = MMIO_PTR(L2_NF_BUFFER);
     uint32_t *d = (uint32_t *)dst;
     for (uint32_t i = 0; i < n / 4u; ++i)
         d[i] = src[i];
     return 0;
 }
 
-static int nand_read_raw(uint32_t page, uint32_t col, void *dst, uint32_t len)
+int nand_read_raw(uint32_t page, uint32_t col, void *dst, uint32_t len)
 {
     NF_CTRL_STA = 0;
     REG32(NF_FIFO_HEAD) = 0x64u;                    /* CMD 0x00 */
-    volatile uint32_t *fifo = (volatile uint32_t *)(uintptr_t)NF_FIFO_NEXT;
+    volatile uint32_t *fifo = MMIO_PTR(NF_FIFO_NEXT);
     fifo = nf_emit_addr(fifo, page, col);
     *fifo++ = 0x18464u;                             /* CMD 0x30 plus CMD_WAIT */
     *fifo   = 0x201u;                               /* wait ready, end */
@@ -169,7 +168,7 @@ static int read_page_once(uint32_t page, uint8_t *dst)
 {
     NF_CTRL_STA = 0;
     REG32(NF_FIFO_HEAD) = 0x64u;                    /* CMD 0x00 */
-    volatile uint32_t *fifo = (volatile uint32_t *)(uintptr_t)NF_FIFO_NEXT;
+    volatile uint32_t *fifo = MMIO_PTR(NF_FIFO_NEXT);
     fifo = nf_emit_addr(fifo, page, 0u);
     *fifo++ = 0x18064u;                             /* CMD 0x30 */
     *fifo   = 0x201u;                               /* wait ready, end */
@@ -292,9 +291,8 @@ int nand_probe_geometry(void)
     return NAND_EPROBE;
 }
 
-/* This skips a bad block whole, the same rule that the OEM writer uses. Unlike
- * the stock nboot, a read error stops the load instead of a jump forward by
- * two blocks. */
+/* The (vendor?) writer skips a bad block whole, so this does too. A read error
+ * stops the load. */
 int nand_load_image(void *dst, uint32_t start_block, uint32_t bytes)
 {
     if (pages_per_block == 0u)

@@ -1,11 +1,3 @@
-/*
- * ARM926EJ-S section table.
- *
- * Domain 0 is a manager domain, thus the hardware ignores the AP bits in each
- * section and no access can fault. Every mapping is identity, virtual equals
- * physical, because nothing in this project relocates anything.
- */
-
 #include "mmu.h"
 
 #define L1_ENTRIES     4096u

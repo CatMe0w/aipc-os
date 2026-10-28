@@ -1,10 +1,12 @@
 # INTERNAL USE ONLY
 
-ARM assembly probes for investigating hardware behavior (e.g. SD/MMC). For reference and historical purposes only, not intended for porting or reuse.
+ARM assembly probes for investigating hardware behavior (e.g. SD/MMC). For reference and historical purposes only.
+
+Most of the probes are written and tested automatically by AI agents.
 
 # Lab Reports
 
-Provided as-is. May not be in English.
+Provided as-is.
 
 - [SD/MMC](sd/README.md)
 - [Ethernet](eth/README.md)
@@ -15,3 +17,4 @@ Provided as-is. May not be in English.
 - [GPIO interrupt](gpio-edge/README.md)
 - [Unimplemented-address RNG](rng/README.md)
 - [LCD timing](lcd-timing/README.md)
+- [SD read speed](sd-speed/README.md)

@@ -1,13 +1,11 @@
-/*
- * ARM926EJ-S MMU and cache control.
- */
-
     .section .text, "ax"
     .arm
     .align 5
     .global mmu_enable
     .global mmu_cache_disable
     .global drain_write_buffer
+    .global cache_sync
+    .global dcache_flush
 
 /* r0 = L1 table base. Domain 0 is manager, so the hardware ignores the section
  * AP bits. */
@@ -55,4 +53,25 @@ mmu_cache_disable:
 drain_write_buffer:
     mov     r0, #0
     mcr     p15, 0, r0, c7, c10, 4
+    mov     pc, lr
+
+/* In its own section, so that --gc-sections drops it from an image that does
+ * not call it. */
+    .section .text.cache_sync, "ax"
+    .align  2
+cache_sync:
+    mov     r0, #0
+1:  mrc     p15, 0, r15, c7, c10, 3     @ test and clean D-cache
+    bne     1b
+    mcr     p15, 0, r0, c7, c10, 4      @ drain write buffer
+    mcr     p15, 0, r0, c7, c5, 0       @ invalidate I-cache
+    mov     pc, lr
+
+    .section .text.dcache_flush, "ax"
+    .align  2
+dcache_flush:
+1:  mrc     p15, 0, r15, c7, c14, 3     @ test, clean and invalidate D-cache
+    bne     1b
+    mov     r0, #0
+    mcr     p15, 0, r0, c7, c10, 4      @ drain write buffer
     mov     pc, lr

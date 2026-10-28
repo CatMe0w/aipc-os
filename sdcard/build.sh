@@ -24,6 +24,7 @@ need mcopy
 need mkfs.ext4
 need curl
 need sha256sum
+need zip
 
 set_root_password() {
     local passwd_file="$build/rootfs/etc/passwd"
@@ -92,20 +93,29 @@ stage() {
         printf 'missing: %s\n%s\n' "$1" "$3" >&2
         exit 1
     fi
+    mkdir -p "$(dirname "$build/input/$2")"
     cp "$1" "$build/input/$2"
 }
 
 echo "Staging boot files"
-rm -f "$build"/input/*
-stage "$root/baremetal/aipc-boot/BOOT.BIN"  BOOT.BIN \
-    "Build it with: make -C baremetal/aipc-boot"
-stage "$root/baremetal/gdbstub/gdbstub.bin" gdbstub.bin \
-    "Build it with: make -C baremetal/gdbstub"
+rm -rf "${build:?}"/input/*
+stage "$root/baremetal/aipc-boot/build/BOOT.BIN" BOOT.BIN \
+    "Build it with: make -C baremetal aipc-boot"
+stage "$root/baremetal/gdbstub/gdbstub-0x33A00000.elf" \
+    aipc-boot/payloads/gdbstub.elf \
+    "Build it with: make -C baremetal gdbstub"
+stage "$root/baremetal/doom/doom.elf" \
+    aipc-boot/payloads/doom.elf \
+    "Build it with: make -C baremetal doom"
+stage "$here/entries.default.ini"           aipc-boot/entries.ini \
+    "It is committed. Check out the repository again"
+stage "$here/entries.default.ini"           aipc-boot/entries.default.ini \
+    "It is committed. Check out the repository again"
 stage "$haret_dist/haret.exe"               haret.exe \
     "Build it with: ./sdcard/haret/build.sh"
 stage "$here/haret/startup.txt"             startup.txt \
     "It is committed. Check out the repository again"
-stage "${ZIMAGE:-$build/zImage}"            zImage \
+stage "${ZIMAGE:-$build/zImage}"            linux/zImage \
     "Build the kernel and append the device tree, then put the result at
 $build/zImage or point ZIMAGE at it. See kernel/README.md"
 
@@ -133,4 +143,13 @@ sudo genimage \
     --tmppath "$build/tmp"
 
 sudo chown -R "$(id -u):$(id -g)" "$build/images"
+
+# The update archive leaves out the files that users edit, so that it can
+# overwrite partition 1 of a card that is in use.
+echo "Building the update archive"
+rm -f "$build/images/aipc-os-update.zip"
+(cd "$build/input" && zip -X -r -q "$build/images/aipc-os-update.zip" . \
+    -x aipc-boot/entries.ini)
+
 echo "Done: $build/images/aipc-os-sdcard.img"
+echo "      $build/images/aipc-os-update.zip"

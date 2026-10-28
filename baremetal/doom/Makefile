@@ -46,15 +46,15 @@ CFLAGS  = $(ARCHFLAGS) -O2 -fomit-frame-pointer \
           -Wall -Wextra -Wno-unused-parameter \
           -DDOOMGENERIC_RESX=320 -DDOOMGENERIC_RESY=200 \
           -DWAD_FILENAME=\"$(WAD_FILENAME)\" \
-          -I$(DOOMGENERIC_DIR) -I$(LIB)
+          -I$(DOOMGENERIC_DIR) -I$(LIB) $(DEPFLAGS)
 
 # -nostartfiles, because src/start.S has our own _start. The arm-none-eabi
 # defaults still link newlib (libc, libm, libgcc).
-LDFLAGS = -T linker.ld -nostartfiles -Wl,--gc-sections
+LDFLAGS = -T linker.ld -nostartfiles -Wl,--gc-sections -Wl,--no-warn-rwx-segments
 
 TARGET  = doom$(TARGET_SUFFIX)
 
-SRCS_S  = src/start.S
+SRCS_S  = src/start.S src/wad.S
 SRCS_C  = src/doomgeneric_aipc.c \
           src/ch374_keyboard.c \
           src/syscalls.c
@@ -87,6 +87,10 @@ all: $(TARGET).bin
 %.o: %.S
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+# The ELF carries the WAD, so aipc-boot can load DOOM as one payload file.
+src/wad.o: src/wad.S $(WAD_FILE)
+	$(CC) $(CFLAGS) -DWAD_PATH='"$(WAD_FILE)"' -c -o $@ $<
+
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
@@ -100,17 +104,19 @@ $(TARGET).elf: $(OBJS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(TARGET).bin: $(TARGET).elf
-	$(OBJCOPY) -O binary $< $@
+	$(OBJCOPY) -O binary -R .wad $< $@
 	@echo "$(TARGET).bin: $$(wc -c < $@) bytes"
 
 clean:
-	rm -f src/*.o $(LIB_OBJS) $(TARGET).elf $(TARGET).bin
-	rm -f $(DOOMGENERIC_DIR)/*.o
+	rm -f src/*.o src/*.d $(LIB_OBJS) $(TARGET).elf $(TARGET).bin
+	rm -f $(DOOMGENERIC_DIR)/*.o $(DOOMGENERIC_DIR)/*.d
 
 cleanall:
-	rm -f src/*.o $(DOOMGENERIC_DIR)/*.o
+	rm -f src/*.o src/*.d $(DOOMGENERIC_DIR)/*.o $(DOOMGENERIC_DIR)/*.d
 	rm -f doom.elf doom.bin doom-doom1.elf doom-doom1.bin
 	rm -f doom-doom2.elf doom-doom2.bin doom-tnt.elf doom-tnt.bin
 	rm -f doom-plutonia.elf doom-plutonia.bin
+
+-include $(OBJS:.o=.d)
 
 .PHONY: all clean cleanall

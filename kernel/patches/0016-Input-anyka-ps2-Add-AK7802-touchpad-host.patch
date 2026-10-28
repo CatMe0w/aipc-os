@@ -84,7 +84,7 @@ index 94d44b849..9e469a1e8 100644
  		compatible = "anyka,ak880x-intc";
  		reg = <0x8000000 0x1000>;
 diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
-index 02c8199b8..b99b02c78 100644
+index 2c133fd32..d0d3fae23 100644
 --- a/arch/arm/configs/aipc_defconfig
 +++ b/arch/arm/configs/aipc_defconfig
 @@ -39,8 +39,7 @@ CONFIG_DM9000_GPIO_BUS=y

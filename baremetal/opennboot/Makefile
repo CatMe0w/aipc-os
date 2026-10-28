@@ -2,8 +2,9 @@ BAREMETAL_LIB = ../lib
 include $(BAREMETAL_LIB)/common.mk
 
 CFLAGS   = $(ARCHFLAGS) -Os -fomit-frame-pointer -ffreestanding -nostdlib \
+           -ffunction-sections -fdata-sections \
            -nostartfiles -Wall -Wextra -Wno-unused-parameter -std=c11 \
-           -I. -I$(LIB)
+           -I. -I$(LIB) $(DEPFLAGS)
 LDFLAGS  = -T linker.ld -nostdlib -Wl,--gc-sections -Wl,--build-id=none \
            -Wl,--no-warn-rwx-segments
 
@@ -37,10 +38,6 @@ opennboot.bin: opennboot.elf
 	@size=$$(wc -c < $@); \
 	 echo "$@ size: $$size bytes ($$(( ($$size + 2047) / 2048 )) pages of 63)"
 
-debug:
-	rm -f $(OBJS) opennboot.elf opennboot.bin
-	$(MAKE) EXTRA_CFLAGS=-DONB_SD_DEBUG
-
 test: test/test_ecc
 	./test/test_ecc
 
@@ -48,7 +45,9 @@ test/test_ecc: test/test_ecc.c $(LIB)/ecc.c $(LIB)/ecc.h
 	$(HOSTCC) $(HOSTCFLAGS) -I$(LIB) -o $@ test/test_ecc.c $(LIB)/ecc.c
 
 clean:
-	rm -f *.o *.elf *.bin test/test_ecc
+	rm -f *.o *.d *.elf *.bin test/test_ecc
 	$(MAKE) -C test/bootbin clean
+
+-include $(OBJS:.o=.d)
 
 .PHONY: all clean test bootbin

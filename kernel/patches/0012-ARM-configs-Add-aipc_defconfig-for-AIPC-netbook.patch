@@ -10,7 +10,7 @@ Subject: [PATCH] ARM: configs: Add aipc_defconfig for AIPC netbook
 
 diff --git a/arch/arm/configs/aipc_defconfig b/arch/arm/configs/aipc_defconfig
 new file mode 100644
-index 000000000..4623c9b33
+index 000000000..8e810779c
 --- /dev/null
 +++ b/arch/arm/configs/aipc_defconfig
 @@ -0,0 +1,77 @@
@@ -29,7 +29,7 @@ index 000000000..4623c9b33
 +CONFIG_AEABI=y
 +CONFIG_UACCESS_WITH_MEMCPY=y
 +CONFIG_ARM_APPENDED_DTB=y
-+CONFIG_CMDLINE="console=tty0 root=/dev/mmcblk0p2 rootfstype=ext4 rootwait rw"
++CONFIG_ARM_ATAG_DTB_COMPAT=y
 +# CONFIG_MQ_IOSCHED_KYBER is not set
 +# CONFIG_IOSCHED_BFQ is not set
 +CONFIG_ZSWAP=y
