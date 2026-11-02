@@ -24,7 +24,7 @@ The measurements come from [the LCD timing probe](../../baremetal/probes/lcd-tim
 | `+0x4C` | Vertical back porch | |
 | `+0x50` | Vertical front porch | |
 | `+0x54` | Vertical active height | |
-| `+0x58` | VSYNC output length | Not the vertical total, see below |
+| `+0x58` | VSYNC output length | See [Frame length](#frame-length) |
 | `+0x5C`..`+0x98` | YUV layers | Two layers with scalers |
 | `+0xA8` | Picture offset | Position of the picture on the panel |
 | `+0xAC` | Picture size | |
@@ -46,7 +46,7 @@ The measurements come from [the LCD timing probe](../../baremetal/probes/lcd-tim
 | 4 | Pixel clock polarity, 1 is positive |
 | 3:0 | Layer enables: RGB, YUV1, YUV2, OSD |
 
-The empty alarm threshold arms the underrun detection described under [Scan out must outrank the core](#memory-arbitration).
+The empty alarm threshold arms the underrun detection described under [Memory arbitration](#memory-arbitration).
 
 ### RGB control, +0x10
 
@@ -93,6 +93,10 @@ Every bit clears on read. Two reads in a row give the accumulated events and the
 
 `+0xC0` enables an interrupt per bit in the same order.
 
+The block drives line 1 of the main interrupt controller, which is bit 1 of `SYSCTRL+0xCC`. The line is active while a status bit and its enable bit are both set, thus a read of `+0xBC` also clears the line. The status bits collect events while their enables are clear. Read `+0xBC` once before you set an enable bit, or an old event raises the interrupt at once.
+
+Use refresh start, bit 4, as the vertical sync event. At divider 8, refresh start comes 0.23 ms after refresh done, which is about three lines. Both events occur in the 28 lines of vertical blanking.
+
 ### Software control, +0xC8
 
 | Bit | Meaning |
@@ -123,25 +127,29 @@ The divider is bits 7:1 of `+0xE8`, seven bits wide. Bit 8 enables the clock and
 
 The vertical total is `active + front porch + sync pulse + back porch`. `+0x58` does not take part. It sets the length of the VSYNC output signal, and on this board it holds 505 while the frame is 508 lines.
 
-A driver that takes the vertical total from `+0x58` instead reads 505 on this board and computes a refresh rate 0.6 percent high.
+A driver that takes the vertical total from `+0x58` reads 505 on this board and computes a refresh rate 0.6 percent high.
 
 ## Commit strobe
 
 A register change reaches the panel only after a write of one to bit 11 of `+0xC8`. This applies to a new frame buffer base, a new picture offset and new timing. Without the strobe the register holds the new value and scan out keeps using the old one.
 
-The bit means "the registers for the next frame are ready". It is a strobe, not a level: writing one sets it, and the hardware clears it.
+The bit means "the registers for the next frame are ready". A write of one sets the bit, and the hardware clears it.
 
 ## Panning
 
 To scroll the picture, add `rows * stride` to the address in `+0x14` and strobe. Nothing else moves.
 
-The virtual page path does not do this. `+0x14` bit 28 enables it, `+0x18` sizes the page and `+0x1C` is meant to hold the offset inside it, but a page of 800 by 1440 with a non-zero vertical offset shows memory from outside the page instead of shifting the picture. The AK98 fbdev driver also pans by the base address and never enables the virtual page.
+The virtual page path does not do this. `+0x14` bit 28 enables it, `+0x18` sizes the page and `+0x1C` is meant to hold the offset inside it, but a page of 800 by 1440 with a non-zero vertical offset shows memory from outside the page, and the picture does not shift. The AK98 fbdev driver also pans by the base address and never enables the virtual page.
+
+## Page flipping
+
+To show a second frame buffer, write its address to `+0x14` and strobe. Then read `+0xBC` once to discard old events, and wait for refresh start. After that event, software can draw into the buffer that was on the panel before. At 77.1 Hz, this sequence shows no partly drawn frames.
 
 ## Memory arbitration
 
 Clear the low seven bits of `0x2002D014` during bring-up. That register sits outside this block, in the RAM controller. It reads back what it is given and resets to all ones, so a driver that clears the field writes `0xFFFFFF80`.
 
-Leave the bits set and scan out dies under memory load. Load alone is not enough: the scan out rate has to be high enough for the FIFO to run dry before the DMA is served again.
+Leave the bits set and scan out stops under memory load. Load alone does not cause the failure. The scan out rate must also be high enough that the FIFO runs dry before the DMA is served again.
 
 | Scan out reads | Low seven bits clear | Low seven bits set |
 | --- | --- | --- |
@@ -152,7 +160,7 @@ Leave the bits set and scan out dies under memory load. Load alone is not enough
 
 The failure sets bit 18 and bit 0 of the status register, and then scan out stops. Bit 18 fires when the FIFO falls below the threshold in bits 31:24 of `+0x00`, which is 128 bytes on this board. Scan out does not restart when the load ends, and it does not restart when the bits go back to clear. Until it is restarted the panel holds whatever the last complete frame left.
 
-Clearing the field costs the core nothing. It gains: with the bits clear the core completes 5.7 percent more work in the same time.
+Clearing the field also makes the core faster. With the bits clear, the core completes 5.7 percent more work in the same time.
 
 ### Restarting scan out
 
@@ -173,7 +181,7 @@ Prefer the bufferable mapping and drain the write buffer before the commit strob
 
 ## Clock gate and reset
 
-`SYSCTRL+0x0C` bit 3 gates the controller clock, and the polarity is inverted: clear the bit to run. Bit 19 of the same register is a reset strobe. Both need a read-modify-write, because the register holds gates for other blocks.
+`SYSCTRL+0x0C` bit 3 gates the controller clock with inverted polarity. Clear the bit to run the clock. Bit 19 of the same register is a reset strobe. Both need a read-modify-write, because the register holds gates for other blocks.
 
 ## On this board
 
@@ -191,7 +199,7 @@ The panel is 800 by 480, RGB565 over a 16 bit bus, progressive. HSYNC and VSYNC 
 
 The device firmware carries this timing under the name `auo`. It also names a pixel clock of 25.5 MHz, which no divider reaches exactly. Divider 4 is the nearest, at 24.80 MHz, 2.7 percent under.
 
-The panel also holds a picture at 41.33 MHz.
+The panel also holds a picture at 41.33 MHz, which is divider 2.
 
 ### Backlight
 
@@ -205,7 +213,19 @@ low           = period_cycles - high
 
 A duty of 100 percent encodes as high `0xFFFF` and low zero. The boot firmware on this board sets 1 kHz at 70 percent, which is `0x20D00E10`.
 
-To turn the backlight off, write a high time of zero and a full period of low time, for example `0x00002EE0` at 1 kHz. This turned the backlight off in every test. A register value of zero did not always turn it off: after a period at full duty, the backlight stayed on. A new value takes effect when the current period ends, so wait one period before code that requires the backlight to be off. At full duty that period is `0xFFFF` cycles, about 5.5 ms.
+At 1 kHz, every duty below 100 percent makes an audible whine from the backlight circuit. Full duty keeps the output high and makes no sound.
+
+To turn the backlight off, write a high time of zero and a full period of low time, for example `0x00002EE0` at 1 kHz. This value turned the backlight off in every test. A register value of zero is not reliable. After full duty, it left the backlight on.
+
+Before code that requires the backlight to be off, wait at least one full duty period, which is `0xFFFF` cycles at 12 MHz, about 5.5 ms.
+
+### Scan out and the backlight
+
+Without scan out, the panel shows white. Thus the backlight must be off whenever scan out is stopped:
+
+1. To turn the display off, turn the backlight off, wait as described in [Backlight](#backlight), then stop scan out.
+2. To turn the display on, start scan out, wait for two refresh start events, then turn the backlight on.
+3. At power on, also start scan out first. A backlight that comes on too soon after the first scan out start shows a white flash.
 
 ### Refresh rate and core bandwidth
 
@@ -222,4 +242,7 @@ Scan out reads DDR the whole time the panel is on, so a faster pixel clock takes
 - The OSD layer and the two YUV layers have register definitions but no measurement.
 - Why the virtual page offset at `+0x1C` reads outside the page. The field position and the unit both come from the AK98 source and neither matches what the part does.
 - Why a backlight PWM value of zero does not turn the backlight off after full duty, and whether it fails after any other duty.
+- Whether a new backlight PWM value takes effect at once or at the end of the current period. The 5.5 ms wait covers the second case.
+- How long to wait at power on between the first scan out start and the backlight. No test shows whether two refresh start events are enough there.
+- At which point in the frame the commit strobe takes the new register values. Page flipping waits for refresh start, which is late enough, but no measurement shows how early the strobe takes effect.
 - What the low seven bits of `0x2002D014` select. Clearing them both protects scan out and speeds up the core, which a strict priority does not explain.
