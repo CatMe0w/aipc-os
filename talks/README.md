@@ -11,9 +11,9 @@ Slides from public talks.
 - Slides: [AIPC_AOSCC_2026.pdf](AIPC_AOSCC_2026.pdf)
 - Chinese transcript: [AIPC_AOSCC_2026.zh.md](AIPC_AOSCC_2026.zh.md)
 - English transcript: [AIPC_AOSCC_2026.en.md](AIPC_AOSCC_2026.en.md)
-- Recording: YouTube (TBD) | bilibili (TBD)
+- Recording: YouTube (TBD) | [bilibili](https://www.bilibili.com/video/av117103357069253?t=871)
 
-Mandarin Chinese audio with Chinese and English subtitles.
+Mandarin Chinese audio with Chinese and English subtitles (TBD).
 
 ## License
 
