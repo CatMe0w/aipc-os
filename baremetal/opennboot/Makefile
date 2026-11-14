@@ -38,14 +38,18 @@ opennboot.bin: opennboot.elf
 	@size=$$(wc -c < $@); \
 	 echo "$@ size: $$size bytes ($$(( ($$size + 2047) / 2048 )) pages of 63)"
 
-test: test/test_ecc
+test: test/test_ecc test/test_block0
 	./test/test_ecc
+	./test/test_block0
 
 test/test_ecc: test/test_ecc.c $(LIB)/ecc.c $(LIB)/ecc.h
 	$(HOSTCC) $(HOSTCFLAGS) -I$(LIB) -o $@ test/test_ecc.c $(LIB)/ecc.c
 
+test/test_block0: test/test_block0.c $(LIB)/block0.c $(LIB)/block0.h $(LIB)/nand.h
+	$(HOSTCC) $(HOSTCFLAGS) -I$(LIB) -o $@ test/test_block0.c $(LIB)/block0.c
+
 clean:
-	rm -f *.o *.d *.elf *.bin test/test_ecc
+	rm -f *.o *.d *.elf *.bin test/test_ecc test/test_block0
 	$(MAKE) -C test/bootbin clean
 
 -include $(OBJS:.o=.d)

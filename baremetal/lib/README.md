@@ -13,6 +13,7 @@ Drivers shared by the images under `baremetal/`.
 | `sd.c` | SD card read/write | aipc-boot, openNBOOT |
 | `fat.c` | Read-only FAT16/FAT32, one file from the root directory | openNBOOT |
 | `nand.c`, `ecc.c` | NAND ECC reads + raw reads, erase and program | aipc-boot, openNBOOT, the stubs of [opennboot](../../tools/opennboot/) |
+| `block0.c` | NAND block 0 image: header checks, build, write and verify | aipc-boot, the stubs of [opennboot](../../tools/opennboot/) |
 | `pf.c` | Pattern finder, from the `xnu_pf` patchfinder of pongoOS | CFW |
 | `fbcon.c`, `font8x8_basic.h` | Framebuffer console, from `fb.c` of pongoOS | CFW |
 | `mmio.h` | `REG32()` register access by physical address | all |
