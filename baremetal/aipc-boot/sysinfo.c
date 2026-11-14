@@ -15,7 +15,8 @@
 #define NBOOT_SCAN_PAGES 31u
 #define NBOOT_MIN_PAGES  8u
 
-static uint8_t buf[(NBOOT_SCAN_PAGES + 1u) * PAGE_BYTES];
+/* nand.c stores words. */
+static uint8_t buf[(NBOOT_SCAN_PAGES + 1u) * PAGE_BYTES] __attribute__((aligned(4)));
 static char fw_version[16];
 static char nboot_name[32];
 static enum nboot_kind nboot;

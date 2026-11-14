@@ -489,7 +489,7 @@ static int block_is_bad(uint32_t block)
 int nand_probe_geometry(void)
 {
     static const uint32_t candidates[] = { 64u, 128u, 32u, 256u };
-    static uint8_t page[2048];
+    static uint8_t page[2048] __attribute__((aligned(4)));
 
     for (uint32_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); ++i) {
         pages_per_block = candidates[i];
