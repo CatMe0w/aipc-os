@@ -6,6 +6,7 @@
 /* Sequencer bank 1. Bank 0 belongs to the bootrom. */
 #define NF_FIFO_HEAD        0x2002A100u
 #define NF_FIFO_NEXT        0x2002A104u
+#define NF_INFO             REG32(0x2002A150u)  /* a status or ID read lands here */
 #define NF_CTRL_STA         REG32(0x2002A158u)
 #define NF_TIMING_A         REG32(0x2002A15Cu)
 #define NF_TIMING_B         REG32(0x2002A160u)
@@ -105,7 +106,7 @@ static int l2_drain(void *dst, uint32_t n)
     return 0;
 }
 
-int nand_read_raw(uint32_t page, uint32_t col, void *dst, uint32_t len)
+static int raw_read_start(uint32_t page, uint32_t col)
 {
     NF_CTRL_STA = 0;
     REG32(NF_FIFO_HEAD) = 0x64u;                    /* CMD 0x00 */
@@ -115,9 +116,12 @@ int nand_read_raw(uint32_t page, uint32_t col, void *dst, uint32_t len)
     *fifo   = 0x201u;                               /* wait ready, end */
     nf_seq_start();
     l2_bind_nf_dma();
-    if (nf_seq_wait())
-        return NAND_ESEQ_CMD;
+    return nf_seq_wait() ? NAND_ESEQ_CMD : 0;
+}
 
+/* Transfers the next len bytes of the page that raw_read_start() addressed. */
+static int raw_read_next(void *dst, uint32_t len)
+{
     ECC_CTRL = (len << 7) | 0x100018u;              /* no DEC_EN: raw bytes */
     NF_CTRL_STA = 0;
     REG32(NF_FIFO_HEAD) = ((len - 1u) << 11) | 0x119u;
@@ -136,6 +140,226 @@ int nand_read_raw(uint32_t page, uint32_t col, void *dst, uint32_t len)
         }
     }
     return NAND_EDMA_DONE;
+}
+
+int nand_read_raw(uint32_t page, uint32_t col, void *dst, uint32_t len)
+{
+    int rc = raw_read_start(page, col);
+
+    return rc ? rc : raw_read_next(dst, len);
+}
+
+int nand_read_page_raw(uint32_t page, void *dst)
+{
+    uint8_t *out = (uint8_t *)dst;
+    int rc = raw_read_start(page, 0);
+
+    for (uint32_t col = 0; !rc && col < NAND_PAGE_RAW; col += 512u) {
+        uint32_t n = NAND_PAGE_RAW - col < 512u ? NAND_PAGE_RAW - col : 512u;
+
+        if (col)
+            l2_bind_nf_dma();
+        rc = raw_read_next(out + col, n);
+    }
+    return rc;
+}
+
+int nand_read_id(uint32_t *id)
+{
+    NF_CTRL_STA = 0;
+    REG32(NF_FIFO_HEAD) = (0x90u << 11) | 0x64u;
+    volatile uint32_t *fifo = MMIO_PTR(NF_FIFO_NEXT);
+    *fifo++ = 0x62u;  /* one address byte, 0x00 */
+    *fifo   = ((4u - 1u) << 11) | 0x58u | 0x001u;
+    nf_seq_start();
+    if (nf_seq_wait())
+        return NAND_ESEQ_CMD;
+    *id = NF_INFO;
+    return 0;
+}
+
+int nand_id_geometry(uint32_t id, uint32_t *pages, uint32_t *pages_per_block)
+{
+    uint32_t device = (id >> 8) & 0xFFu, fourth = id >> 24;
+    uint32_t mb;
+
+    switch (device) {
+    case 0xDA: case 0xAA: mb = 256u; break;
+    case 0xDC: case 0xAC: mb = 512u; break;
+    case 0xD3: case 0xA3: mb = 1024u; break;
+    default: return NAND_EARG;
+    }
+    if ((1024u << (fourth & 3u)) != NAND_PAGE_DATA)
+        return NAND_EARG;
+    *pages = mb * (1024u * 1024u / NAND_PAGE_DATA);
+    *pages_per_block = (65536u << ((fourth >> 4) & 3u)) / NAND_PAGE_DATA;
+    return 0;
+}
+
+static int nf_status(uint32_t *status)
+{
+    NF_CTRL_STA = 0;
+    REG32(NF_FIFO_HEAD) = (0x70u << 11) | 0x64u;
+    REG32(NF_FIFO_NEXT) = 0x58u | 0x001u;
+    nf_seq_start();
+    if (nf_seq_wait())
+        return NAND_ESEQ_CMD;
+    *status = NF_INFO & 0xFFu;
+    return (*status & 0x01u) ? NAND_ESTATUS : 0;
+}
+
+int nand_erase_block(uint32_t page, uint32_t *status)
+{
+    NF_CTRL_STA = 0;
+    REG32(NF_FIFO_HEAD) = (0x60u << 11) | 0x64u;
+    volatile uint32_t *fifo = MMIO_PTR(NF_FIFO_NEXT);
+    for (uint32_t i = 0; i < ROW_CYCLES; ++i)
+        *fifo++ = (((page >> (8u * i)) & 0xFFu) << 11) | 0x62u;
+    *fifo++ = (0xD0u << 11) | 0x64u;
+    *fifo   = 0x201u;
+    nf_seq_start();
+    if (nf_seq_wait())
+        return NAND_ESEQ_CMD;
+
+    return nf_status(status);
+}
+
+/* Word stores only, see l2_drain(). */
+static int nf_program_chunk(const uint32_t *src, uint32_t len)
+{
+    volatile uint32_t *dst = MMIO_PTR(L2_NF_BUFFER);
+
+    for (uint32_t i = 0; i < len / 4u; ++i)
+        dst[i] = src[i];
+
+    ECC_CTRL = (len << 7) | 0x10001Cu;  /* the read word plus DIR_WRITE */
+    NF_CTRL_STA = 0;
+    REG32(NF_FIFO_HEAD) = ((len - 1u) << 11) | 0x128u | 0x001u;
+    nf_seq_start();
+    if (nf_seq_wait())
+        return NAND_ESEQ_DATA;
+
+    for (uint32_t i = 0; i < NF_WAIT_LIMIT; ++i) {
+        if (ECC_CTRL & ECC_STATUS_END) {
+            ECC_CTRL |= ECC_STATUS_END;
+            return 0;
+        }
+    }
+    return NAND_EDMA_DONE;
+}
+
+/* All chunks go out in one 0x80 session. A second 0x80 on the same page would
+ * be a partial page program. */
+static int nf_program(uint32_t page, const uint32_t *src, uint32_t len)
+{
+    NF_CTRL_STA = 0;
+    REG32(NF_FIFO_HEAD) = (0x80u << 11) | 0x64u;
+    nf_emit_addr(MMIO_PTR(NF_FIFO_NEXT), page, 0);
+    REG32(NF_FIFO_NEXT + 4u * (COL_CYCLES + ROW_CYCLES - 1u)) |= 0x001u;
+    nf_seq_start();
+    if (nf_seq_wait())
+        return NAND_ESEQ_CMD;
+
+    for (uint32_t done = 0; done < len; done += 512u) {
+        uint32_t n = len - done < 512u ? len - done : 512u;
+        int rc = nf_program_chunk(src + done / 4u, n);
+
+        if (rc)
+            return rc;
+    }
+
+    NF_CTRL_STA = 0;
+    REG32(NF_FIFO_HEAD) = (0x10u << 11) | 0x64u;
+    REG32(NF_FIFO_NEXT) = 0x201u;
+    nf_seq_start();
+    return nf_seq_wait() ? NAND_ESEQ_CMD : 0;
+}
+
+/* Bits [15:8] of L2CTR_BUF0_7_CFG give the direction of each buffer, and
+ * buffer 5 is bit 13. A write sets it and clears it afterwards, because the
+ * read path never touches it. */
+int nand_program_page(uint32_t page, const void *src, uint32_t len,
+                      uint32_t *status)
+{
+    if (len != NAND_PAGE_DATA && len != NAND_PAGE_RAW)
+        return NAND_ELEN;
+
+    l2_bind_nf_dma();
+    L2CTR_BUF0_7_CFG |= 1u << 13;
+    int rc = nf_program(page, (const uint32_t *)src, len);
+    L2CTR_BUF0_7_CFG &= ~(1u << 13);
+    if (rc)
+        return rc;
+
+    return nf_status(status);
+}
+
+int nand_read_pages_raw(uint32_t page, uint32_t count, void *dst, uint32_t *done)
+{
+    uint8_t *out = (uint8_t *)dst;
+    int rc = 0;
+    uint32_t p;
+
+    for (p = 0; p < count; ++p) {
+        rc = nand_read_page_raw(page + p, out + p * NAND_PAGE_RAW);
+        if (rc)
+            break;
+    }
+    *done = p;
+    return rc;
+}
+
+static int page_is_blank(const uint32_t *page)
+{
+    for (uint32_t i = 0; i < NAND_PAGE_RAW / 4u; ++i)
+        if (page[i] != 0xFFFFFFFFu)
+            return 0;
+    return 1;
+}
+
+int nand_write_blocks(uint32_t page, uint32_t count, uint32_t pages_per_block,
+                      enum nand_write_mode mode, const void *src,
+                      struct nand_write_result *res)
+{
+    const uint32_t mask = pages_per_block - 1u;
+    const uint8_t *in = (const uint8_t *)src;
+    uint32_t block = 0;
+    int skip = 0;
+    int rc = 0;
+    uint32_t p;
+
+    res->done = 0;
+    res->status = 0;
+    res->bad[0] = res->bad[1] = 0;
+
+    if (pages_per_block == 0u || (pages_per_block & mask) || count == 0u ||
+        ((page | count) & mask) || count > 64u * pages_per_block)
+        return NAND_EARG;
+
+    for (p = 0; p < count; ++p) {
+        if ((p & mask) == 0u) {
+            skip = page + p != 0u && nand_block_bad(page + p);
+            if (skip)
+                res->bad[block >> 5] |= 1u << (block & 31u);
+            block++;
+            if (!skip && mode != NAND_SCAN) {
+                rc = nand_erase_block(page + p, &res->status);
+                if (rc)
+                    break;
+            }
+        }
+        if (skip || mode != NAND_WRITE)
+            continue;
+
+        const uint8_t *data = in + p * NAND_PAGE_RAW;
+        if (page_is_blank((const uint32_t *)data))
+            continue;
+        rc = nand_program_page(page + p, data, NAND_PAGE_RAW, &res->status);
+        if (rc)
+            break;
+    }
+    res->done = p;
+    return rc;
 }
 
 enum { ECC_CLEAN, ECC_CORRECTABLE, ECC_UNCORRECTABLE };
@@ -246,13 +470,18 @@ static int nand_read_page(uint32_t page, void *dst)
     return rc;
 }
 
-static int block_is_bad(uint32_t block)
+int nand_block_bad(uint32_t page)
 {
     uint32_t word;
 
-    if (nand_read_raw(block * pages_per_block, 0x410u, &word, 4u))
+    if (nand_read_raw(page, 0x410u, &word, 4u))
         return 1;
-    return ((word >> 8) & 0xFFu) != 0xFFu;   /* the marker at column 0x411 */
+    return ((word >> 8) & 0xFFu) != 0xFFu;
+}
+
+static int block_is_bad(uint32_t block)
+{
+    return nand_block_bad(block * pages_per_block);
 }
 
 /* A wrong pages_per_block lands on a page without the IPL magic, so no wrong
