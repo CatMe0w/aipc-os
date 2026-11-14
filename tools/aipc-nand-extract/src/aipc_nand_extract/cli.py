@@ -3,14 +3,18 @@ from __future__ import annotations
 import json
 import math
 import re
+import shutil
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import bchlib
 import click
+import lz4.frame
 
 from .cecompress import CECOMPRESS_FLAG, CECompressError, maybe_decompress_cecompress
+
+LZ4_MAGIC = b"\x04\x22\x4d\x18"
 
 PAGE_SIZE = 0x800
 CHUNK_SIZE = 0x200
@@ -1884,16 +1888,36 @@ def write_metadata(raw_path: Path, out_dir: Path, candidate: PTBCandidate, views
 @click.argument("raw_nand_image", type=click.Path(exists=True))
 @click.argument("output_dir", required=False, type=click.Path())
 def main(raw_nand_image: str, output_dir: str | None) -> None:
-    raw_path = Path(raw_nand_image)
-    out_dir = Path(output_dir) if output_dir else raw_path.parent / "nand_extracted"
+    source_path = Path(raw_nand_image)
+    out_dir = Path(output_dir) if output_dir else source_path.parent / "nand_extracted"
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    with source_path.open("rb") as f:
+        compressed = f.read(4) == LZ4_MAGIC
+    if not compressed:
+        extract(source_path, source_path, out_dir)
+        return
+
+    raw_path = out_dir / "nand.raw.tmp"
+    click.echo(f"Decompressing {source_path}...")
+    try:
+        try:
+            with lz4.frame.open(source_path, "rb") as fi, raw_path.open("wb") as fo:
+                shutil.copyfileobj(fi, fo, 1 << 20)
+        except RuntimeError as e:
+            raise click.ClickException(f"{source_path}: LZ4 decompression failed: {e}")
+        extract(source_path, raw_path, out_dir)
+    finally:
+        raw_path.unlink(missing_ok=True)
+
+
+def extract(source_path: Path, raw_path: Path, out_dir: Path) -> None:
     raw_size = raw_path.stat().st_size
     if raw_size % RAW_PAGE_SIZE:
         raise click.ClickException(f"raw NAND size is not a multiple of {RAW_PAGE_SIZE}: {raw_size}")
     total_pages = raw_size // RAW_PAGE_SIZE
 
-    click.echo(f"Scanning PTB in {raw_path}...")
+    click.echo(f"Scanning PTB in {source_path}...")
     candidate = scan_ptb(raw_path, raw_size, total_pages)
     (out_dir / "ptb.raw").write_bytes(candidate.ptb_raw)
     click.echo(f"PTB: clean=0x{candidate.clean_offset:08X}, raw=0x{candidate.raw_offset:08X}")
@@ -1923,7 +1947,7 @@ def main(raw_nand_image: str, output_dir: str | None) -> None:
     for view in views:
         click.echo(f"  -> {view['path']}")
 
-    write_metadata(raw_path, out_dir, candidate, views, ecc_stats)
+    write_metadata(source_path, out_dir, candidate, views, ecc_stats)
     click.echo("  -> nand_extract.json")
 
 

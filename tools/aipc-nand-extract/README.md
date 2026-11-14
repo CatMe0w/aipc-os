@@ -4,16 +4,16 @@ Normalize and extract AIPC 2112-byte/page raw NAND dumps.
 
 ## Usage
 
-Raw NAND dumps produced by `tools/aipc-nand-dump` are required.
+The input is an image from `opennboot backup-nand`, see [opennboot](../opennboot/). The tool accepts the `.img.lz4` file as it is, and a raw image of 2112 bytes for each page. Dumps from the archived `aipc-nand-dump` have the raw format, but they can contain damaged pages, see [its README](../../attic/aipc-nand-dump/).
 
 ```
-uv run aipc-nand-extract dump.bin
+uv run aipc-nand-extract backup_nand-<NAND ID>-<checksum>.img.lz4
 ```
 
 With an explicit output directory:
 
 ```
-uv run aipc-nand-extract dump.bin nand_extracted
+uv run aipc-nand-extract backup_nand-<NAND ID>-<checksum>.img.lz4 nand_extracted
 ```
 
 ## Flow

@@ -9,6 +9,7 @@ requires-python = ">=3.11,<3.14"
 dependencies = [
     "bchlib>=0.9",
     "click>=8.1",
+    "lz4>=4.3",
 ]
 
 [project.scripts]
