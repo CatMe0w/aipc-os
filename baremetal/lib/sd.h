@@ -26,6 +26,12 @@ int sd_write_block(uint32_t lba, const void *src);
 #define SD_ENOCMD23   (-23)
 int sd_read_blocks(uint32_t lba, uint32_t n, void *dst);
 
+/* Writes n consecutive blocks from src with CMD23, CMD25 and L2 DMA, and
+ * waits until the card has programmed them. The limits, the alignment, the
+ * D-cache rule and the return codes are those of sd_read_blocks(). The data
+ * of src must be in memory, so write back any dirty D-cache line of it first. */
+int sd_write_blocks(uint32_t lba, uint32_t n, const void *src);
+
 /* Selects high speed with CMD6 and raises the bus clock to 31 MHz. The card
  * returns to 20.67 MHz at the next sd_init(). Returns 0, or a negative code,
  * and the clock then stays at 20.67 MHz. */

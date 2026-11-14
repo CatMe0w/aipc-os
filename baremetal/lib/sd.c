@@ -83,6 +83,9 @@
 /* About 100 ms at 20.67 MHz. All ones would never time out, and this driver
  * has no other timeout. */
 #define MCI_DATA_TIMEOUT  0x00200000u
+/* A card can hold a write busy for 250 ms, or 500 ms for SDXC. This is
+ * 540 ms at 31 MHz. */
+#define MCI_WRITE_TIMEOUT 0x01000000u
 
 static int      g_sdhc;
 static int      g_bus_4bit;  /* set once ACMD6 puts the card in 4-bit mode */
@@ -367,6 +370,12 @@ static int sd_wait_ready(void)
     return -13;
 }
 
+/* Polls for one DMA chunk, or for the end of a block write. MCI_DATA_TIMEOUT
+ * ends a transfer that stalls on the card side well before this limit.
+ * WAIT_LIMIT is too short for a block write: with the caches on it is about
+ * 20 ms, and a card can take longer to program one block. */
+#define DMA_WAIT_LIMIT 20000000u
+
 static int sd_write_block_once(uint32_t lba, const void *src)
 {
     uint32_t arg = g_sdhc ? lba : (lba << 9);
@@ -391,7 +400,7 @@ static int sd_write_block_once(uint32_t lba, const void *src)
         dst[w] = sw[w];
 
     MCI_DMACTRL   = MCI_DMACTRL_L2;
-    MCI_DATATIMER = MCI_DATA_TIMEOUT;
+    MCI_DATATIMER = MCI_WRITE_TIMEOUT;
     MCI_DATALEN   = 512u;
     MCI_DATACTRL  = DPSM_ENABLE | DPSM_BLKSZ_512
                   | (g_bus_4bit ? DPSM_BUS_4BIT : 0u);
@@ -406,7 +415,7 @@ static int sd_write_block_once(uint32_t lba, const void *src)
         if ((seen & (STA_DATAEND | STA_DATABLOCKEND)) ==
             (STA_DATAEND | STA_DATABLOCKEND))
             break;
-        if (i >= WAIT_LIMIT) {
+        if (i >= DMA_WAIT_LIMIT) {
             rc = -3;
             break;
         }
@@ -444,10 +453,6 @@ static void l2_dma_chunk(uint32_t addr, uint32_t bytes)
     L2_DMAREQ = (L2_DMAREQ & ~(L2_FRACTION | L2_REQ_MASK)) | L2_DMA_ENABLE |
                 L2_DMA_REQ;
 }
-
-/* Polls for one chunk. MCI_DATA_TIMEOUT ends a transfer that stalls on the
- * card side well before this limit. */
-#define DMA_WAIT_LIMIT 20000000u
 
 int sd_read_blocks(uint32_t lba, uint32_t n, void *dst)
 {
@@ -520,6 +525,83 @@ out:
     /* CMD23 ends a complete transfer. One that failed needs CMD12. */
     if (rc)
         (void)send_resp(12, 0, CPSM_RESPONSE, 0);
+    return rc;
+}
+
+int sd_write_blocks(uint32_t lba, uint32_t n, const void *src)
+{
+    uint32_t addr = (uint32_t)(uintptr_t)src;
+    uint32_t total = n * 512u, sent, r1, seen = 0;
+    uint32_t enable = L2_DMAREQ & L2_DMA_ENABLE;
+    int rc = 0;
+
+    if (n == 0 || n > SD_BLOCKS_MAX || (addr & 63u))
+        return -1;
+    if (send_resp(23, n, CPSM_RESPONSE, &r1) < 0 || (r1 & R1_ERRORS))
+        return SD_ENOCMD23;
+
+    MCI_CMD      = 0;
+    MCI_DATACTRL = 0;
+    MCI_DMACTRL  = 0;
+
+    /* A write needs CMD25 before the data path goes on. */
+    if (send_resp(25, g_sdhc ? lba : (lba << 9),
+                  CPSM_RESPONSE | CPSM_WITHDATA, &r1) < 0 || (r1 & R1_ERRORS)) {
+        rc = -25;
+        goto out;
+    }
+
+    L2_CONBUF0_7 |= (1u << (SD_L2_BUF_ID + 24));
+    L2_CONBUF0_7 |= SD_L2_DIR_WRITE;
+    sent = total < L2_DMA_CHUNK ? total : L2_DMA_CHUNK;
+    l2_dma_chunk(addr, sent);
+
+    MCI_DMACTRL   = MCI_DMACTRL_L2;
+    MCI_DATATIMER = MCI_WRITE_TIMEOUT;
+    MCI_DATALEN   = total;
+    MCI_DATACTRL  = DPSM_ENABLE | DPSM_BLKSZ_512
+                  | (g_bus_4bit ? DPSM_BUS_4BIT : 0u);
+
+    for (uint32_t i = 0;; i++) {
+        uint32_t sta = MCI_STA;
+
+        seen |= sta;
+        if (sta & STA_DATA_ERROR) {
+            rc = -20;
+            break;
+        }
+        if (!(L2_DMAREQ & L2_DMA_REQ)) {
+            if (sent < total) {
+                uint32_t b = total - sent < L2_DMA_CHUNK ? total - sent
+                                                         : L2_DMA_CHUNK;
+
+                l2_dma_chunk(addr + sent, b);
+                sent += b;
+                i = 0;
+                continue;
+            }
+            if (seen & STA_DATAEND) {
+                rc = MCI_DATACNT ? -21 : 0;
+                break;
+            }
+        }
+        if (i >= DMA_WAIT_LIMIT) {
+            rc = -22;
+            break;
+        }
+    }
+
+out:
+    sd_stop_transfer();
+    if (L2_DMAREQ & L2_DMA_REQ)
+        L2_DMA_COUNT = 0;
+    L2_DMAREQ = (L2_DMAREQ & ~(L2_FRACTION | L2_REQ_MASK | L2_DMA_ENABLE)) |
+                enable;
+    L2_CONBUF0_7 &= ~SD_L2_DIR_WRITE;
+    if (rc)
+        (void)send_resp(12, 0, CPSM_RESPONSE, 0);
+    if (sd_wait_ready())
+        return rc ? rc : -4;
     return rc;
 }
 
