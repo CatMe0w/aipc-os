@@ -19,6 +19,7 @@ SRCS = start.S handoff.S cfw_blob.S \
        main.c kbd.c boot.c sysinfo.c battery.c power.c \
        ui.c ui_modal.c ui_launch.c ui_pages.c fade.c \
        storage.c card.c ini.c entries.c settings.c payload.c \
+       nandbackup.c nandrestore.c xxh32.c \
        $(wildcard fonts/*.c) $(FATFS)/ff.c $(FATFS)/ffunicode.c
 
 # Shared drivers. See ../lib/README.md.

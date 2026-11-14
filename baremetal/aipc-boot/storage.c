@@ -54,18 +54,57 @@ DRESULT disk_read(BYTE pdrv, BYTE *buff, LBA_t sector, UINT count)
     for (UINT i = 0; i < count; i++, buff += 512) {
         int aligned = ((uintptr_t)buff & 3u) == 0;
 
-        if (sd_read_block(sector + i, aligned ? (void *)buff : bounce))
+        int rc = sd_read_block(sector + i, aligned ? (void *)buff : bounce);
+
+        if (rc) {
+            log_puts("storage: block read failed");
+            log_rc(rc);
             return RES_ERROR;
+        }
         if (!aligned)
             memcpy(buff, bounce, 512);
     }
     return RES_OK;
 }
 
+/* A failed transfer leaves state that breaks the next one, so each retry
+ * starts the card again. */
+static int write_run(LBA_t sector, UINT count, const BYTE *buff)
+{
+    int rc = 0;
+
+    for (int try = 0; try < 3; try++) {
+        dcache_flush();
+        rc = sd_write_blocks(sector, count, buff);
+        if (rc == 0 || rc == SD_ENOCMD23)
+            return rc;
+        log_puts("storage: multiple block write failed");
+        log_rc(rc);
+        if (card_start())
+            break;
+    }
+    return rc;
+}
+
 DRESULT disk_write(BYTE pdrv, const BYTE *buff, LBA_t sector, UINT count)
 {
     if (pdrv || !card_ready)
         return RES_NOTRDY;
+    while (count > 1 && !single_blocks && !((uintptr_t)buff & 63u)) {
+        UINT n = count > SD_BLOCKS_MAX ? SD_BLOCKS_MAX : count;
+        int rc = write_run(sector, n, buff);
+
+        if (rc == SD_ENOCMD23) {
+            log_puts("storage: no CMD23, single blocks only\n");
+            single_blocks = 1;
+            break;
+        }
+        if (rc)
+            return RES_ERROR;
+        sector += n;
+        buff += n * 512u;
+        count -= n;
+    }
     for (UINT i = 0; i < count; i++, buff += 512) {
         const void *src = buff;
 
@@ -73,20 +112,37 @@ DRESULT disk_write(BYTE pdrv, const BYTE *buff, LBA_t sector, UINT count)
             memcpy(bounce, buff, 512);
             src = bounce;
         }
-        if (sd_write_block(sector + i, src))
+        int rc = sd_write_block(sector + i, src);
+
+        if (rc) {
+            log_puts("storage: block write failed");
+            log_rc(rc);
             return RES_ERROR;
+        }
     }
     return RES_OK;
 }
 
-/* sd_write_block() returns after the card has programmed the block, so
- * there is nothing left to flush. */
+/* sd_write_block() and sd_write_blocks() return after the card has programmed
+ * the data, so there is nothing left to flush. */
 DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void *buff)
 {
     (void)buff;
     if (pdrv || !card_ready)
         return RES_NOTRDY;
     return cmd == CTRL_SYNC ? RES_OK : RES_PARERR;
+}
+
+void storage_suspend(void)
+{
+    card_ready = 0;
+    sd_release_pins();
+}
+
+int storage_resume(void)
+{
+    card_ready = card_start() == 0;
+    return card_ready ? 0 : STORAGE_EIO;
 }
 
 int storage_mount(void)

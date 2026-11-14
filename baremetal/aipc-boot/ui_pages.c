@@ -2,7 +2,10 @@
 #include "boot.h"
 #include "card.h"
 #include "cfw_abi.h"
+#include "ff.h"
+#include "kbd.h"
 #include "lcd.h"
+#include "nandbackup.h"
 #include "power.h"
 #include "settings.h"
 #include "sysinfo.h"
@@ -16,8 +19,8 @@
 static void save(const char *label)
 {
     if (card_state() == CARD_READY && settings_save())
-        modal_error(label, "Could not save the setting",
-                    "The SD card could not write settings.ini.");
+        modal_error(label, "Failed to save settings",
+                    "settings.ini could not be written to the SD card.");
 }
 
 /* WinCE CFW */
@@ -85,21 +88,50 @@ struct tool {
 };
 
 static const struct tool tools_backup[] = {
-    { "Back up NAND", "Copies all of NAND to /backup on the SD card.", NULL },
-    { "Restore NAND", "Writes a backup from /backup back to NAND.",
-      "Erases all of NAND." },
+    { "Back up NAND", "Save the entire NAND to /backup on the SD card.", NULL },
 };
 
+/* The backups in /backup. Each one is an item of the Tools page, after
+ * "Back up NAND". */
+#define BACKUPS_MAX 8
+static char backups[BACKUPS_MAX][64];
+static char backup_titles[BACKUPS_MAX][72];
+static int backup_count;
+
+static void backups_scan(void)
+{
+    static const char suffix[] = ".img.lz4";
+    DIR dir;
+    FILINFO info;
+
+    backup_count = 0;
+    if (f_opendir(&dir, "/backup") != FR_OK)
+        return;
+    while (backup_count < BACKUPS_MAX && f_readdir(&dir, &info) == FR_OK &&
+           info.fname[0]) {
+        size_t n = strlen(info.fname);
+
+        if ((info.fattrib & AM_DIR) || n < sizeof(suffix) ||
+            n >= sizeof(backups[0]) ||
+            strcmp(info.fname + n - (sizeof(suffix) - 1), suffix))
+            continue;
+        strcpy(backups[backup_count++], info.fname);
+    }
+    f_closedir(&dir);
+}
+
 static const struct tool tools_install[] = {
-    { "Install openNBOOT", "Starts aipc-boot from the SD card at power on.",
-      "Writes NAND block 0." },
+    { "Install openNBOOT",
+      "Install openNBOOT to boot aipc-boot from the SD card at power-on.",
+      "NAND block 0 will be overwritten." },
 };
 
 static const struct tool tools_update[] = {
-    { "Update openNBOOT", "Writes this release of openNBOOT.",
-      "Writes NAND block 0." },
-    { "Remove openNBOOT", "Puts back the stock bootloader from /backup.",
-      "Writes NAND block 0." },
+    { "Update openNBOOT",
+      "Replace the installed openNBOOT with the version in this release.",
+      "NAND block 0 will be overwritten." },
+    { "Remove openNBOOT", "Restore the original bootloader from /backup.",
+      "NAND block 0 will be overwritten." },
 };
 
 static void tool_items(const struct tool *t, int n)
@@ -116,8 +148,17 @@ static void tools_build(void)
         ui_note("Insert an SD card to use the tools.");
         return;
     }
-    ui_section("NAND backup");
-    tool_items(tools_backup, 2);
+    ui_section("NAND backup and restore");
+    tool_items(tools_backup, 1);
+    backups_scan();
+    for (int i = 0; i < backup_count; i++) {
+        lv_snprintf(backup_titles[i], sizeof(backup_titles[i]), "Restore %s",
+                    backups[i]);
+        if (!ui_item(backup_titles[i], META_NONE, NULL,
+                     "Erase the NAND and write this backup to it.",
+                     "All data on the NAND will be erased."))
+            return;
+    }
     /* The tools do not work yet, so an unknown block 0 shows the same
      * placeholder as the stock bootloader. */
     ui_section("NAND bootloader");
@@ -127,17 +168,250 @@ static void tools_build(void)
         tool_items(tools_install, 1);
 }
 
+/* Esc cancels. Returns nonzero then. */
+static int backup_progress(uint32_t permille)
+{
+    uint8_t key;
+    int pressed, cancel = 0;
+
+    kbd_poll();
+    while (kbd_pop(&key, &pressed))
+        cancel |= pressed && key == KBD_ESC;
+    modal_progress(permille);
+    lv_timer_handler();
+    return cancel;
+}
+
+static int asked;
+
+static void ask_done(int ok)
+{
+    asked = ok;
+}
+
+/* Shows a modal and waits for the answer. Returns 1 for the ok button. */
+static int ask(struct modal *m)
+{
+    m->done = ask_done;
+    asked = 0;
+    modal_open(m);
+    while (modal_is_open()) {
+        uint8_t key;
+        int pressed;
+
+        kbd_poll();
+        while (kbd_pop(&key, &pressed))
+            if (pressed && modal_is_open())
+                modal_key(key);
+        /* No frame without the modal. The caller can open the next one, and
+         * the page under them must not show in between. */
+        if (modal_is_open())
+            lv_timer_handler();
+    }
+    return asked;
+}
+
+static void backup_nand(void)
+{
+    static const char label[] = "Back up NAND";
+    static char name[64], body[200], space[24];
+    struct modal confirm = {
+        .label = label,
+        .title = "Back up the NAND?",
+        .body = body,
+        .cancel = "Cancel",
+        .ok = "Back up",
+    };
+    struct modal progress = {
+        .label = label,
+        .title = "Backing up the NAND",
+        .body = "Hold Esc to cancel.",
+        .progress = 1,
+    };
+    const struct ui_card *card = ui_card();
+    int rc;
+
+    if (card->space_ok) {
+        ui_size_text(space, sizeof(space), card->free_mb);
+        lv_snprintf(body, sizeof(body),
+                    "The entire NAND will be saved to /backup on the SD card.\n"
+                    "Free space on the SD card: "
+                    "%s.", space);
+    } else {
+        lv_snprintf(body, sizeof(body),
+                    "The entire NAND will be saved to /backup on the SD card.");
+    }
+    if (!ask(&confirm))
+        return;
+
+    modal_open(&progress);
+    lv_timer_handler();
+    rc = nand_backup(backup_progress, name, sizeof(name));
+    modal_close();
+    ui_card_changed();
+
+    switch (rc) {
+    case NANDBACKUP_OK:
+        lv_snprintf(body, sizeof(body), "Saved as /backup/%s.", name);
+        modal_error(label, "Backup complete", body);
+        break;
+    case NANDBACKUP_CANCELLED:
+        break;
+    case NANDBACKUP_EEXISTS:
+        lv_snprintf(body, sizeof(body),
+                    "An identical backup is already on the SD card: %s.", name);
+        modal_error(label, "Backup already exists", body);
+        break;
+    case NANDBACKUP_ENAND:
+        modal_error(label, "NAND read error",
+                    "The NAND could not be read. No backup was created.");
+        break;
+    default:
+        modal_error(label, "SD card write error",
+                    "The backup could not be written. The SD card may be "
+                    "full.");
+        break;
+    }
+}
+
+static int warn(const char *label, const char *title, const char *body)
+{
+    struct modal m = {
+        .label = label,
+        .title = title,
+        .body = body,
+        .cancel = "Cancel",
+        .ok = "Restore anyway",
+        .danger = 1,
+    };
+
+    return ask(&m);
+}
+
+static int no_cancel_progress(uint32_t permille)
+{
+    modal_progress(permille);
+    lv_timer_handler();
+    return 0;
+}
+
+static void restore_failed(const char *label, int rc, int written)
+{
+    static const char partial[] =
+        "The NAND is only partially written. Run the restore again.";
+
+    switch (rc) {
+    case NANDBACKUP_CANCELLED:
+        break;
+    case NANDBACKUP_EFORMAT:
+        modal_error(label, "Invalid backup file",
+                    written ? partial
+                            : "The file is not a NAND backup, or its size "
+                              "does not match this NAND.");
+        break;
+    case NANDBACKUP_ENAND:
+        modal_error(label, written ? "NAND write error" : "NAND read error",
+                    written ? partial
+                            : "The NAND could not be read. The NAND was not "
+                              "modified.");
+        break;
+    default:
+        modal_error(label, "SD card read error",
+                    written ? partial
+                            : "The backup could not be read. The NAND was "
+                              "not modified.");
+        break;
+    }
+}
+
+static void restore_nand(const char *name)
+{
+    static const char label[] = "Restore NAND";
+    static char path[80], body[240];
+    struct nand_restore_check check;
+    struct modal confirm = {
+        .label = label,
+        .title = "Restore this backup?",
+        .body = body,
+        .cancel = "Cancel",
+        .ok = "Restore",
+        .danger = 1,
+    };
+    struct modal progress = {
+        .label = label,
+        .title = "Verifying the backup",
+        .body = "Hold Esc to cancel.",
+        .progress = 1,
+    };
+    int rc;
+
+    lv_snprintf(body, sizeof(body),
+                "All data on the NAND will be erased and replaced with %s. ",
+                name);
+    if (!ask(&confirm))
+        return;
+
+    lv_snprintf(path, sizeof(path), "/backup/%s", name);
+    modal_open(&progress);
+    lv_timer_handler();
+    rc = nand_restore_check(path, backup_progress, &check);
+    modal_close();
+    if (rc) {
+        restore_failed(label, rc, 0);
+        return;
+    }
+
+    if (!check.checksum_ok &&
+        !warn(label, "Checksum mismatch",
+              "The backup does not match its checksum. The file is corrupted "
+              "or was modified. Restore anyway?"))
+        return;
+    if (!check.name_ok &&
+        !warn(label, "File name mismatch",
+              "The file name does not match the checksum of the backup. The "
+              "file was renamed or modified. Restore anyway?"))
+        return;
+    if (check.lost) {
+        lv_snprintf(body, sizeof(body),
+                    "The backup contains data in %u blocks that are marked "
+                    "bad on this device. These part of the data cannot be restored. "
+                    "Restore anyway?", (unsigned)check.lost);
+        if (!warn(label, "Bad blocks", body))
+            return;
+    }
+
+    progress.title = "Restoring the NAND";
+    progress.body = "Do not power off the device.";
+    modal_open(&progress);
+    lv_timer_handler();
+    rc = nand_restore_write(path, no_cancel_progress);
+    modal_close();
+    if (rc) {
+        restore_failed(label, rc, 1);
+        return;
+    }
+    modal_error(label, "Restore complete",
+                "The backup was written to the NAND.");
+}
+
 static void tools_enter(int item)
 {
-    (void)item;
+    if (item == 0) {
+        backup_nand();
+        ui_rebuild();
+        return;
+    }
+    if (item <= backup_count) {
+        restore_nand(backups[item - 1]);
+        return;
+    }
     modal_error("Tools", "Not available",
-                "This version of aipc-boot does not have the tools yet.");
+                "This tool is not available in this version of aipc-boot.");
 }
 
 static void tools_hints(int item, const char **enter, const char **side)
 {
-    (void)item;
-    *enter = "Open";
+    *enter = item == 0 ? "Back up" : item <= backup_count ? "Restore" : "Open";
     *side = NULL;
 }
 
@@ -237,7 +511,8 @@ static void settings_enter(int item)
     static const struct modal m = {
         .label = "Settings",
         .title = "Reset settings?",
-        .body = "This resets the settings of the boot menu and of WinCE CFW.",
+        .body = "All boot menu and WinCE CFW settings will be reset to their "
+                "defaults.",
         .cancel = "Cancel",
         .ok = "Reset",
         .done = reset_done,

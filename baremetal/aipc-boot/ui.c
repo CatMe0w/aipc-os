@@ -957,7 +957,7 @@ static void reload(int startup)
     update_top_bar();
 
     if (msg) {
-        modal_error("entries.ini", "Problem in entries.ini", msg);
+        modal_error("entries.ini", "Error in entries.ini", msg);
     } else if (startup && card_state() == CARD_READY) {
         autoboot = AUTOBOOT_WAIT_KBD;
     }

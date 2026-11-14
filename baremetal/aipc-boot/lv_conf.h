@@ -1,6 +1,9 @@
 #ifndef LV_CONF_H
 #define LV_CONF_H
 
+/* nandbackup.c uses the LZ4 block codec. */
+#define LV_USE_LZ4_INTERNAL 1
+
 #include <stdint.h>
 
 #define LV_COLOR_DEPTH              16

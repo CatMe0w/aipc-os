@@ -24,9 +24,11 @@ static void finish(struct parse *p)
         return;
     e = &entries[entry_count - 1];
     if (!e->error[0] && !p->has_type)
-        lv_strlcpy(e->error, "The entry has no type key.", sizeof(e->error));
+        lv_strlcpy(e->error, "The entry is missing the \"type\" key.",
+                   sizeof(e->error));
     else if (!e->error[0] && !e->kernel[0])
-        lv_strlcpy(e->error, "The entry has no kernel key.", sizeof(e->error));
+        lv_strlcpy(e->error, "The entry is missing the \"kernel\" key.",
+                   sizeof(e->error));
 }
 
 static int on_key(void *ctx, const char *section, const char *key,
@@ -52,7 +54,9 @@ static int on_key(void *ctx, const char *section, const char *key,
     if (!strcmp(key, "type")) {
         p->has_type = 1;
         if (strcmp(value, "linux"))
-            lv_strlcpy(e->error, "The type is not linux.", sizeof(e->error));
+            lv_strlcpy(e->error,
+                       "Unsupported entry type. Only \"linux\" is supported.",
+                       sizeof(e->error));
     } else if (!strcmp(key, "kernel")) {
         lv_strlcpy(e->kernel, value, sizeof(e->kernel));
     } else if (!strcmp(key, "cmdline")) {
@@ -76,7 +80,7 @@ const char *entries_load(void)
     if (rc == STORAGE_ESIZE)
         return "entries.ini is empty or larger than 4 KB.";
     if (rc)
-        return "The SD card could not read entries.ini.";
+        return "entries.ini could not be read from the SD card.";
     text[size] = 0;
     rc = ini_parse(text, on_key, &p);
     if (rc == -1) {
@@ -91,13 +95,13 @@ const char *entries_load(void)
         struct entry *e = &entries[entry_count - 1];
 
         lv_snprintf(e->error, sizeof(e->error),
-                 "Line %d of entries.ini is not valid.", rc);
+                 "Invalid syntax on line %d of entries.ini.", rc);
         return NULL;
     }
     finish(&p);
     if (rc > 0) {
         lv_snprintf(message, sizeof(message),
-                 "Line %d of entries.ini is not valid.", rc);
+                 "Invalid syntax on line %d of entries.ini.", rc);
         return message;
     }
     return NULL;

@@ -34,10 +34,10 @@ void launch_reload(void)
             entries[i].description };
     launch[count++] = (struct launch_item){
         KIND_WINCE_CFW, NULL, "Windows CE (CFW)",
-        "Boots from NAND, with the custom firmware." };
+        "Boot Windows CE from the NAND with the custom firmware." };
     launch[count++] = (struct launch_item){
         KIND_WINCE, NULL, "Windows CE (unmodified)",
-        "Boots from NAND, without any modifications." };
+        "Boot Windows CE from the NAND without modifications." };
 }
 
 int launch_count(void)
@@ -87,7 +87,7 @@ static void load_failed(const char *label, int rc, const char *path)
                     "ARM ELF executable.", path);
         break;
     case PAYLOAD_ERANGE:
-        title = "Load address not allowed";
+        title = "Invalid load address";
         lv_snprintf(body, sizeof(body), "A segment of %s is outside DDR, or "
                     "covers aipc-boot or a framebuffer.", path);
         break;
@@ -116,7 +116,7 @@ static void boot_linux(const struct launch_item *it)
     if (need_card(it->title))
         return;
     if (e->error[0]) {
-        modal_error(it->title, "Entry not valid", e->error);
+        modal_error(it->title, "Invalid entry", e->error);
         return;
     }
     ui_dark();
@@ -191,12 +191,12 @@ static void boot_wince(const struct launch_item *it)
         ui_power_key_rearm();
         ui_light();
         if (rc == BOOT_ECFW) {
-            modal_error(it->title, "CFW could not patch EBOOT", cfw_error());
+            modal_error(it->title, "Failed to patch EBOOT", cfw_error());
         } else {
             static char body[64];
 
             lv_snprintf(body, sizeof(body),
-                        "EBOOT could not be read from NAND. Error %d.", rc);
+                        "Failed to read EBOOT from the NAND (error %d).", rc);
             modal_error(it->title, "NAND read error", body);
         }
         return;
@@ -249,11 +249,11 @@ const struct page page_launch = {
 static void payloads_build(void)
 {
     if (card_state() != CARD_READY) {
-        ui_note("Insert an SD card to see the payloads.");
+        ui_note("Insert an SD card to list the payloads.");
         return;
     }
     if (!payload_count) {
-        ui_note("There are no files in " PAYLOAD_DIR ".");
+        ui_note("No payloads found in " PAYLOAD_DIR ".");
         return;
     }
     for (int i = 0; i < payload_count; i++)

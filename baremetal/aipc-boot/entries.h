@@ -8,7 +8,7 @@ struct entry {
     char kernel[96];        /* path from the root of the card */
     char cmdline[256];      /* empty = no command line */
     char description[96];
-    char error[48];         /* not empty = the entry cannot boot */
+    char error[64];         /* not empty = the entry cannot boot */
 };
 
 extern struct entry entries[ENTRIES_MAX];

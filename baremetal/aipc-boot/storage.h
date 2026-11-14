@@ -21,6 +21,11 @@ int storage_save(const char *path, const void *src, uint32_t len);
  * valid FSINFO sector, it reads the whole FAT. */
 int storage_space(uint32_t *free_mb, uint32_t *total_mb, const char **type);
 
+/* Gives the pads that the card shares with NAND back, and takes them again.
+ * No file access is possible in between. An open file stays valid. */
+void storage_suspend(void);
+int storage_resume(void);
+
 #define STORAGE_ENOTFOUND  (-30)
 #define STORAGE_ESIZE      (-31)
 #define STORAGE_EIO        (-32)
