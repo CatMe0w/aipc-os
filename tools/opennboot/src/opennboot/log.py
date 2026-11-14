@@ -1,12 +1,3 @@
-"""Read back the logs the bare-metal images leave in memory.
-
-DDR keeps its contents across a power cycle, so this recovers a log from the
-previous run once the device is back in USB boot mode.
-
-The window layout is the shared log pool in baremetal/README.md. The table
-below must match it.
-"""
-
 from __future__ import annotations
 
 import sys
@@ -16,6 +7,7 @@ from .nand import connect
 
 LOG_SIZE = 0x00010000
 
+# This table must match the shared log pool in baremetal/README.md.
 # Slot name -> the windows it covers, oldest first. gdbstub keeps two, because
 # it moves its live log aside at every startup. After a crash, the run you want
 # is the previous one.
@@ -35,7 +27,6 @@ DEFAULT_SLOT = "opennboot"
 
 
 def windows_for(slot: str, base: int | None, every: bool) -> list[tuple[str, int]]:
-    """The windows to read, as (title, address), in the order to print them."""
     if base is not None:
         return [(f"{base:#010x}", base)]
     if every:
@@ -66,7 +57,7 @@ def run(windows: list[tuple[str, int]], out: Path | None = None) -> int:
         data = dev.read_mem(addr, LOG_SIZE)
         if out:
             out.write_bytes(data)
-            print(f"Raw buffer saved to {out.name} ({len(data)} bytes)")
+            print(f"Raw buffer written to {out.name} ({len(data)} bytes).")
         _show(title, data)
 
     return 0

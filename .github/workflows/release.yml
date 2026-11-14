@@ -47,6 +47,8 @@ jobs:
             baremetal/doom/doom.elf
             tools/opennboot/stub/nf_read.bin
             tools/opennboot/stub/nf_write.bin
+            tools/opennboot/stub/nf_backup.bin
+            tools/opennboot/stub/nf_restore.bin
             tools/aipc-ddr-init/stub/ddr_init_v1_88.bin
 
   kernel:
@@ -116,6 +118,8 @@ jobs:
           cp images/baremetal/opennboot/opennboot.bin \
              images/tools/opennboot/stub/nf_read.bin \
              images/tools/opennboot/stub/nf_write.bin \
+             images/tools/opennboot/stub/nf_backup.bin \
+             images/tools/opennboot/stub/nf_restore.bin \
              images/tools/aipc-ddr-init/stub/ddr_init_v1_88.bin \
              tools/opennboot/src/opennboot/data/
 

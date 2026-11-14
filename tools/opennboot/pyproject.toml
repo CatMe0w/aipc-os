@@ -11,6 +11,8 @@ dependencies = [
     "ak7802-usbboot",
     "aipc-ddr-init",
     "click>=8.1",
+    "lz4>=4.3",
+    "tqdm>=4.66",
 ]
 
 [tool.uv.sources]

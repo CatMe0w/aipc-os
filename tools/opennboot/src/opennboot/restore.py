@@ -1,5 +1,3 @@
-"""Put a bootloader image saved by `opennboot install` back into NAND."""
-
 from __future__ import annotations
 
 import sys
@@ -16,13 +14,13 @@ def run(image_path: Path, row: int = 0) -> int:
 
     image = image_path.read_bytes()
     if len(image) != BLOCK_PAGES * PAGE_RAW:
-        print(f"{image_path.name} is {len(image)} bytes, expected "
-              f"{BLOCK_PAGES * PAGE_RAW}. This is not a backup from "
-              f"`opennboot install`.", file=sys.stderr)
+        print(f"Error: {image_path.name}: invalid size {len(image)} bytes "
+              f"(expected {BLOCK_PAGES * PAGE_RAW}). This is not a backup created by "
+              f"'opennboot install'", file=sys.stderr)
         return 1
 
     if row:
-        print(f"[using scratch target: row {row}]")
+        print(f"Scratch target: row {row}.")
 
     dev = connect()
     print("Device connected.")
@@ -30,20 +28,21 @@ def run(image_path: Path, row: int = 0) -> int:
     nb = NandBlock(dev)
     nb.check_ddr()
 
-    if not confirm(f"This replaces the bootloader with {image_path.name}."):
-        print("Aborted, nothing was written.")
+    if not confirm(f"The bootloader in NAND block 0 will be erased and "
+                   f"replaced with {image_path.name}."):
+        print("Aborted. The NAND was not modified.")
         return 0
 
-    print("Writing, do not disconnect.")
+    print("Writing to NAND. Do not disconnect the device.")
     written = nb.write_pages(row, image)
 
     problem = describe_mismatch(nb.read_pages(row), after_write(image))
     if problem:
-        print(f"VERIFY FAILED after writing {written} pages: {problem}",
+        print(f"Error: verification failed after writing {written} pages: {problem}",
               file=sys.stderr)
-        print("The device will not boot from NAND in this state. Try the same "
-              "image again.", file=sys.stderr)
+        print("The device cannot boot from NAND in this state. Run the same "
+              "command again.", file=sys.stderr)
         return 1
 
-    print(f"Done. {image_path.name} is restored.")
+    print("Restore complete.")
     return 0

@@ -1,10 +1,3 @@
-"""Run openNBOOT from memory without an install.
-
-Uploads opennboot.bin to DDR and executes it in place, so it exercises the whole
-boot flow with no NAND write. The bootrom does not resume afterwards. The log
-survives the next power cycle, and `opennboot log` reads it back.
-"""
-
 from __future__ import annotations
 
 import sys
@@ -21,21 +14,19 @@ def run(addr: int = LOAD_ADDR) -> int:
     source = resolve("opennboot.bin")
     payload = source.read_bytes()
 
-    print("openNBOOT dry run")
-    print("This runs openNBOOT from memory. It writes nothing to NAND.")
+    print("Running openNBOOT from memory. The NAND is not modified.")
     print(f"Image: {source} ({len(payload)} bytes)")
     if addr != LOAD_ADDR:
-        print(f"[using load address {addr:#010x}]")
-    print()
+        print(f"Load address: {addr:#010x}.")
 
     dev = connect()
     print("Device connected.")
 
     dev.write_mem(addr, payload)
-    print(f"Uploaded openNBOOT ({len(payload)} bytes)")
+    print(f"Uploaded {len(payload)} bytes.")
 
     dev.execute(addr, wait=False)
-    print("Starting openNBOOT. The bootrom will not resume.")
-    print()
-    print("  To read the log:  opennboot log")
+    print("openNBOOT started. The boot ROM will not resume. Power-cycle the "
+          "device to return to USB boot mode.")
+    print("To read the log afterwards: opennboot log")
     return 0

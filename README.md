@@ -49,7 +49,7 @@ Host-side Python CLI tools, one uv workspace member per directory. The `ak7802-`
 
 | Tool                   | Purpose                                             |
 | ---------------------- | --------------------------------------------------- |
-| `opennboot`            | Install openNBOOT into NAND                         |
+| `opennboot`            | openNBOOT Installer + NAND backup/restore utilities |
 | `ak7802-usbboot`       | USB boot mode protocol: peek, poke, upload, execute |
 | `ak7802-nand-dump-min` | Universal AK7802 NAND dump tool                     |
 | `aipc-coldboot-dump`   | Cold-boot attack RAM extraction                     |
