@@ -40,7 +40,7 @@ Addresses and values accept both decimal and `0x`-prefixed hexadecimal.
 
 On-chip memory (L2 buffer at `0x48000200`) requires no initialization.
 
-`exec` is fire-and-forget by default. With `--wait`, the tool actively probes for the BootROM to resume USB boot mode by reading `0x0:4` until it sees the BootROM entry instruction bytes `06 00 00 EA`.
+`exec` is fire-and-forget by default. With `--wait`, the tool polls with a GET_DESCRIPTOR request on EP0 until the bootrom answers, which it does only after the stub returns. The tool sends nothing on the bulk endpoints during that time, because a bulk OUT packet can damage data that a running stub reads from NAND. See [usb-boot.md](../../docs/bootrom/usb-boot.md).
 
 ## Protocol
 

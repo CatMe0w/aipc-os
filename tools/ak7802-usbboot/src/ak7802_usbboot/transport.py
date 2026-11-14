@@ -21,8 +21,6 @@ _TIMEOUT_MS = 3000
 _EXECUTE_PROBE_IO_TIMEOUT_MS = 50
 _EXECUTE_PROBE_INTERVAL_S = 0.01
 _EXECUTE_WAIT_TIMEOUT_S = 1.0
-_BOOTROM_PROBE_ADDR = 0x0
-_BOOTROM_PROBE_BYTES = b"\x06\x00\x00\xEA"
 
 
 class DeviceNotFoundError(Exception):
@@ -80,22 +78,18 @@ class AK7802:
         except usb.core.USBTimeoutError:
             pass
 
+    # The probe is a GET_DESCRIPTOR on EP0. A bulk OUT frame sent while a stub
+    # runs goes into the L2 buffers and can replace data that the stub reads
+    # through them, see docs/bootrom/usb-boot.md.
     def _probe_bootrom_ready(self) -> bool:
         try:
-            self._send_cmd(
-                OPCODE_UPLOAD_BEGIN,
-                addr=_BOOTROM_PROBE_ADDR,
-                arg0=len(_BOOTROM_PROBE_BYTES),
-            )
-            data = self._read(
-                len(_BOOTROM_PROBE_BYTES),
-                timeout_ms=_EXECUTE_PROBE_IO_TIMEOUT_MS,
+            self._dev.ctrl_transfer(
+                0x80, 0x06, 0x0100, 0, 18,
+                timeout=_EXECUTE_PROBE_IO_TIMEOUT_MS,
             )
         except usb.core.USBError:
             return False
-
-        self._drain_trailing_zlp(timeout_ms=_EXECUTE_PROBE_IO_TIMEOUT_MS)
-        return data == _BOOTROM_PROBE_BYTES
+        return True
 
     # ------------------------------------------------------------------
     # Protocol operations
@@ -165,10 +159,9 @@ class AK7802:
         If the stub returns (MOV PC, LR / BX LR), the bootrom resumes its
         USB command loop and subsequent operations work normally.
 
-        wait: if True, poll for the BootROM to resume USB boot mode by reading
-              4 bytes from 0x0 until they match the BootROM entry instruction
-              bytes (06 00 00 EA). This avoids relying on a fixed delay when a
-              returning stub races with the EXECUTE return path.
+        wait: if True, poll with a GET_DESCRIPTOR request on EP0 until the
+              BootROM answers. The BootROM answers EP0 only from its USB
+              command loop, so an answer means that the stub returned.
         timeout: maximum seconds to wait for the stub to return (default 1.0).
         """
         self._send_cmd(OPCODE_EXECUTE, addr=addr)

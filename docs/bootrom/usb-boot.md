@@ -240,6 +240,16 @@ LR holds the instruction after the branch, thus the called code **can return** t
 
 The stub inherits the stack pointer of the bootrom. At the EXECUTE call, SP is inside the bootrom call chain (`usbboot_main_loop` -> `usb_irq_dispatch` -> `handle_usbboot_packet`), in L2 buffer SRAM around 0x48000E70. The initial SP at `bootrom_entry` is **0x48000FFC** for USB boot mode, or **0x4800157C** before the SPI and NF boot probes.
 
+### EP3 traffic while a stub runs
+
+The EXECUTE handler clears `RXCSR1.bit0` before the jump, so the hardware accepts one EP3 OUT packet while the stub runs. The bootrom itself never reads NAND in USB boot mode, thus this matters only to an uploaded stub.
+
+If the stub clears bits [5:0] of `L2CTR_ASSIGN_REG1` (0x2002C090) and reads NAND through the bootrom helper `nf_read_chunk_to_buf`, bytes of that packet can replace up to 64 bytes at the start of a 512-byte chunk that the helper returns. The helper copies its data from L2BUF_00, see [nand-boot.md](nand-boot.md). The replaced range is a suffix of the packet and stops at offset `0x3F` of the chunk.
+
+A stub that reads NAND with its own driver through L2 buffer 5, and that does not change the assignment of buffers 0 and 1, gets the NAND data unchanged.
+
+A request on EP0 does not disturb the stub, because EP0 packets use the separate L2 window at 0x48001500. The bootrom answers EP0 only from its USB command loop. A GET_DESCRIPTOR request therefore times out while the stub runs and gets an answer after the stub returns, so the host can use it to wait for the stub with no EP3 traffic.
+
 ## Bulk IN Transfer Details
 
 `usb_bulk_in_send_next_chunk()` handles the L2 buffer staging for EP2:
@@ -252,7 +262,7 @@ The stub inherits the stack pointer of the bootrom. At the EXECUTE call, SP is i
 
 The write-forbid register (USB+0x338) toggles to gate L2 buffer writes during the staging.
 
-The rule about the FIFO port writes holds for EP2 as well, and `EP2_TX_COUNT` does not override it. Word writes that stage a length which is not a whole number of words round the packet up to the next word boundary. The trailing bytes then carry whatever the staging window held, even with `EP2_TX_COUNT` set to the exact length. One byte write to the FIFO port per payload byte gives the exact length instead. The measurement requested every reply length from 5 to 136 bytes and compared what arrived at the host. Word staging returned `ceil(len/4)*4` bytes, and byte staging returned `len` bytes. The bootrom never meets this case, because its own bulk transfers are whole words.
+The rule about the FIFO port writes holds for EP2 as well, and `EP2_TX_COUNT` does not override it. Word writes that stage a length which is not a whole number of words round the packet up to the next word boundary. The trailing bytes then carry whatever the staging window held, even with `EP2_TX_COUNT` set to the exact length. Word staging of `len` bytes sends `ceil(len/4)*4` bytes. One byte write to the FIFO port per payload byte sends exactly `len` bytes. The bootrom never meets this case, because its own bulk transfers are whole words.
 
 ## Bootrom Errata
 
@@ -307,4 +317,4 @@ If the stub returns to the bootrom, and a new EP3 OUT packet arrived while the s
 
 This is a real lost-packet window in the return path, not a naming artifact.
 
-**Workaround**: if an EXECUTE stub returns, the host must not send the next EP3 OUT packet until it knows that the stub finished. A fixed delay works only when it safely exceeds the worst-case runtime of the stub. An out-of-band completion signal, over UART or GPIO or another side effect, is more reliable. A stub that never returns avoids this issue completely.
+**Workaround**: if an EXECUTE stub returns, the host must not send the next EP3 OUT packet until it knows that the stub finished. A GET_DESCRIPTOR request on EP0 gives that signal. The bootrom answers EP0 only from its USB command loop, so the request times out while the stub runs and gets an answer after the stub returns. A stub that never returns avoids this issue completely.
