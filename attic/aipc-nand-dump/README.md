@@ -1,10 +1,20 @@
+# ARCHIVED
+
+Do not run this. A dump from this tool can contain a 64-byte USB command frame in place of NAND data. The frame starts with 28 bytes of `0x60`. It replaces the start of one 512-byte chunk in the first page of a batch, and a batch is about 31277 pages. The NAND ECC cannot correct 64 bytes, so the page is lost.
+
+The frame is the probe that `ak7802-usbboot` sends while it waits for a stub to return. The stub of this tool reads NAND through the L2 buffers that the USB receive path also uses, so the probe goes into the chunk that the stub reads at that moment.
+
+Some damaged pages hold only the end of the frame, so a search for the `0x60` bytes does not find all of them. To find the damage in an existing dump, search for `7f 00 00 00 00 04 00 00 00 00 00 00 00 13 14`. The match is at offset `0x31` of a 512-byte chunk.
+
+The successor is `opennboot backup-nand` in `tools/opennboot`.
+
 # aipc-nand-dump
 
 Full NAND dump tool for AIPC.
 
 Dumps the entire 512 MB NAND flash including OOB/ECC data in about 15 minutes via USB boot mode. The dump can be used to restore the factory system or as a backup before flashing custom firmware. Keep it safe.
 
-This tool is AIPC-specific (requires DDR init and uses AIPC's NAND header for timing). For a chip-generic AK7802 NAND dump tool, see [`tools/ak7802-nand-dump-min`](../ak7802-nand-dump-min).
+This tool is AIPC-specific (requires DDR init and uses AIPC's NAND header for timing). For a chip-generic AK7802 NAND dump tool, see [`tools/ak7802-nand-dump-min`](../../tools/ak7802-nand-dump-min).
 
 ## Building the stubs
 

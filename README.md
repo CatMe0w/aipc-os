@@ -54,7 +54,6 @@ Host-side Python CLI tools, one uv workspace member per directory. The `ak7802-`
 | `ak7802-nand-dump-min` | Universal AK7802 NAND dump tool                     |
 | `aipc-coldboot-dump`   | Cold-boot attack RAM extraction                     |
 | `aipc-ddr-init`        | Standalone DDR SDRAM init via USB boot              |
-| `aipc-nand-dump`       | Fast NAND dump tool for AIPC                        |
 | `aipc-nand-extract`    | Extract partitions from a raw NAND dump             |
 
 ### Talks ([`talks/`](talks/))
