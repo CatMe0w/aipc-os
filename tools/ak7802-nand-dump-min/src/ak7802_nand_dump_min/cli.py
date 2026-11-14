@@ -1,42 +1,24 @@
-"""
-Minimal host-driven NAND dump reference implementation for AK7802.
-
-Uploads a tiny stub that reads one NAND page per EXECUTE call, then
-pulls the data back via the bootrom's read command.  All logic
-(init, ID detection, geometry, page iteration) lives here on the host.
-The stub never touches USB, avoiding L2BUF_00 / DMA conflicts.
-
-Data flow per page:
-  host: write_mem(params)   -> bootrom writes params to SRAM
-  host: execute(stub)       -> stub runs: ROM helpers read NAND -> SRAM
-                            <- stub returns to bootrom
-  host: read_mem(data+OOB)  -> bootrom uploads raw page contents to host
-"""
-
 import struct
 import sys
+import time
 from pathlib import Path
 
 import click
 
 from ak7802_usbboot.transport import find_device, AK7802
 
-# Stub is loaded here (past the EP3 RX DMA zone at 0x200-0x23F)
+# Past the EP3 receive window at 0x48000200-0x4800023F.
 STUB_ADDR = 0x48000240
 
-# Parameter block: host writes before each EXECUTE
+# Must match stub/stub.c.
 PARAM_ADDR = 0x48000040
-PARAM_SIZE = 0x34  # 13 × 4 bytes
-
-# Data output: host reads after each EXECUTE
 DATA_ADDR = 0x48000400
 
-# Stub commands
 CMD_HW_INIT = 0
 CMD_PROBE_READ = 1
 
-# 8 probe parameter sets, identical to the bootrom's nf_probe_params table.
-# Each entry: (counts, command, timing_cfg0, timing_cfg1, delay_pair)
+# The nf_probe_params table of the bootrom:
+# (counts, command, timing_cfg0, timing_cfg1, delay_pair)
 PROBE_PARAMS = [
     (0x01010101, 0x00000004, 0x000C3671, 0x000D3637, 0x000A000A),
     (0x01020101, 0x00300004, 0x000C3671, 0x000D3637, 0x000A000A),
@@ -47,6 +29,14 @@ PROBE_PARAMS = [
     (0x01010101, 0x00000005, 0x000C3671, 0x000D3637, 0x000A000A),
     (0x01020101, 0x00300005, 0x000C3671, 0x000D3637, 0x000A000A),
 ]
+
+READ_STAGES = {
+    0x10: "stopped in the hardware initialization",
+    0x11: "stopped while setting the timing",
+    0x12: "stopped in the command sequence",
+    0x13: "stopped before the first chunk",
+    0x14: "stopped in the first chunk",
+}
 
 KNOWN_MANUFACTURERS = {
     0x2C: "Micron",
@@ -69,7 +59,6 @@ def _pack_params(
     timing1: int = 0,
     pre_delay: int = 0,
 ) -> bytes:
-    """Pack the parameter block for the stub."""
     return struct.pack(
         "<I5IIIIIIII",
         command,
@@ -80,31 +69,24 @@ def _pack_params(
         timing0,
         timing1,
         pre_delay,
-        0,  # status (will be written by stub)
+        0,
     )
 
 
 def _read_status(dev: AK7802) -> int:
-    """Read the status word written by the stub."""
     return struct.unpack("<I", dev.read_mem(PARAM_ADDR + 0x30, 4))[0]
 
 
 def nand_hw_init(dev: AK7802) -> None:
-    """Call the bootrom's nf_boot_hw_init via the stub."""
     dev.write_mem(PARAM_ADDR, _pack_params(command=CMD_HW_INIT))
     dev.execute(STUB_ADDR, wait=True)
     status = _read_status(dev)
     if status != 0:
-        raise RuntimeError(f"hw_init failed: status={status}")
+        raise RuntimeError(f"NAND hardware initialization failed (status {status})")
 
 
 def nand_read_id(dev: AK7802) -> bytes:
-    """Issue NAND Read ID (cmd 0x90, addr 0x00) and return 8 ID bytes."""
-    # probe_param for Read ID:
-    #   counts:  cmd_count=1, others=0 -> 0x00010000
-    #   command: addr_byte_count=1, cmd1=0x90 -> 0x00009001
-    #   timing:  0 (use whatever is currently set)
-    #   delay:   seq_wait=10 ticks -> 0x000A0000
+    # One command (0x90), one address byte, the timing registers unchanged.
     id_param = (0x00010000, 0x00009001, 0, 0, 0x000A0000)
     dev.write_mem(
         PARAM_ADDR,
@@ -120,39 +102,22 @@ def nand_read_id(dev: AK7802) -> bytes:
     try:
         status = _read_status(dev)
     except Exception:
-        # Stub likely hung. Try to read status marker to see where.
-        click.echo("\nread_id: USB timeout. Attempting to read status marker...", err=True)
+        # The stub writes a progress marker to the status word, see stub.c.
+        stage = "unknown"
         try:
-            import time
-
             time.sleep(0.5)
-            # Device might need a reset. Try re-finding it.
-            dev2 = find_device(wait=False)
-            marker = struct.unpack("<I", dev2.read_mem(PARAM_ADDR + 0x30, 4))[0]
-            click.echo(f"  status marker: 0x{marker:02X}", err=True)
-            if marker == 0x10:
-                click.echo("  -> hung before or during hw_init", err=True)
-            elif marker == 0x11:
-                click.echo("  -> hw_init done, hung in timings/delay", err=True)
-            elif marker == 0x12:
-                click.echo("  -> timings done, hung in nf_issue_probe_sequence", err=True)
-            elif marker == 0x13:
-                click.echo("  -> probe done, hung in read_chunk_to_buf", err=True)
-            elif marker == 0x14:
-                click.echo("  -> entering chunk loop, hung in first read_chunk_to_buf", err=True)
-            else:
-                click.echo(f"  -> unknown marker state", err=True)
-        except Exception as e2:
-            click.echo(f"  Could not read marker: {e2}", err=True)
-            click.echo("  Stub is completely hung (bootrom not responding).", err=True)
-        raise RuntimeError("read_id hung: stub did not return from EXECUTE")
+            marker = struct.unpack(
+                "<I", find_device(wait=False).read_mem(PARAM_ADDR + 0x30, 4))[0]
+            stage = READ_STAGES.get(marker, f"unknown marker {marker:#04x}")
+        except Exception:
+            stage = "the boot ROM does not respond"
+        raise RuntimeError(f"Read ID: the stub did not return ({stage})")
     if status != 0:
-        raise RuntimeError(f"read_id failed: status=0x{status:02X}")
+        raise RuntimeError(f"Read ID failed (status {status:#04x})")
     return dev.read_mem(DATA_ADDR, 8)
 
 
 def detect_geometry(id_bytes: bytes) -> dict | None:
-    """Detect NAND geometry from Read ID bytes. Returns None if unknown."""
     dev_id = id_bytes[1]
     byte3 = id_bytes[3]
 
@@ -208,31 +173,25 @@ def detect_geometry(id_bytes: bytes) -> dict | None:
 
 
 def build_page_read_param(geo: dict) -> tuple[int, int, int, int, int]:
-    """Build a probe_param tuple for reading pages based on geometry."""
     if geo["large_page"]:
         row_cycles = geo["addr_cycles"] - 2
-        prefix = 2  # 2 column address bytes (zeroed by prefix mechanism)
+        prefix = 2
         cmd_count = 2
         cmd2 = 0x30
     else:
         row_cycles = geo["addr_cycles"] - 1
-        prefix = 1  # 1 column address byte
+        prefix = 1
         cmd_count = 1
         cmd2 = 0x00
 
     counts = (cmd_count << 16) | (prefix << 24)
     command = row_cycles | (0x00 << 8) | (cmd2 << 16)
-    delay_pair = 0x000A000A  # same as the bootrom probe table
+    delay_pair = 0x000A000A
 
     return (counts, command, 0, 0, delay_pair)
 
 
 def probe_page0(dev: AK7802) -> tuple[int, int, int, int, int] | None:
-    """Try all 8 bootrom probe parameter sets to read page 0.
-
-    Returns the first probe_param tuple that produces non-0xFF data,
-    or None if all fail.
-    """
     for i, (counts, command, t0, t1, delay) in enumerate(PROBE_PARAMS):
         probe_param = (counts, command, t0, t1, delay)
         pre_delay = delay & 0xFFFF
@@ -243,7 +202,7 @@ def probe_page0(dev: AK7802) -> tuple[int, int, int, int, int] | None:
                 probe_param=probe_param,
                 page=0,
                 chunks=1,
-                chunk_size=32,  # just read first 32 bytes
+                chunk_size=32,
                 timing0=t0,
                 timing1=t1,
                 pre_delay=pre_delay,
@@ -256,7 +215,7 @@ def probe_page0(dev: AK7802) -> tuple[int, int, int, int, int] | None:
         data = dev.read_mem(DATA_ADDR, 32)
         if data == b"\xff" * 32:
             continue
-        click.echo(f"  Probe set {i} succeeded: {data[:16].hex()}...")
+        click.echo(f"Probe parameter set {i} succeeded.")
         return probe_param
     return None
 
@@ -271,7 +230,6 @@ def read_page(
     timing1: int = 0,
     pre_delay: int = 0,
 ) -> bytes:
-    """Read one raw NAND page via the stub, including spare/OOB bytes."""
     dev.write_mem(
         PARAM_ADDR,
         _pack_params(
@@ -288,7 +246,7 @@ def read_page(
     dev.execute(STUB_ADDR, wait=True)
     status = _read_status(dev)
     if status != 0:
-        raise RuntimeError(f"read_page({page}) failed: status={status}")
+        raise RuntimeError(f"read failed (status {status})")
     return dev.read_mem(DATA_ADDR, raw_page_size)
 
 
@@ -297,79 +255,57 @@ def read_page(
     "--stub",
     type=click.Path(exists=True),
     default=None,
-    help="Path to compiled stub binary.",
+    help="Stub binary (default: stub/stub.bin).",
 )
 @click.option(
     "-o",
     "--output",
     required=True,
     type=click.Path(),
-    help="Output file for the raw NAND dump (data + OOB).",
+    help="Output file for the raw NAND image, spare bytes included.",
 )
 def main(stub: str | None, output: str) -> None:
-    """Dump raw NAND flash contents via AK7802 USB boot mode (host-driven)."""
+    """Dump the raw contents of the NAND of an AK7802 device in USB boot mode."""
 
-    # Locate stub
     if stub is not None:
         stub_path = Path(stub)
     else:
         stub_path = Path(__file__).resolve().parents[2] / "stub" / "stub.bin"
     if not stub_path.exists():
-        click.echo(f"Stub not found: {stub_path}", err=True)
-        click.echo("Build it:  cd stub && make", err=True)
+        click.echo(f"Error: {stub_path}: file not found. Build it with: make -C stub",
+                   err=True)
         sys.exit(1)
 
     stub_data = stub_path.read_bytes()
-    click.echo(f"Stub: {stub_path} ({len(stub_data)} bytes)")
-
-    # Connect
-    click.echo("Connecting...")
     dev = find_device()
-
-    # Upload stub (once)
-    click.echo(f"Uploading stub to 0x{STUB_ADDR:08X}...")
+    click.echo("Device connected.")
     dev.write_mem(STUB_ADDR, stub_data)
-
-    # NAND hardware init
-    click.echo("NAND hw_init...")
     nand_hw_init(dev)
-    click.echo("  OK")
 
-    # Read ID
-    click.echo("Reading NAND ID...")
     id_bytes = nand_read_id(dev)
-    click.echo(f"  Raw ID: {id_bytes.hex()}")
-
     mfr = id_bytes[0]
-    mfr_name = KNOWN_MANUFACTURERS.get(mfr, "Unknown")
-    click.echo(f"  Manufacturer: 0x{mfr:02X} ({mfr_name})")
-    click.echo(f"  Device ID:    0x{id_bytes[1]:02X}")
+    click.echo(f"NAND ID: {id_bytes.hex()} "
+               f"({KNOWN_MANUFACTURERS.get(mfr, 'unknown manufacturer')})")
 
-    # Detect geometry
     geo = detect_geometry(id_bytes)
 
-    # If ID-based detection fails, try probing page 0
     probe_param = None
     working_timing = (0, 0, 0)  # (timing0, timing1, pre_delay)
 
     if geo is not None:
         click.echo(
-            f"  Page size:    {geo['page_size']} B (raw: {geo['raw_page_size']} B)\n"
-            f"  Block size:   {geo['block_size'] // 1024} KB\n"
-            f"  Total size:   {geo['total_size'] // (1024 * 1024)} MB "
-            f"(raw: {geo['total_raw_size'] / (1024 * 1024):.1f} MB)\n"
-            f"  Total pages:  {geo['total_pages']}\n"
-            f"  Addr cycles:  {geo['addr_cycles']}\n"
-            f"  Large page:   {geo['large_page']}"
+            f"Geometry: {geo['total_pages']} pages of {geo['page_size']} bytes "
+            f"({geo['raw_page_size']} bytes raw), "
+            f"{geo['block_size'] // 1024} KB blocks, "
+            f"{geo['addr_cycles']} address cycles"
         )
         probe_param = build_page_read_param(geo)
     else:
-        click.echo("  ID-based geometry detection failed.")
-        click.echo("  Probing page 0 with bootrom parameter sets...")
+        click.echo("Unknown NAND ID. Probing page 0 with the boot ROM parameter sets.")
 
         result = probe_page0(dev)
         if result is None:
-            click.echo("All 8 probe sets failed. Cannot read NAND.", err=True)
+            click.echo("Error: no probe parameter set could read page 0.", err=True)
             sys.exit(1)
 
         probe_param = result
@@ -383,12 +319,11 @@ def main(stub: str | None, output: str) -> None:
         raw_page_size = chunks_per_page * 528
 
         click.echo(
-            f"  Page size:    {page_size} B (raw: {raw_page_size} B, from probe)\n"
-            f"  Addr cycles:  {addr_cycles}\n"
-            f"  Large page:   {large_page}"
+            f"Geometry: pages of {page_size} bytes ({raw_page_size} bytes raw), "
+            f"{addr_cycles} address cycles"
         )
         click.echo(
-            "WARNING: total size unknown from probe. " "Dump will continue until read errors.",
+            "Warning: the capacity is unknown. The dump continues until reads fail.",
             err=True,
         )
 
@@ -397,19 +332,14 @@ def main(stub: str | None, output: str) -> None:
             "block_size": 0,
             "total_size": 0,
             "addr_cycles": addr_cycles,
-            "total_pages": 0,  # unknown
+            "total_pages": 0,
             "large_page": large_page,
             "chunks_per_page": chunks_per_page,
             "raw_page_size": raw_page_size,
             "total_raw_size": 0,
         }
 
-        # Use the working timing from the successful probe
-        working_timing = (
-            probe_param[2],  # timing_cfg0
-            probe_param[3],  # timing_cfg1
-            probe_param[4] & 0xFFFF,  # pre_delay
-        )
+        working_timing = (probe_param[2], probe_param[3], probe_param[4] & 0xFFFF)
 
     chunks_per_page = geo["chunks_per_page"]
     raw_page_size = geo["raw_page_size"]
@@ -417,14 +347,9 @@ def main(stub: str | None, output: str) -> None:
     total_size = geo["total_raw_size"]
 
     if total_pages == 0:
-        click.echo(
-            "Total page count unknown. Use --pages to specify, or press Ctrl-C to stop.",
-            err=True,
-        )
-        total_pages = 0xFFFFFFFF  # read until error
+        total_pages = 0xFFFFFFFF
 
-    # Begin dump
-    click.echo(f"\nDumping to {output} ...")
+    click.echo(f"Writing to {output}.")
 
     received = 0
     errors = 0
@@ -447,12 +372,21 @@ def main(stub: str | None, output: str) -> None:
             except Exception as e:
                 errors += 1
                 if errors >= max_consecutive_errors:
+                    # With an unknown capacity, this is how the dump ends. The
+                    # fill pages of this run are past the end of the NAND.
+                    filled = errors - 1
+                    page -= filled
+                    received -= filled * raw_page_size
+                    f.truncate(received)
                     click.echo(
-                        f"\n{max_consecutive_errors} consecutive errors at page {page}. Stopping.",
+                        f"\nError: {max_consecutive_errors} consecutive read "
+                        f"failures from page {page}; stopping.",
                         err=True,
                     )
                     break
-                click.echo(f"\nError at page {page}: {e}", err=True)
+                click.echo(f"\nWarning: page {page}: {e}. Filled with 0xFF.", err=True)
+                f.write(b"\xff" * raw_page_size)
+                received += raw_page_size
                 page += 1
                 continue
 
@@ -474,9 +408,9 @@ def main(stub: str | None, output: str) -> None:
                         nl=False,
                     )
 
-    click.echo(f"\n\nDone. {received} bytes ({received // (1024 * 1024)} MB), {page} pages.")
+    click.echo(f"\nDump complete: {page} pages, {received} bytes.")
     if total_size and received != total_size:
         click.echo(
-            f"WARNING: expected {total_size} bytes, got {received}",
+            f"Warning: {received} bytes written, expected {total_size}.",
             err=True,
         )

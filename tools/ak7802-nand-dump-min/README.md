@@ -4,7 +4,7 @@ Minimal host-driven NAND dump reference implementation for AK7802 via USB boot m
 
 This tool exists because it was the first small implementation that worked reliably while `nand-dump` was still under active development. It targets the same end result as `nand-dump`, but takes a simpler host-driven route: the stub reads one NAND page into SRAM, returns to the bootrom, and the host pulls that page back with the bootrom's upload path.
 
-It is intentionally a reference/minimum implementation. Dumping a 512 MB NAND device takes about 6 hours. Prefer `nand-dump` when possible.
+It is intentionally a reference/minimum implementation. Dumping a 512 MB NAND device takes about 6 hours. On an AIPC, use `opennboot backup-nand` from [opennboot](../opennboot/).
 
 ## How it works
 
@@ -15,7 +15,7 @@ It is intentionally a reference/minimum implementation. Dumping a 512 MB NAND de
 5. Host reads back data from 0x48000400 via the bootrom's UPLOAD command.
 6. Repeat from step 2 for the next page.
 
-No DMA conflicts: the stub never touches USB. The bootrom handles all USB communication before and after each stub invocation.
+The stub never touches USB. The host must send nothing on the bulk endpoints while the stub runs, or the packet can replace bytes of the page. `ak7802-usbboot` waits for the stub with requests on EP0 for this reason, see [usb-boot.md](../../docs/bootrom/usb-boot.md). **Dumps made before that change (2026-11-13) can have damage in the first 64 bytes of a page.**
 
 ## Building the stub
 
