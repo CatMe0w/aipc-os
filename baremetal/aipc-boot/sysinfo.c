@@ -86,47 +86,79 @@ static void log_bytes(const uint8_t *p, uint32_t n)
     log_putc('\n');
 }
 
-/* openNBOOT keeps the string "openNBOOT" once in its image, at the start of
- * its banner. */
-static void read_nboot(void)
+static uint32_t scan_pages(void)
 {
-    const uint8_t *banner;
-    uint32_t pages;
-    int header;
+    uint32_t pages = memcmp(buf + HDR_SIGNATURE, "ANYKA382", 8)
+                         ? 0 : buf[HDR_PAGE_COUNT];
 
-    nboot = NBOOT_UNKNOWN;
-    if (read_page_raw(0, buf))
-        return;
-    header = !memcmp(buf + HDR_SIGNATURE, "ANYKA382", 8);
-    pages = header ? buf[HDR_PAGE_COUNT] : 0;
     if (pages < NBOOT_MIN_PAGES)
         pages = NBOOT_MIN_PAGES;
     if (pages > NBOOT_SCAN_PAGES)
         pages = NBOOT_SCAN_PAGES;
+    return pages;
+}
+
+/* openNBOOT keeps the string "openNBOOT" once in its image, at the start of
+ * its banner. */
+static enum nboot_kind classify(uint32_t pages, char *name)
+{
+    const uint8_t *end = buf + (pages + 1) * PAGE_BYTES;
+    const uint8_t *banner = find(buf + PAGE_BYTES, pages * PAGE_BYTES,
+                                 "openNBOOT", buf + PAGE_BYTES);
+    uint32_t n = 0;
+
+    if (!banner)
+        return memcmp(buf + HDR_SIGNATURE, "ANYKA382", 8) ? NBOOT_UNKNOWN
+                                                          : NBOOT_STOCK;
+    while (banner + n < end && banner[n] >= 0x20 && banner[n] < 0x7F &&
+           n < sizeof(nboot_name) - 1)
+        n++;
+    memcpy(name, banner, n);
+    name[n] = 0;
+    return NBOOT_OPENNBOOT;
+}
+
+static void read_nboot(void)
+{
+    uint32_t pages;
+
+    nboot = NBOOT_UNKNOWN;
+    if (read_page_raw(0, buf))
+        return;
+    pages = scan_pages();
     for (uint32_t p = 1; p <= pages; p++)
         if (read_page_raw(p, buf + p * PAGE_BYTES))
             return;
-    banner = find(buf + PAGE_BYTES, pages * PAGE_BYTES, "openNBOOT",
-                  buf + PAGE_BYTES);
-    if (banner) {
-        const uint8_t *end = buf + (pages + 1) * PAGE_BYTES;
-        uint32_t n = 0;
-
-        while (banner + n < end && banner[n] >= 0x20 && banner[n] < 0x7F &&
-               n < sizeof(nboot_name) - 1)
-            n++;
-        memcpy(nboot_name, banner, n);
-        nboot_name[n] = 0;
-        nboot = NBOOT_OPENNBOOT;
-    } else if (header) {
-        nboot = NBOOT_STOCK;
-    }
+    nboot = classify(pages, nboot_name);
 
     log_puts("sysinfo: block 0 ");
     log_bytes(buf, 16);
     log_puts("sysinfo: nboot ");
     log_dec(nboot);
     log_putc('\n');
+}
+
+static enum nboot_kind image_kind(const uint8_t *image, char *name)
+{
+    uint32_t pages;
+
+    memcpy(buf, image, PAGE_BYTES);
+    pages = scan_pages();
+    for (uint32_t p = 1; p <= pages; p++)
+        memcpy(buf + p * PAGE_BYTES, image + p * NAND_PAGE_RAW, PAGE_BYTES);
+    return classify(pages, name);
+}
+
+enum nboot_kind sysinfo_image_kind(const uint8_t *image)
+{
+    char name[sizeof(nboot_name)];
+
+    return image_kind(image, name);
+}
+
+void sysinfo_set_block0(const uint8_t *image)
+{
+    nboot = image_kind(image, nboot_name);
 }
 
 void sysinfo_read(void)

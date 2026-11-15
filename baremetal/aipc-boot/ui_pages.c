@@ -6,6 +6,7 @@
 #include "kbd.h"
 #include "lcd.h"
 #include "nandbackup.h"
+#include "nboottool.h"
 #include "power.h"
 #include "settings.h"
 #include "sysinfo.h"
@@ -79,7 +80,7 @@ const struct page page_cfw = {
     .hints = cfw_hints,
 };
 
-/* Tools. Only the items exist so far. */
+/* Tools */
 
 struct tool {
     const char *title;
@@ -126,8 +127,8 @@ static const struct tool tools_install[] = {
       "NAND block 0 will be overwritten." },
 };
 
-static const struct tool tools_update[] = {
-    { "Update openNBOOT",
+static const struct tool tools_installed[] = {
+    { "Reinstall openNBOOT",
       "Replace the installed openNBOOT with the version in this release.",
       "NAND block 0 will be overwritten." },
     { "Remove openNBOOT", "Restore the original bootloader from /backup.",
@@ -159,11 +160,9 @@ static void tools_build(void)
                      "All data on the NAND will be erased."))
             return;
     }
-    /* The tools do not work yet, so an unknown block 0 shows the same
-     * placeholder as the stock bootloader. */
     ui_section("NAND bootloader");
     if (sysinfo_nboot() == NBOOT_OPENNBOOT)
-        tool_items(tools_update, 2);
+        tool_items(tools_installed, 2);
     else
         tool_items(tools_install, 1);
 }
@@ -394,24 +393,161 @@ static void restore_nand(const char *name)
                 "The backup was written to the NAND.");
 }
 
+static const char not_modified[] = " The NAND was not modified.";
+
+static int nboot_failed(const char *label, int rc)
+{
+    static char body[280];
+    const char *title, *text;
+
+    switch (rc) {
+    case NBOOTTOOL_OK:
+        return 0;
+    case NBOOTTOOL_ENAND:
+        title = "NAND read error";
+        text = "NAND block 0 could not be read.";
+        break;
+    case NBOOTTOOL_EBLOCK0:
+        title = "Unsupported bootloader";
+        text = "NAND block 0 does not contain a valid boot header. A "
+               "bootloader cannot be written without this header.";
+        break;
+    case NBOOTTOOL_ENOBACKUP:
+        title = "Backup not found";
+        text = "/backup on the SD card contains no backup of the original "
+               "bootloader of this device.";
+        break;
+    case NBOOTTOOL_EDAMAGED:
+        title = "Backup damaged";
+        text = "A backup in /backup on the SD card is damaged: its contents "
+               "do not match the checksum in its file name. No other backup "
+               "matches this device.";
+        break;
+    case NBOOTTOOL_EAMBIGUOUS:
+        title = "Multiple backups found";
+        text = "/backup on the SD card contains more than one backup that "
+               "matches this device, and their contents differ. Keep only "
+               "the backup of this device.";
+        break;
+    case NBOOTTOOL_EWRITE:
+        modal_error(label, "NAND write error",
+                    "The write to NAND block 0 failed. The previous "
+                    "bootloader was written back, and the device starts as "
+                    "before.");
+        return rc;
+    case NBOOTTOOL_EROLLBACK:
+        modal_error(label, "NAND write error",
+                    "The write to NAND block 0 failed, and the previous "
+                    "bootloader could not be written back. The device cannot "
+                    "start from NAND. To recover, enter USB boot mode and "
+                    "run \"opennboot restore\" on a host.");
+        return rc;
+    default:
+        title = "SD card error";
+        text = "The SD card could not be read or written.";
+        break;
+    }
+    lv_snprintf(body, sizeof(body), "%s%s", text, not_modified);
+    modal_error(label, title, body);
+    return rc;
+}
+
+static void install_nboot(int reinstall)
+{
+    const char *label = reinstall ? "Reinstall openNBOOT" : "Install openNBOOT";
+    static char name[64], body[200];
+    struct modal confirm = {
+        .label = label,
+        .title = reinstall ? "Reinstall openNBOOT?" : "Install openNBOOT?",
+        .body = reinstall
+            ? "NAND block 0 will be erased, and openNBOOT will be written "
+              "to it."
+            : "NAND block 0 will be erased, and openNBOOT will be written "
+              "to it. The current bootloader will be saved to /backup on "
+              "the SD card first.",
+        .cancel = "Cancel",
+        .ok = reinstall ? "Reinstall" : "Install",
+        .danger = 1,
+    };
+
+    int rc;
+
+    if (nboot_failed(label, nboot_prepare_install()) || !ask(&confirm))
+        return;
+    rc = reinstall ? 0 : nboot_backup(name, sizeof(name));
+    if (rc == 0)
+        rc = nboot_write();
+    /* It closes any modal, so it comes before the result. */
+    ui_card_changed();
+    if (nboot_failed(label, rc))
+        return;
+    if (reinstall) {
+        modal_error(label, "Reinstallation complete",
+                    "openNBOOT was written to NAND block 0.");
+        return;
+    }
+    lv_snprintf(body, sizeof(body),
+                "openNBOOT was written to NAND block 0. The previous "
+                "bootloader was saved as /backup/%s. Keep this file.", name);
+    modal_error(label, "Installation complete", body);
+}
+
+static void remove_nboot(void)
+{
+    static const char label[] = "Remove openNBOOT";
+    static char name[64], body[200];
+    struct modal confirm = {
+        .label = label,
+        .title = "Remove openNBOOT?",
+        .body = body,
+        .cancel = "Cancel",
+        .ok = "Remove",
+        .danger = 1,
+    };
+    int rc;
+
+    if (nboot_failed(label, nboot_prepare_remove(name, sizeof(name))))
+        return;
+    lv_snprintf(body, sizeof(body),
+                "NAND block 0 will be erased, and the original bootloader "
+                "will be written to it from /backup/%s.", name);
+    if (!ask(&confirm))
+        return;
+    rc = nboot_write();
+    ui_card_changed();
+    if (nboot_failed(label, rc))
+        return;
+    modal_error(label, "Removal complete",
+                "The original bootloader was written to NAND block 0.");
+}
+
 static void tools_enter(int item)
 {
+
     if (item == 0) {
         backup_nand();
         ui_rebuild();
-        return;
-    }
-    if (item <= backup_count) {
+    } else if (item <= backup_count) {
         restore_nand(backups[item - 1]);
-        return;
+    } else if (sysinfo_nboot() != NBOOT_OPENNBOOT) {
+        install_nboot(0);
+    } else if (item == backup_count + 1) {
+        install_nboot(1);
+    } else {
+        remove_nboot();
     }
-    modal_error("Tools", "Not available",
-                "This tool is not available in this version of aipc-boot.");
 }
 
 static void tools_hints(int item, const char **enter, const char **side)
 {
-    *enter = item == 0 ? "Back up" : item <= backup_count ? "Restore" : "Open";
+    if (item == 0)
+        *enter = "Back up";
+    else if (item <= backup_count)
+        *enter = "Restore";
+    else if (sysinfo_nboot() != NBOOT_OPENNBOOT)
+        *enter = "Install";
+    else
+        *enter = item == backup_count + 1 ? "Reinstall" : "Remove";
     *side = NULL;
 }
 

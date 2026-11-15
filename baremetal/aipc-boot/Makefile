@@ -15,16 +15,16 @@ CFLAGS  = $(ARCHFLAGS) -Os -fomit-frame-pointer \
 LDFLAGS = -T linker.ld -nostartfiles -Wl,--gc-sections \
           -Wl,--build-id=none -Wl,--no-warn-rwx-segments
 
-SRCS = start.S handoff.S cfw_blob.S \
+SRCS = start.S handoff.S cfw_blob.S nboot_blob.S \
        main.c kbd.c boot.c sysinfo.c battery.c power.c \
        ui.c ui_modal.c ui_launch.c ui_pages.c fade.c \
        storage.c card.c ini.c entries.c settings.c payload.c \
-       nandbackup.c nandrestore.c xxh32.c \
+       nandbackup.c nandrestore.c nboottool.c xxh32.c \
        $(wildcard fonts/*.c) $(FATFS)/ff.c $(FATFS)/ffunicode.c
 
 # Shared drivers. See ../lib/README.md.
 LIB_SRCS = soc.c log.c timer.c ch374.c mmu.c mmu_arm926.S lcd.c sd.c \
-           ecc.c nand.c
+           ecc.c nand.c block0.c
 
 LVGL_SRCS = $(shell find $(LVGL)/src -name '*.c' 2>/dev/null)
 
@@ -37,6 +37,8 @@ $(LVGL_OBJS): ARCHFLAGS += -mthumb
 
 # Built by ../cfw. Run make in baremetal/ to build both.
 CFW_BIN = ../cfw/build/cfw.bin
+
+OPENNBOOT_BIN = ../opennboot/opennboot.bin
 
 # The version on the Info page. The release workflow sets the release tag.
 AIPC_BOOT_VERSION ?= dev
@@ -74,6 +76,12 @@ $(OUT)/cfw_blob.o: $(CFW_BIN)
 # match this build. Stop, because only baremetal/Makefile builds CFW.
 $(CFW_BIN): $(LIB)/cfw_abi.h
 	@echo "$@ is missing or stale. Run make in baremetal/." >&2; false
+
+$(OUT)/nboot_blob.o: CFLAGS += -DOPENNBOOT_BIN='"$(OPENNBOOT_BIN)"'
+$(OUT)/nboot_blob.o: $(OPENNBOOT_BIN)
+
+$(OPENNBOOT_BIN):
+	@echo "$@ is missing. Run make in baremetal/." >&2; false
 
 $(OUT)/aipc-boot.elf: $(OBJS) $(LVGL_OBJS) linker.ld
 	$(CC) $(LDFLAGS) -o $@ $(OBJS) $(LVGL_OBJS)

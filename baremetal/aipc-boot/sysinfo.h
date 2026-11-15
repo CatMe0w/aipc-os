@@ -1,4 +1,5 @@
 #pragma once
+#include <stdint.h>
 
 enum nboot_kind {
     NBOOT_UNKNOWN,
@@ -15,6 +16,12 @@ const char *sysinfo_fw_version(void);
 
 /* The bootloader in NAND block 0. */
 enum nboot_kind sysinfo_nboot(void);
+
+/* The bootloader in an image of block 0, of BLOCK0_BYTES in block0.h. */
+enum nboot_kind sysinfo_image_kind(const uint8_t *image);
+
+/* Takes image as the contents of block 0, after a write to it. */
+void sysinfo_set_block0(const uint8_t *image);
 
 /* The banner of openNBOOT up to its newline, for example "openNBOOT", or
  * "Stock" or "Unknown". */

@@ -41,6 +41,20 @@ aipc-boot writes `aipc-boot/settings.ini` each time a setting changes in the men
 | `[display]` | `theme` | `light` | `light` or `dark` |
 | `[cfw]` | a component ID | the default of the component | `on` or `off` |
 
+## Tools
+
+The Tools page needs an SD card. Its files are in `/backup` on the card.
+
+| Item | What it does |
+| --- | --- |
+| Back up NAND | Saves all of NAND as `backup_nand-<NAND ID>-<checksum>.img.lz4` |
+| Restore *(file)* | Erases NAND and writes that backup to it |
+| Install openNBOOT | Saves NAND block 0 as `backup_nboot-<NAND ID>-<checksum>.bin`, then writes the openNBOOT in this `BOOT.BIN` to block 0 |
+| Reinstall openNBOOT | Writes the openNBOOT in this `BOOT.BIN` to block 0 |
+| Remove openNBOOT | Writes the backup of the stock bootloader back to block 0 |
+
+The files have the formats of [opennboot](../../tools/opennboot/), and that tool can write them back over USB boot mode.
+
 ## Payloads
 
 A payload is a bare-metal ARM ELF file in `aipc-boot/payloads/`. aipc-boot loads each `PT_LOAD` segment to its physical address, and calls the entry point as an AAPCS function with the MMU and the caches off. It refuses a segment outside DDR, or a segment that covers aipc-boot or a framebuffer in the [memory map](#memory-map).
@@ -56,7 +70,7 @@ git submodule update --init aipc-boot/third_party/lvgl
 make aipc-boot
 ```
 
-This also builds CFW, because `BOOT.BIN` contains the CFW image. The output is `build/BOOT.BIN`. `AIPC_BOOT_VERSION` sets the version on the Info page, and is `dev` by default.
+This also builds CFW and openNBOOT, because `BOOT.BIN` contains both images. The output is `build/BOOT.BIN`. `AIPC_BOOT_VERSION` sets the version on the Info page, and is `dev` by default.
 
 ## Memory map
 
