@@ -2,7 +2,7 @@
 #include "fade.h"
 #include "lcd.h"
 
-#define FADE_STEPS   16
+#define FADE_STEPS   8
 
 /* A cached copy of the screen. The framebuffers are uncached and slow to
  * read. */
