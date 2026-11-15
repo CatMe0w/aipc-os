@@ -14,7 +14,7 @@ Each change that CFW makes is a component. Use the "WinCE CFW" page in aipc-boot
 | --- | --- | --- | --- | --- |
 | `power_hold` | Fix | on | EBOOT | Keeps the device on during boot |
 | `battery_check_skip` | Fix | on | EBOOT | Stops the power-off at boot after a false low battery reading |
-| `rtc_stall_fix` | Fix | on | NK | Prevents the hang after `BackLight Initializing... OK` on the v1.58.2 device |
+| `rtc_stall_fix` | Fix | off | NK | Prevents the hang after `BackLight Initializing... OK` on a device whose RTC oscillator does not run. Turn it on only if WinCE stops at that message. |
 | `diag` | Extra | off | NK | Shows interrupts and OAL IOCTL calls on the screen while WinCE runs |
 
 ### diag

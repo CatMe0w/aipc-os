@@ -65,8 +65,9 @@ cfw_component_t cfw_rtc_stall_fix = {
         .id = "rtc_stall_fix",
         .name = "RTC stall fix",
         .description = "Stops WinCE from hanging after \"BackLight "
-                       "Initializing\".",
-        .flags = CFW_FIX | CFW_DEFAULT_ON,
+                       "Initializing\". Turn it on only if WinCE stops at that"
+                       " message.",
+        .flags = CFW_FIX,
     },
     .patches = {
         { CFW_NK, "nk.exe", rtc_stall_fix_patch },
