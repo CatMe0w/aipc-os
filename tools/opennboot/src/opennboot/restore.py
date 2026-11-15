@@ -3,10 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from .nand import (
-    BLOCK_PAGES, PAGE_RAW,
-    NandBlock, NandError, after_write, confirm, connect, describe_mismatch,
-)
+from .nand import BLOCK_PAGES, PAGE_RAW, Block0, WriteFailed, confirm, connect
 
 
 def run(image_path: Path, row: int = 0) -> int:
@@ -25,8 +22,8 @@ def run(image_path: Path, row: int = 0) -> int:
     dev = connect()
     print("Device connected.")
 
-    nb = NandBlock(dev)
-    nb.check_ddr()
+    b0 = Block0(dev)
+    b0.check(image, image_path.name)
 
     if not confirm(f"The bootloader in NAND block 0 will be erased and "
                    f"replaced with {image_path.name}."):
@@ -34,13 +31,11 @@ def run(image_path: Path, row: int = 0) -> int:
         return 0
 
     print("Writing to NAND. Do not disconnect the device.")
-    written = nb.write_pages(row, image)
-
-    problem = describe_mismatch(nb.read_pages(row), after_write(image))
-    if problem:
-        print(f"Error: verification failed after writing {written} pages: {problem}",
-              file=sys.stderr)
-        print("The device cannot boot from NAND in this state. Run the same "
+    try:
+        b0.write(row)
+    except WriteFailed as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        print("The device may not boot from NAND in this state. Run the same "
               "command again.", file=sys.stderr)
         return 1
 

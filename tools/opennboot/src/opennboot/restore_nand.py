@@ -9,7 +9,7 @@ from lz4.frame import LZ4FrameDecompressor, get_frame_info
 
 from .nand import (
     BACKUP_MAX_PAGES, PAGE_RAW,
-    NandError, NandReader, NandWriter, confirm, connect, geometry,
+    NandError, NandReader, NandWriter, confirm, connect, id_hex,
 )
 
 LZ4_MAGIC = b"\x04\x22\x4d\x18"
@@ -19,8 +19,6 @@ BLANK_PAGE = b"\xff" * PAGE_RAW
 BAD_MARKER_COL = 0x411
 
 
-# Returns (image, stored checksum, checksum_ok). The checksum is None for a raw
-# image and for a frame without one.
 def load(path: Path) -> tuple[bytes, int | None, bool]:
     data = path.read_bytes()
     if data[:4] != LZ4_MAGIC:
@@ -30,8 +28,6 @@ def load(path: Path) -> tuple[bytes, int | None, bool]:
     if not get_frame_info(data)["content_checksum"]:
         return lz4.decompress(data), None, True
 
-    # The decompressor raises on a wrong checksum and returns nothing for that
-    # call. The last four bytes are the checksum, so they go in alone.
     image = lz4.decompress(data[:-4])
     try:
         lz4.decompress(data[-4:])
@@ -74,9 +70,8 @@ def run(path: Path, first_block: int = 0, blocks: int | None = None) -> int:
     dev = connect()
     print("Device connected.")
 
-    _, nand_id = NandReader(dev).read_pages(0, 1)
-    pages, ppb = geometry(nand_id)
-    print(f"NAND ID: {nand_id.to_bytes(4, 'little').hex()} ({pages} pages, "
+    nand_id, pages, ppb = NandReader(dev).identify()
+    print(f"NAND ID: {id_hex(nand_id)} ({pages} pages, "
           f"{ppb} pages per block)")
     if len(image) != pages * PAGE_RAW:
         raise NandError(
@@ -96,14 +91,13 @@ def run(path: Path, first_block: int = 0, blocks: int | None = None) -> int:
     for at in range(row, end, batch):
         bad += writer.run(writer.SCAN, at, min(batch, end - at))
     print(f"Bad blocks on device: {', '.join(map(str, bad)) if bad else 'none'}")
-    # A block that the image also marks bad holds nothing to restore.
     lost = [b for b in bad
             if image[b * ppb * PAGE_RAW + BAD_MARKER_COL] == 0xFF
             and image[b * ppb * PAGE_RAW:(b + 1) * ppb * PAGE_RAW] != BLANK_PAGE * ppb]
     if lost and not warn(f"the image contains data in blocks that are marked bad "
                          f"on this device: {', '.join(map(str, lost))}. Bad blocks "
-                         f"are neither erased nor written. This data will not "
-                         f"be restored."):
+                         f"are neither erased nor written. This part of the data will "
+                         f"not be restored."):
         print(aborted)
         return 0
 

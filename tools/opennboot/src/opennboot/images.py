@@ -7,8 +7,7 @@ from pathlib import Path
 # `make` takes effect without a reinstall.
 _IN_REPO = {
     "opennboot.bin": "baremetal/opennboot/opennboot.bin",
-    "nf_read.bin": "tools/opennboot/stub/nf_read.bin",
-    "nf_write.bin": "tools/opennboot/stub/nf_write.bin",
+    "nf_block0.bin": "tools/opennboot/stub/nf_block0.bin",
     "nf_backup.bin": "tools/opennboot/stub/nf_backup.bin",
     "nf_restore.bin": "tools/opennboot/stub/nf_restore.bin",
     "ddr_init_v1_88.bin": "tools/aipc-ddr-init/stub/ddr_init_v1_88.bin",
@@ -16,8 +15,7 @@ _IN_REPO = {
 
 _BUILD_HINT = {
     "opennboot.bin": "make -C baremetal/opennboot",
-    "nf_read.bin": "make -C tools/opennboot/stub",
-    "nf_write.bin": "make -C tools/opennboot/stub",
+    "nf_block0.bin": "make -C tools/opennboot/stub",
     "nf_backup.bin": "make -C tools/opennboot/stub",
     "nf_restore.bin": "make -C tools/opennboot/stub",
     "ddr_init_v1_88.bin": "make -C tools/aipc-ddr-init/stub",

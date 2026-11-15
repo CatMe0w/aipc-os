@@ -7,6 +7,8 @@
 #define CMD_RC    2
 #define CMD_FAIL  3     /* relative to CMD_ROW */
 #define CMD_ID    4
+#define CMD_PAGES 5     /* of the whole part. 0 for a part that nand.c cannot address */
+#define CMD_PPB   6     /* pages per block */
 
 /* The bootrom leaves the instruction cache off, which makes a read 2.4 times
  * slower. The cache keeps its contents while it is off. Without the
@@ -30,13 +32,15 @@ void stub_main(void)
 {
     uint32_t row = CMD[CMD_ROW];
     uint32_t count = CMD[CMD_COUNT];
-    uint32_t id = 0;
+    uint32_t id = 0, pages = 0, ppb = 0;
     int rc;
     uint32_t p = 0;
 
     CMD[CMD_RC] = 0xDEADu;
     CMD[CMD_FAIL] = 0;
     CMD[CMD_ID] = 0;
+    CMD[CMD_PAGES] = 0;
+    CMD[CMD_PPB] = 0;
 
     if (count == 0 || count > NF_BACKUP_MAX_PAGES) {
         CMD[CMD_RC] = STUB_EARG;
@@ -49,6 +53,10 @@ void stub_main(void)
 
     rc = nand_read_id(&id);
     CMD[CMD_ID] = id;
+    if (!rc && !nand_id_geometry(id, &pages, &ppb)) {
+        CMD[CMD_PAGES] = pages;
+        CMD[CMD_PPB] = ppb;
+    }
 
     if (!rc)
         rc = nand_read_pages_raw(row, count, (void *)(uintptr_t)NF_BACKUP_BUF, &p);
