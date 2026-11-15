@@ -2,7 +2,7 @@
 
 On the v1.58.2 device, each OAL timer tick polls an RTC ready bit that stays clear, so the CPU stays in the interrupt handler and no thread runs again. On screen, WinCE stops after `BackLight Initializing... OK` and does not reach the desktop.
 
-The ready bit stays clear because the RTC module has no clock on this board. See [RTC Clock Source](power-management.md#rtc-clock-source).
+The ready bit stays clear because the 32.768 kHz oscillator of the RTC module does not run on this device. See [RTC Clock Source](power-management.md#rtc-clock-source).
 
 ---
 
@@ -58,9 +58,6 @@ Change the first instruction of the RTC poll function to `bx lr`. This stops the
 
 The state machine writes its results to the words from `0x806293D8` to `0x806293E4`. In both dumps these words are 0, so the poll gives no valid data on this board. The RTC read in `OALGetRealTime` and `OALSetRealTime` runs in thread context with a bounded wait and stays unchanged by the fix. Each of these calls takes about 17 ms on this board.
 
+On a board with a working RTC oscillator, the fix stops the WinCE clock. The system time stays at 00:00. Apply the fix only to a board that has the stall.
+
 A different fix is to stop `OALIoCtlHalInitRTC` from setting the BOOTARGS flag, which agrees with the EBOOT setting. Five other locations in the OAL read that flag, for example `0x8024084C`, `0x80240AB4` and `0x80241048`. This fix therefore also changes how the OAL gets the time.
-
-## Unresolved
-
-- In earlier months, the same device usually reached the desktop. On 9 V DC input the stall occurred on few boots. Later the success rate decreased gradually, and then the stall occurred on almost every boot with any power source. Because the RTC module has no clock, the ready bit should never come, and the reason for the earlier successful boots is unknown.
-- The effect of the fix on a board with a fitted RTC crystal is unknown.

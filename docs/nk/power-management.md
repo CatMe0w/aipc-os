@@ -31,21 +31,30 @@ The v1.58.2 OAL reboot handler runs this indexed RTC sideband sequence through `
 
 The v1.58.2 EBOOT treats the machine as one with no hardware RTC. It sets the BOOTARGS RTC-present flag to zero and uses `SYSCTRL+0x28` timer 5 for software timekeeping. It does not initialize the indexed RTC sideband before it enters NK.
 
-The first index 4 read of the handler never completes from a cold state. The ready indication clears and does not come back within 10,000,000 polls. Indices 0 through 5 behave the same, and so does a read with the USB controller briefly quiesced. The OAL reboot handler therefore cannot reach either watchdog write. [RTC Clock Source](#rtc-clock-source) gives the reason, and that reason is a property of the board.
+The first index 4 read of the handler never completes from a cold state. The ready indication clears and does not come back within 10,000,000 polls. Indices 0 through 5 behave the same, and so does a read with the USB controller briefly quiesced. The OAL reboot handler therefore cannot reach either watchdog write. [RTC Clock Source](#rtc-clock-source) gives the reason, which is a hardware fault on this board.
 
 ## RTC Clock Source
 
-The board does not fit the RTC crystal, thus the RTC module has no clock. This is why the indexed RTC sideband never becomes ready.
+The RTC module on our v1.58.2 device has no clock, because the 32.768 kHz crystal of its oscillator is corroded and does not oscillate. This crystal is `Y6` on the schematic and `Y2` on the v1.58.2 board. This is why the indexed RTC sideband never becomes ready.
 
-The RTC module accepts one clock only, an external 32.768 kHz crystal across `XTAL32KI` (pin 138) and `XTAL32KO` (pin 139). The part has no internal oscillator for this module. The schematic marks every part of that circuit `NC`, which means not fitted: the crystal `Y3` and its two 10 pF load capacitors `C19` and `C24`. The `RTC_X1` and `RTC_X2` nets therefore reach no component.
+The RTC module takes its clock on `XTAL32KI` (pin 138, net `RTC_X1`) and `XTAL32KO` (pin 139, net `RTC_X2`). The part has no internal oscillator for this module. The schematic shows two clock circuits on these nets, and the board fits only the second:
+
+| Circuit | Parts | Fitted |
+| --- | --- | --- |
+| Crystal across `RTC_X1` and `RTC_X2` | Crystal `Y3`, 10 pF load capacitors `C19` and `C24` | No. The schematic marks all three `NC`, and the board has no parts at these positions |
+| Inverter oscillator, on the WiFi page | Inverter `U7` (SN74AHC1GU04), crystal `Y6`, feedback resistor `R95` 10M, series resistor `R98` 330K, capacitors `C69` 10 pF and `C70` 22 pF | Yes |
+
+`U7` takes power from the net `RTC33` through `R54` 0R. Its output, `LF_XATL`, goes to pin 19 of the WiFi module, and through the divider `R31` 150K and `R32` 100K to `RTC_X1`. `RTC_X2` connects to no fitted part.
+
+Two observations identify `Y6` as the fault. First, `Y6` is visibly corroded. Second, the WinCE boot failed gradually. In earlier months the device usually reached the desktop, and on 9 V DC input the [RTC poll stall](rtc-poll-stall.md) occurred on few boots. Then the success rate decreased, until the stall occurred on almost every boot with any power source. This pattern agrees with a crystal that degrades over time. A board with no oscillator fails on every boot.
 
 The RTC power domain is fitted. `U23`, a KB7533 LDO, takes `BAT-7.4V` through `R139` 100R and gives `RTC_3.3V`. `R7` 30K and `R77` 10K divide that down to `RTC_2.5V`. The schematic marks the rail `No Load, Iin<5uA`, thus it stays up off the battery. The RTC module has power and no clock.
 
 The sideband handshake crosses into the RTC clock domain. A domain with no clock never returns the ready indication.
 
-The watchdog output is absent as well. `RTC_WD` (pin 141) is the only output of the RTC watchdog. The schematic gives it no net, and the name appears nowhere else in the drawing. `WAKEUP` (pin 142) is the same. A fitted crystal alone would therefore give a watchdog that drives no board signal.
+The watchdog output is absent as well. `RTC_WD` (pin 141) is the only output of the RTC watchdog. The schematic gives it no net, and the name appears nowhere else in the drawing. `WAKEUP` (pin 142) is the same. A working oscillator alone would therefore give a watchdog that drives no board signal.
 
-To restore the RTC and its watchdog, fit `Y3`, `C19` and `C24`, and route `RTC_WD`. The silicon supports both. No software change replaces the missing parts.
+To restore the RTC, replace `Y6` (`Y2` on the board). To use the watchdog as a reset source, also route `RTC_WD`. No software change replaces the oscillator.
 
 ## PowerOff.exe Policy
 
@@ -117,8 +126,8 @@ The rebuilt v1.58.2 `nk.exe` places its code bytes at PE RVA `0x1000`, but the a
 
 Three other things identify the power routine above: the unique read of `0x8061F4DC`, its complete suspend control flow, and its calls into the recovered GPIO direction and output handlers.
 
-## Driver Boundary
+## Driver Limitations
 
-This board gives software no hardware reset. The one reset source in the part is the RTC watchdog, and the board removes both its clock and its output. The WinCE `IOCTL_HAL_REBOOT` sequence depends on the same dead sideband, and `PowerOff.exe REBOOT` requests only the ordinary OFF state. Do not copy either path as a verified reset.
+This board gives software no hardware reset. The one reset source in the part is the RTC watchdog. On this board its oscillator does not run, and its output reaches no net. The WinCE `IOCTL_HAL_REBOOT` sequence depends on the same dead sideband, and `PowerOff.exe REBOOT` requests only the ordinary OFF state. Do not copy either path as a verified reset.
 
 A bootrom re-entry restarts the software without a power cycle, see [warm-restart.md](../aipc-os-original/warm-restart.md). Every path in this document runs on the CPU. None of them works after a lockup that stops the CPU. After such a lockup, the operator must remove every power source: the DC supply, the battery and USB. [USB Back-Power](#usb-back-power) gives the reason USB counts as a source.
