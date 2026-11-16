@@ -2,6 +2,7 @@ BAREMETAL_LIB = ../lib
 include $(BAREMETAL_LIB)/common.mk
 
 OUT = build
+EBOOT_RESIDENT = residents/eboot/build
 NK_RESIDENT = residents/nk/build
 
 # cfw leaves the UART to EBOOT and NK.
@@ -12,18 +13,23 @@ CFLAGS = $(ARCHFLAGS) -Os -fomit-frame-pointer -ffreestanding \
          -I. -Inkpf -I$(LIB) $(DEPFLAGS)
 LDFLAGS = -nostdlib -Wl,--gc-sections -Wl,--build-id=none \
           -Wl,--no-warn-rwx-segments \
+          -Wl,--just-symbols=$(EBOOT_RESIDENT)/eboot.syms.elf \
           -Wl,--just-symbols=$(NK_RESIDENT)/nk.syms.elf
 
 SRCS = core/header.c core/core.c core/printf.c core/resident.c \
        core/blobs.S eboot/entry.S eboot/eboot.c eboot/handoff.c \
        nkpf/nk.S nkpf/nkpf.c nkpf/romimage.c \
        components/power_hold.c components/battery_check_skip.c \
-       components/rtc_stall_fix.c components/diag.c
-LIB_SRCS = pf.c fbcon.c log.c
+       components/rtc_stall_fix.c components/diag.c \
+       components/eboot_menu.c
+LIB_SRCS = pf.c fbcon.c log.c timer.c
 OBJS = $(addprefix $(OUT)/,$(addsuffix .o,$(basename $(SRCS)))) \
        $(addprefix $(OUT)/lib_,$(LIB_SRCS:.c=.o))
 
 all: $(OUT)/cfw.bin
+
+$(EBOOT_RESIDENT)/eboot.bin $(EBOOT_RESIDENT)/eboot.syms.elf: FORCE
+	$(MAKE) -C residents/eboot
 
 $(NK_RESIDENT)/nk.bin $(NK_RESIDENT)/nk.syms.elf: FORCE
 	$(MAKE) -C residents/nk
@@ -36,7 +42,7 @@ $(OUT)/%.o: %.S
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(OUT)/core/blobs.o: $(NK_RESIDENT)/nk.bin
+$(OUT)/core/blobs.o: $(EBOOT_RESIDENT)/eboot.bin $(NK_RESIDENT)/nk.bin
 
 $(OUT)/lib_%.o: $(LIB)/%.c
 	@mkdir -p $(dir $@)
@@ -46,7 +52,8 @@ $(OUT)/cfw.lds: cfw.ld
 	@mkdir -p $(dir $@)
 	$(CC) -E -P -x c -D__ASSEMBLER__ $(CFLAGS) -MT $@ -o $@ $<
 
-$(OUT)/cfw.elf: $(OBJS) $(OUT)/cfw.lds $(NK_RESIDENT)/nk.syms.elf
+$(OUT)/cfw.elf: $(OBJS) $(OUT)/cfw.lds $(EBOOT_RESIDENT)/eboot.syms.elf \
+                $(NK_RESIDENT)/nk.syms.elf
 	$(CC) $(CFLAGS) $(LDFLAGS) -T $(OUT)/cfw.lds -o $@ $(OBJS) -lgcc
 
 $(OUT)/cfw.bin: $(OUT)/cfw.elf
@@ -57,6 +64,7 @@ $(OUT)/cfw.bin: $(OUT)/cfw.elf
 
 clean:
 	rm -rf $(OUT)
+	$(MAKE) -C residents/eboot clean
 	$(MAKE) -C residents/nk clean
 
 FORCE:

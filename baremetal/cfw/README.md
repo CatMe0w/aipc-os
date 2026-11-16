@@ -16,6 +16,7 @@ Each change that CFW makes is a component. Use the "WinCE CFW" page in aipc-boot
 | `battery_check_skip` | Fix | on | EBOOT | Stops the power-off at boot after a false low battery reading |
 | `rtc_stall_fix` | Fix | off | NK | Prevents the hang after `BackLight Initializing... OK` on a device whose RTC oscillator does not run. Turn it on only if WinCE stops at that message. |
 | `diag` | Extra | off | NK | Shows interrupts and OAL IOCTL calls on the screen while WinCE runs |
+| `eboot_menu` | Extra | off | EBOOT | Unhide the stock boot menu of EBOOT |
 
 ### diag
 
@@ -31,6 +32,16 @@ Every 512 interrupts, the nk resident draws a panel in the top-right corner:
 | next rows | The last 6 other IOCTL calls, newest first: the slot number of the calling process, the IOCTL code, and the first two words of the input buffer |
 
 In the IOCTL rows, `-` marks a word past the end of the input buffer, and `?` marks a value the nk resident cannot safely read.
+
+### eboot_menu
+
+The stock EBOOT contains a boot menu, but the menu is not complete: EBOOT skips the countdown, and it implements neither the key input nor the text output of the menu. `eboot_menu` supplies these parts. See [FMD Boot Menu and Default Target](../../docs/eboot/boot-flow.md#fmd-boot-menu-and-default-target) for the appearance of the stock menu.
+
+With `eboot_menu` on, EBOOT shows the boot menu and counts down 15 seconds before it starts WinCE. The keyboard works during the countdown and in each submenu. All other EBOOT messages also appear on the screen.
+
+`eboot_menu` installs a small program, the [eboot resident](residents/eboot/), which reads the keyboard and measures the countdown while EBOOT runs.
+
+Warning: The stock boot menu can erase partitions, write the partition table and the boot configuration, and run a NAND test that erases the whole NAND. Make a NAND backup in aipc-boot before you use them.
 
 ## Errors
 
@@ -61,4 +72,9 @@ Each fix component has a description of the fault that it fixes:
 
 To add a component, define a `cfw_component_t` in a new file in `components/`, declare it in `cfw.h`, add it to `cfw_components[]` in `core/header.c`, and add the file to `SRCS` in the `Makefile`.
 
-Code that must stay in memory while WinCE runs goes into the nk resident in `residents/nk/`. CFW reaches the symbols that `EXPORTS` lists in `residents/nk/Makefile`.
+Code that must stay in memory after a stage ends goes into a resident. There is one resident for each stage: the eboot resident in `residents/eboot/` runs inside EBOOT, and the nk resident in `residents/nk/` runs inside WinCE. To give a component such code:
+
+- Add the source file to the resident of that stage. Do not add a third resident.
+- List each symbol that CFW needs in `EXPORTS` in the Makefile of the resident, with the component name as prefix. CFW links against these symbols.
+- Call `cfw_resident_install()` in `init` of the component. To write a word in the resident from CFW, use `cfw_resident_ptr()`.
+- The two residents use the same memory, one after the other, so a resident stops when its stage ends. If it leaves hardware in use, release that hardware in `nk_enter` of the component. CFW code cannot call the eboot resident there.

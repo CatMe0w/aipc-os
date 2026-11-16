@@ -83,6 +83,16 @@ void cfw_run(enum cfw_stage stage,
     }
 }
 
+void cfw_nk_enter(void)
+{
+    for (uint32_t i = 0; i < cfw_component_count; i++) {
+        cfw_component_t *c = cfw_components[i];
+
+        if ((cfw_enable & (1u << i)) && c->nk_enter)
+            c->nk_enter();
+    }
+}
+
 void cfw_patch_once(struct pf_patch *patch)
 {
     if (patch->has_fired)

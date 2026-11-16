@@ -30,7 +30,7 @@ bool nk_static_va(uint32_t va, uint32_t bytes)
 
 void *nk_ptr(uint32_t va)
 {
-    return (void *)(uintptr_t)(va - NK_VA_OFFSET);
+    return (void *)(uintptr_t)(va - DDR_VA_OFFSET);
 }
 
 static bool name_is(uint32_t va, const char *name)
@@ -67,7 +67,7 @@ bool rom_code_range(const char *module, pf_range_t *range)
 {
     const uint32_t *hdr = romhdr();
     uint32_t n = hdr[HDR_NUMMODS];
-    uint32_t toc_va = (uint32_t)(uintptr_t)hdr + NK_VA_OFFSET + ROMHDR_BYTES;
+    uint32_t toc_va = (uint32_t)(uintptr_t)hdr + DDR_VA_OFFSET + ROMHDR_BYTES;
     const uint32_t *toc;
 
     if (n > 512 || !nk_static_va(toc_va, n * TOC_BYTES))

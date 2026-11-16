@@ -1,17 +1,25 @@
 #include "cfw.h"
-#include "layout.h"
 
+extern const uint8_t eboot_resident_start[], eboot_resident_end[];
 extern const uint8_t nk_resident_start[], nk_resident_end[];
 
-void cfw_nk_resident_install(void)
-{
-    static bool installed;
-    uint32_t bytes = (uint32_t)(nk_resident_end - nk_resident_start);
+static const struct {
+    const char *name;
+    const uint8_t *start, *end;
+} residents[] = {
+    [CFW_EBOOT] = { "eboot", eboot_resident_start, eboot_resident_end },
+    [CFW_NK]    = { "nk", nk_resident_start, nk_resident_end },
+};
 
-    if (installed)
+void cfw_resident_install(enum cfw_stage stage)
+{
+    static bool installed[ARRAY_SIZE(residents)];
+
+    if (installed[stage])
         return;
-    installed = true;
-    memset((void *)NK_RESIDENT_PHYS, 0, NK_RESIDENT_MAX);
-    memcpy((void *)NK_RESIDENT_PHYS, nk_resident_start, bytes);
-    printf("  nk resident %p\n", NK_RESIDENT_VA);
+    installed[stage] = true;
+    memset((void *)RESIDENT_PHYS, 0, RESIDENT_MAX);
+    memcpy((void *)RESIDENT_PHYS, residents[stage].start,
+           (size_t)(residents[stage].end - residents[stage].start));
+    printf("  %s resident %p\n", residents[stage].name, RESIDENT_VA);
 }

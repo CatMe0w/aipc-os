@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "cfw_abi.h"
+#include "layout.h"
 #include "pf.h"
 
 void *memset(void *d, int c, size_t n);
@@ -24,8 +25,10 @@ typedef const struct {
  * pointers to info. */
 typedef const struct {
     struct cfw_component_info info;
-    void (*init)(void);    /* before the first patch in a stage */
-    void (*finish)(void);  /* after the last patch in a stage */
+    void (*init)(void);      /* before the first patch in a stage */
+    void (*finish)(void);    /* after the last patch in a stage */
+    void (*nk_enter)(void);  /* when the nk stage starts, with or without
+                              * a CFW_NK patch */
     cfw_patch_t patches[];
 } cfw_component_t;
 
@@ -45,6 +48,9 @@ extern pf_range_t *cfw_range;
 void cfw_run(enum cfw_stage stage,
              void (*range_of)(const char *module, pf_range_t *range));
 
+/* Calls nk_enter() of each enabled component. */
+void cfw_nk_enter(void);
+
 void printf(const char *fmt, ...);
 
 /* In the eboot stage, panic() returns from eboot_stage() to aipc-boot with
@@ -52,8 +58,16 @@ void printf(const char *fmt, ...);
 extern struct cfw_result *cfw_eboot_result;
 void cfw_eboot_return(void) __attribute__((noreturn));
 
-/* Copies the nk resident to NK_RESIDENT_PHYS. */
-void cfw_nk_resident_install(void);
+/* Copies the resident of stage to its window. A second call in the same
+ * stage does nothing. */
+void cfw_resident_install(enum cfw_stage stage);
+
+/* The address where CFW can access a resident symbol now. A resident symbol
+ * is the VA at which the resident runs. */
+static inline void *cfw_resident_ptr(const void *sym)
+{
+    return (void *)((uintptr_t)sym - DDR_VA_OFFSET);
+}
 
 /* Logs the patch name, and panics if the pattern matched before. */
 void cfw_patch_once(struct pf_patch *patch);
@@ -78,3 +92,4 @@ extern cfw_component_t cfw_rtc_stall_fix;
 extern cfw_component_t cfw_power_hold;
 extern cfw_component_t cfw_battery_check_skip;
 extern cfw_component_t cfw_diag;
+extern cfw_component_t cfw_eboot_menu;

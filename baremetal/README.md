@@ -40,16 +40,16 @@ DDR is 64 MB at `0x30000000..0x33FFFFFF`.
 
 `0x30110000..0x301FFFFF` holds fifteen 64 KB windows. They go out from the top down:
 
-| Window       | Writer                      |
-| ------------ | --------------------------- |
-| `0x301F0000` | openNBOOT                   |
-| `0x301E0000` | bootbin (openNBOOT test)    |
-| `0x301D0000` | gdbstub trace, previous run |
-| `0x301C0000` | gdbstub trace, current run  |
-| `0x301B0000` | aipc-boot                   |
-| `0x301A0000` | DOOM                        |
-| `0x30190000` | CFW, see below              |
-| `0x30180000` | CFW (log)                   |
+| Window       | Writer                            |
+| ------------ | --------------------------------- |
+| `0x301F0000` | openNBOOT                         |
+| `0x301E0000` | bootbin (openNBOOT test)          |
+| `0x301D0000` | gdbstub trace, previous run       |
+| `0x301C0000` | gdbstub trace, current run        |
+| `0x301B0000` | aipc-boot                         |
+| `0x301A0000` | DOOM                              |
+| `0x30190000` | CFW (executable image, see below) |
+| `0x30180000` | CFW (log)                         |
 
 The pool sits in the gap between the top of the running EBOOT image and the WinCE kernel load address. A log therefore survives a WinCE handoff, and it is still readable after the device boots WinCE. No address survives everything. A Linux zImage overwrites this range, and WinCE takes everything above `0x33B00000` once it runs.
 
@@ -61,6 +61,6 @@ The CFW window at `0x30190000` holds three parts. EBOOT and WinCE map DDR at `0x
 | --- | --- |
 | `0x30190000` | CFW image with its `.bss`, at most 40 KB (`CFW_MAX`) |
 | `0x3019A000` | CFW stack, 8 KB, top at `0x3019C000` |
-| `0x3019C000` | nk resident, 16 KB. It runs inside WinCE |
+| `0x3019C000` | resident, 16 KB: the eboot resident while EBOOT runs, then the nk resident while WinCE runs |
 
 `opennboot log` reads the whole pool from the host. It takes a `--slot` name from the table above, or `--all`.

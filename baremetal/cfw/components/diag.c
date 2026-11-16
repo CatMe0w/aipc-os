@@ -1,18 +1,13 @@
 #include "cfw.h"
 #include "nkpf.h"
 
-/* In the nk resident. irq_orig and ioctl_resume are words that the patches
- * fill in. */
-extern uint8_t irq_hook[], ioctl_hook[];
-extern uint32_t irq_orig, ioctl_resume;
-
-static void res_word(uint32_t va, uint32_t value)
-{
-    *(uint32_t *)nk_ptr(va) = value;
-}
+/* In the nk resident. The patches fill in diag_irq_orig and
+ * diag_ioctl_resume. */
+extern uint8_t diag_irq_hook[], diag_ioctl_hook[];
+extern uint32_t diag_irq_orig, diag_ioctl_resume;
 
 /* Word 11 loads the address of OEMInterruptHandler from a literal. The patch
- * replaces that literal with irq_hook. */
+ * replaces that literal with diag_irq_hook. */
 #define IRQ_LDR_IP 11
 
 static bool irq_callback(struct pf_patch *patch, uint32_t *stream)
@@ -22,9 +17,9 @@ static bool irq_callback(struct pf_patch *patch, uint32_t *stream)
     if (!nk_static_va(*lit, 4))
         return false;
     cfw_patch_once(patch);
-    res_word((uint32_t)&irq_orig, *lit);
+    *(uint32_t *)cfw_resident_ptr(&diag_irq_orig) = *lit;
     printf("  irq handler %p\n", *lit);
-    *lit = (uint32_t)irq_hook;
+    *lit = (uint32_t)diag_irq_hook;
     return true;
 }
 
@@ -81,9 +76,9 @@ static bool ioctl_callback(struct pf_patch *patch, uint32_t *stream)
         (*(uint32_t *)nk_ptr(table) & 0xFFFF0000u) != 0x01010000u)
         return false;
     cfw_patch_once(patch);
-    res_word((uint32_t)&ioctl_resume, entry + 4u);
+    *(uint32_t *)cfw_resident_ptr(&diag_ioctl_resume) = entry + 4u;
     stream[0] = 0xEA000000u |
-                (((uint32_t)ioctl_hook - entry - 8u) >> 2 & 0x00FFFFFFu);
+                (((uint32_t)diag_ioctl_hook - entry - 8u) >> 2 & 0x00FFFFFFu);
     printf("  OEMIoControl %p\n", entry);
     return true;
 }
@@ -119,6 +114,11 @@ static void ioctl_patch(pf_patchset_t *patchset)
                  ARRAY_SIZE(matches), true, ioctl_callback);
 }
 
+static void diag_init(void)
+{
+    cfw_resident_install(CFW_NK);
+}
+
 cfw_component_t cfw_diag = {
     .info = {
         .id = "diag",
@@ -127,7 +127,7 @@ cfw_component_t cfw_diag = {
                        "corner while WinCE runs.",
         .flags = CFW_EXTRA,
     },
-    .init = cfw_nk_resident_install,
+    .init = diag_init,
     .patches = {
         { CFW_NK, "nk.exe", irq_patch },
         { CFW_NK, "nk.exe", ioctl_patch },

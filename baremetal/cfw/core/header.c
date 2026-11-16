@@ -5,6 +5,7 @@ cfw_component_t *const cfw_components[] = {
     &cfw_battery_check_skip,
     &cfw_rtc_stall_fix,
     &cfw_diag,
+    &cfw_eboot_menu,
 };
 
 #define COMPONENT_COUNT ARRAY_SIZE(cfw_components)

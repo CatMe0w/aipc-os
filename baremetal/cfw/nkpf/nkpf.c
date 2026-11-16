@@ -33,6 +33,7 @@ void nkpf_main(uint32_t entry)
     screen_set_color(RGB565_WHITE);
     printf("NK entry %p\n", entry);
 
+    cfw_nk_enter();
     cfw_run(CFW_NK, module_range);
 
     screen_set_color(RGB565_GREEN);

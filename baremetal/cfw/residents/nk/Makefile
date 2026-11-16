@@ -4,7 +4,7 @@ include $(BAREMETAL_LIB)/common.mk
 # The nk resident runs inside WinCE at its NK VA. cfw links against the
 # symbols in EXPORTS through nk.syms.elf, and carries nk.bin.
 OUT = build
-EXPORTS = irq_hook irq_orig ioctl_hook ioctl_resume
+EXPORTS = diag_irq_hook diag_irq_orig diag_ioctl_hook diag_ioctl_resume
 
 CFLAGS = $(ARCHFLAGS) -Os -fomit-frame-pointer -ffreestanding \
          -ffunction-sections -fdata-sections -fno-common -fno-builtin \
